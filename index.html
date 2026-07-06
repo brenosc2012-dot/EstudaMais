@@ -2476,10 +2476,35 @@ function teacherTab(t){
 // --- ABA: listar lições (com seletor de disciplina) ---
 function teacherLessonsTab(){
   const sel = subjSelect(Teacher.subj, "App.teacherSelectSubj(this.value)");
-  const licoes = DATA[Teacher.subj]||[];
+  const todas = DATA[Teacher.subj]||[];
+
+  // ---- DIAGNÓSTICO (abra o console para conferir os dados do Firestore) ----
+  console.log('Professor anos:', PROFESSOR && PROFESSOR.anos);
+  console.log('Professor turmas:', PROFESSOR && PROFESSOR.turmas);
+  console.log('Todas as lições:', todas.map(l=>({ titulo:l.titulo, ano:l.ano, turma:l.turma })));
+
+  // Escopo incompleto (sem turmas E/OU anos): orienta a completar o perfil —
+  // NÃO mostra lições de todas as turmas como fallback.
+  if(!escopoCompleto(PROFESSOR)){
+    const e0=escopoProfessor(PROFESSOR), faltando=[];
+    if(!e0.turmas.length) faltando.push("as <b>turmas</b>");
+    if(!e0.anos.length)   faltando.push("os <b>anos/séries</b>");
+    return `<label>Disciplina</label>${sel}
+      <div class="empty"><div class="em">⚙️</div>
+        <p><b>Complete seu perfil para ver as lições.</b><br>
+        Você ainda não cadastrou ${faltando.join(" e ")} que leciona. Sem essa informação
+        não é possível mostrar apenas as lições das suas turmas.</p>
+        <button class="btn" style="margin-top:12px" onclick="App.teacherTab('conta')">👤 Atualizar meu perfil</button>
+      </div>`;
+  }
+
+  // Só as lições cujo ano/turma correspondem ao que o professor leciona (curinga = vazio).
+  const licoes = todas.filter(l=> licaoNoEscopoProfessor(l, PROFESSOR));
+  console.log('Lições filtradas:', licoes.map(l=>({ titulo:l.titulo, ano:l.ano, turma:l.turma })));
+
   let list;
   if(licoes.length===0){
-    list = `<div class="empty"><div class="em">📝</div><p>Nenhuma lição nesta disciplina.<br>Crie uma na aba "Nova".</p></div>`;
+    list = `<div class="empty"><div class="em">📝</div><p>Nenhuma lição desta disciplina para as suas turmas/anos.<br>Crie uma na aba "Nova".</p></div>`;
   } else {
     list = licoes.map(l=>`<div class="t-lesson-row">
       <div class="info"><div class="t">${esc(l.titulo)}</div><div class="d">${l.exercicios.length} exercício(s) • ${esc(escopoLicaoLabel(l))}</div></div>
@@ -3286,6 +3311,18 @@ function alunoNoEscopo(aluno, prof){
   const turmaOk = e.turmas.some(t=>norm(t)===norm(aluno.turma));
   const anoOk   = e.anos.some(a=>norm(a)===norm(aluno.ano));
   return turmaOk && anoOk;
+}
+// Uma LIÇÃO está no escopo do professor quando ANO e TURMA batem com o que ele leciona.
+// Regra (lado do professor): campo vazio na lição = "Todos os anos"/"Todas as turmas" =
+// curinga (aparece para todos). Uma lição de um ano específico (ex.: 1º ano) NÃO aparece
+// para um professor que não leciona esse ano. Escopo incompleto do professor → nada.
+function licaoNoEscopoProfessor(l, prof){
+  const e = escopoProfessor(prof);
+  if(!e.turmas.length || !e.anos.length) return false;
+  const anoL=norm(l.ano), turmaL=norm(l.turma);
+  const okAno   = anoL===""  || e.anos.some(a=>norm(a)===anoL);
+  const okTurma = turmaL==="" || e.turmas.some(t=>norm(t)===turmaL);
+  return okAno && okTurma;
 }
 // % de acertos de um registro de progresso (prefere o campo salvo; senão calcula).
 function pctDoProg(p){
