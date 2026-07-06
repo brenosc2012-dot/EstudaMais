@@ -811,8 +811,11 @@ function normalizarAluno(a){
   if(!Array.isArray(a.licoesConcluidas)) a.licoesConcluidas=[];
   if(!a.nome) a.nome="Aluno(a)";
   if(!a.nivel) a.nivel="fund1";
-  if(!a.ano) a.ano="5º ano";
-  if(!a.turma) a.turma="A";
+  // NÃO forçar um ano/turma padrão: um default (ex.: "5º ano"/"A") faria o aluno ver,
+  // por engano, lições de outro ano/turma. Sem valor, o filtro estrito não mostra nada
+  // até o aluno definir seus dados no perfil.
+  if(a.ano==null) a.ano="";
+  if(a.turma==null) a.turma="";
   return a;
 }
 
@@ -1529,27 +1532,57 @@ function renderLessons(){
   </div>`;
 }
 
-// ----- Escopo de lições: o aluno só vê as da sua turma/ano/nível -----
-// Campos vazios na lição significam "todas" (ex.: conteúdo de exemplo, ou o
-// professor escolheu "Todas as turmas"/"Todos os anos"). Quando o professor
-// DEFINE ano e turma, AMBOS precisam bater exatamente com os do aluno.
-// Comparação normalizada (trim + caixa) para tolerar dados legados/inconsistentes.
-function mesmaTurma(a,b){ return String(a==null?"":a).trim().toUpperCase() === String(b==null?"":b).trim().toUpperCase(); }
+// ----- Escopo de lições: o aluno só vê as da sua turma E ano -----
+// ESCOPO OBRIGATÓRIO (estrito): a lição SÓ aparece para o aluno se tiver ano E turma
+// definidos e IGUAIS aos do aluno. Lição sem ano ou sem turma NÃO aparece para ninguém
+// (evita vazamento de lições de outros anos/turmas). Comparação normalizada
+// (trim + minúsculas + acentos via norm) para casar mesmo com dados inconsistentes.
+// O nível é opcional na comparação porque o rótulo do ano já é único entre os níveis
+// (ex.: "1º ano" só existe no Fund. I; o Médio usa "1º ano EM").
+function mesmaTurma(a,b){ return norm(a)===norm(b); }
 function mesmoAno(a,b){ return norm(a)===norm(b); }
 function licaoVisivelPara(l, aluno){
-  const okTurma = !l.turma || mesmaTurma(l.turma, aluno.turma);
-  const okAno   = !l.ano   || mesmoAno(l.ano, aluno.ano);
-  const okNivel = !l.nivel || mesmoAno(l.nivel, aluno.nivel);
-  return okTurma && okAno && okNivel; // exige ano E turma simultaneamente quando definidos
+  aluno = aluno || {};
+  const anoL=norm(l.ano), anoA=norm(aluno.ano);
+  const turmaL=norm(l.turma), turmaA=norm(aluno.turma);
+  const nivelL=norm(l.nivel), nivelA=norm(aluno.nivel);
+  const okAno   = anoL!=="" && anoL===anoA;      // ano obrigatório e igual
+  const okTurma = turmaL!=="" && turmaL===turmaA; // turma obrigatória e igual
+  const okNivel = nivelL==="" || nivelL===nivelA; // nível opcional
+  return okAno && okTurma && okNivel;
+}
+// Diagnóstico — rode App.diagLicoes() no console do navegador para ver, lição a lição,
+// os valores EXATOS comparados (ano/turma da lição vs do aluno) e o resultado do match.
+function diagLicoes(){
+  if(!ALUNO){ console.log('⚠️ Nenhum aluno logado.'); return; }
+  console.log('=== Aluno:', ALUNO.nome,
+    '| ano:', JSON.stringify(ALUNO.ano),
+    '| turma:', JSON.stringify(ALUNO.turma),
+    '| nível:', JSON.stringify(ALUNO.nivel));
+  let total=0, visiveis=0;
+  SUBJECTS.forEach(s=>{
+    (DATA[s.id]||[]).forEach(l=>{
+      total++;
+      const v = licaoVisivelPara(l, ALUNO);
+      if(v) visiveis++;
+      console.log(`[${s.id}] ${l.titulo}`);
+      console.log('  Lição ano:', JSON.stringify(l.ano), '| Aluno ano:', JSON.stringify(ALUNO.ano));
+      console.log('  Lição turma:', JSON.stringify(l.turma), '| Aluno turma:', JSON.stringify(ALUNO.turma));
+      console.log('  Match:', norm(l.ano)===norm(ALUNO.ano) && norm(l.turma)===norm(ALUNO.turma), '| Visível:', v);
+    });
+  });
+  console.log(`=== ${visiveis}/${total} lições visíveis para ${ALUNO.nome}`);
 }
 function licaoVisivel(l){ return ALUNO ? licaoVisivelPara(l, ALUNO) : true; }
 // Diagnóstico: por que uma lição está oculta para o aluno (campos que não casam).
 function motivoOculta(l){
   if(!ALUNO) return "";
   const m=[];
-  if(l.turma && !mesmaTurma(l.turma, ALUNO.turma)) m.push(`turma "${l.turma}" ≠ sua "${ALUNO.turma||'?'}"`);
-  if(l.ano   && !mesmoAno(l.ano, ALUNO.ano))       m.push(`ano "${l.ano}" ≠ seu "${ALUNO.ano||'?'}"`);
-  if(l.nivel && !mesmoAno(l.nivel, ALUNO.nivel))   m.push(`nível "${nomeNivel(l.nivel)}" ≠ seu "${nomeNivel(ALUNO.nivel)}"`);
+  if(!norm(l.ano))                                  m.push('a lição está sem ANO definido (o professor precisa escolher o ano)');
+  else if(!mesmoAno(l.ano, ALUNO.ano))              m.push(`ano "${l.ano}" ≠ seu "${ALUNO.ano||'?'}"`);
+  if(!norm(l.turma))                                m.push('a lição está sem TURMA definida (o professor precisa escolher a turma)');
+  else if(!mesmaTurma(l.turma, ALUNO.turma))        m.push(`turma "${l.turma}" ≠ sua "${ALUNO.turma||'?'}"`);
+  if(l.nivel && !mesmoAno(l.nivel, ALUNO.nivel))    m.push(`nível "${nomeNivel(l.nivel)}" ≠ seu "${nomeNivel(ALUNO.nivel)}"`);
   return m.join("; ");
 }
 function licoesDoAluno(subjId){ return (DATA[subjId]||[]).filter(licaoVisivel); }
@@ -3152,6 +3185,7 @@ window.App = {
   gerarExerciciosIA, toggleIaConfig, setModoIA, regenerarConteudoIA,
   // sistema
   retryBoot: function(){ boot(); },
+  diagLicoes, // diagnóstico de escopo: rode App.diagLicoes() no console do navegador
 };
 
 // ----- Telas globais de carregamento / erro -----
