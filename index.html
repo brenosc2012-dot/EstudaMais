@@ -377,6 +377,20 @@ function turmaSelectHtml(id, sel, incluirVazio){
   const vazio = incluirVazio ? `<option value="" ${!sel?'selected':''}>Selecione a turma</option>` : "";
   return `<select id="${id}">${vazio}${TURMAS_LETRAS.map(t=>`<option value="${t}" ${t===sel?'selected':''}>Turma ${t}</option>`).join("")}</select>`;
 }
+// Chips de anos/séries (agrupados por nível) para o professor marcar o que leciona.
+// `onclickName` é o nome de um handler em App (recebe o texto do ano).
+function anosChipsHtml(selecionados, onclickName){
+  const sel = selecionados||[];
+  return NIVEIS_ENSINO.map(n=>`
+    <div style="margin-bottom:8px">
+      <div style="font-size:12px;color:#777;font-weight:700;margin-bottom:4px">${esc(n.nome)}</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        ${n.anos.map(a=>{ const on=sel.indexOf(a)>=0;
+          return `<button type="button" class="btn small ${on?'':'gray'}" style="width:auto;min-width:56px" onclick="App.${onclickName}('${esc(a)}')">${on?'✓ ':''}${esc(a)}</button>`;
+        }).join("")}
+      </div>
+    </div>`).join("");
+}
 
 // Estima a idade típica a partir do nível/ano (Fund. I começa aos ~6 anos).
 function idadeAproximada(nivelId, ano){
@@ -1396,7 +1410,7 @@ function renderLoginProf(){
     <button class="btn gray" style="margin-top:12px" onclick="App.irCadastroProf()">Ainda não tenho conta — Cadastrar</button>
   `, "landing");
 }
-function irCadastroProf(){ Form={ disc:[], turmas:[] }; State.authErro=""; State.tela="cadastroProf"; render(); }
+function irCadastroProf(){ Form={ disc:[], turmas:[], anos:[] }; State.authErro=""; State.tela="cadastroProf"; render(); }
 async function submitLoginProf(){
   const email=val('lpEmail').trim().toLowerCase(), senha=val('lpSenha');
   if(!email||!senha){ State.authErro="Informe e-mail e senha."; render(); return; }
@@ -1441,6 +1455,8 @@ function renderCadastroProf(){
     ${inputSenha('cpSenha','Crie uma senha', Form.senha)}
     <label>Turmas que leciona</label>
     ${turmaChips}
+    <label>Anos / séries que leciona</label>
+    ${anosChipsHtml(Form.anos, 'toggleAnoCad')}
     <label>Disciplinas que leciona</label>
     ${discChecks}
     ${authBusyBtn(`<button class="btn blue" style="margin-top:8px" onclick="App.submitCadastroProf()">Cadastrar e entrar</button>`)}
@@ -1462,12 +1478,21 @@ function toggleTurmaCad(t){
   if(i>=0) Form.turmas.splice(i,1); else Form.turmas.push(t);
   render();
 }
+function toggleAnoCad(a){
+  syncProfForm();
+  Form.anos = Form.anos||[];
+  const i=Form.anos.indexOf(a);
+  if(i>=0) Form.anos.splice(i,1); else Form.anos.push(a);
+  render();
+}
 async function submitCadastroProf(){
   const nome=val('cpNome').trim(), email=val('cpEmail').trim().toLowerCase(), senha=val('cpSenha');
   const turmas=(Form.turmas||[]).slice().sort();
+  const anos=(Form.anos||[]).slice();
   const disciplinas=(Form.disc||[]).slice();
   if(!nome||!email||!senha){ State.authErro="Preencha nome, e-mail e senha."; render(); return; }
   if(!turmas.length){ State.authErro="Informe ao menos uma turma."; render(); return; }
+  if(!anos.length){ State.authErro="Informe ao menos um ano/série que você leciona."; render(); return; }
   if(!disciplinas.length){ State.authErro="Selecione ao menos uma disciplina."; render(); return; }
   State.authBusy=true; State.authErro=""; render();
   try{
@@ -1475,7 +1500,7 @@ async function submitCadastroProf(){
     const ja = await db.collection("professores").where("email","==",email).get();
     if(!ja.empty) throw new Error("email_existe");
     const senhaHash = await hashSenha(senha);
-    const base = { nome, email, senha:senhaHash, turmas, disciplinas };
+    const base = { nome, email, senha:senhaHash, turmas, anos, disciplinas };
     const ref = await db.collection("professores").add(Object.assign({}, base, { criadoEm: firebase.firestore.FieldValue.serverTimestamp() }));
     PROFESSOR = Object.assign({}, base, { id:ref.id });
     SESSAO={ tipo:"professor", id:ref.id }; salvarSessao();
@@ -2177,15 +2202,19 @@ function finishLesson(){
 
 // Grava o desempenho do aluno na lição (doc {alunoId}_{licaoId}) para o painel do professor.
 async function salvarProgresso(subjId, lessonId, sess){
-  if(!db || !ALUNO || !ALUNO.id || !lessonId) return;
+  if(!db || !ALUNO || !ALUNO.id || !lessonId){ console.warn('salvarProgresso: sem db/aluno/lição — progresso não gravado.'); return; }
+  const total = sess.total||0;
+  const percentualAcertos = total>0 ? Math.round(sess.acertos/total*100) : 0;
   try{
     await db.collection("progresso").doc(ALUNO.id+"_"+lessonId).set({
       alunoId: ALUNO.id, alunoNome: ALUNO.nome, licaoId: lessonId, disciplina: subjId,
       turma: ALUNO.turma, ano: ALUNO.ano, nivel: ALUNO.nivel,
-      acertos: sess.acertos, erros: sess.erros, xpGanho: sess.xpGanho, total: sess.total,
+      acertos: sess.acertos, erros: sess.erros, xpGanho: sess.xpGanho, total: total,
+      percentualAcertos: percentualAcertos,
       concluido: true, concluidoEm: firebase.firestore.FieldValue.serverTimestamp()
     }, { merge:true });
-  }catch(e){ /* best-effort */ }
+    console.log('Progresso salvo:', ALUNO.id+"_"+lessonId, '→', sess.acertos+'/'+total, '('+percentualAcertos+'%)');
+  }catch(e){ console.warn('Falha ao salvar progresso no Firestore:', e); }
 }
 
 // ----- CELEBRAÇÃO / CONCLUSÃO -----
@@ -2363,7 +2392,7 @@ const Teacher = { tab:"licoes", subj:"mat", editingLesson:null, gerando:false, r
   // premiações personalizadas (Fase D)
   prem:{ carregada:false, carregando:false, erro:"", lista:[], salvando:false, form:null },
   // edição da própria conta (turmas/disciplinas)
-  conta:{ turmas:[], disc:[], salvando:false } };
+  conta:{ turmas:[], anos:[], disc:[], salvando:false } };
 
 function renderTeacher(){
   if(Teacher.previewing){ renderPreview(); return; }
@@ -2396,6 +2425,7 @@ function teacherTab(t){
   if(t==="premios" && !Teacher.prem.carregada && !Teacher.prem.carregando){ carregarPremiacoesProf(); return; }
   if(t==="conta"){ // carrega os valores atuais da conta para edição
     Teacher.conta.turmas = (PROFESSOR && Array.isArray(PROFESSOR.turmas)) ? PROFESSOR.turmas.slice() : [];
+    Teacher.conta.anos   = (PROFESSOR && Array.isArray(PROFESSOR.anos)) ? PROFESSOR.anos.slice() : [];
     Teacher.conta.disc   = (PROFESSOR && Array.isArray(PROFESSOR.disciplinas)) ? PROFESSOR.disciplinas.slice() : [];
     Teacher.conta.salvando=false;
   }
@@ -2945,21 +2975,50 @@ async function saveLesson(){
 }
 
 // --- ABA: rendimento das turmas ---
-// Carrega alunos das turmas do professor e seus registros de progresso.
+// Escopo do professor: turmas (letras A–F) + anos/séries que ele leciona.
+function escopoProfessor(prof){
+  const p = prof || PROFESSOR || {};
+  return {
+    turmas: Array.isArray(p.turmas) ? p.turmas : [],
+    anos:   Array.isArray(p.anos)   ? p.anos   : [],
+  };
+}
+// Um aluno está no escopo do professor quando a LETRA da turma bate e — se o
+// professor definiu os anos que leciona — o ANO também bate. Contas legadas
+// (sem `anos`) caem no comportamento antigo: filtram só pela turma.
+function alunoNoEscopo(aluno, prof){
+  const e = escopoProfessor(prof);
+  const turmaOk = e.turmas.length ? e.turmas.some(t=>norm(t)===norm(aluno.turma)) : false;
+  const anoOk   = e.anos.length   ? e.anos.some(a=>norm(a)===norm(aluno.ano))   : true;
+  return turmaOk && anoOk;
+}
+// % de acertos de um registro de progresso (prefere o campo salvo; senão calcula).
+function pctDoProg(p){
+  if(typeof p.percentualAcertos === "number") return p.percentualAcertos;
+  return p.total>0 ? (p.acertos/p.total*100) : 0;
+}
+// Carrega alunos das turmas/anos do professor e seus registros de progresso.
 async function carregarRendimento(){
   Teacher.prog.carregando=true; Teacher.prog.erro=""; render();
   try{
-    const turmas = (PROFESSOR && Array.isArray(PROFESSOR.turmas)) ? PROFESSOR.turmas : [];
-    let alunos=[];
+    const professor = PROFESSOR || {};
+    const esc0 = escopoProfessor(professor);
+    console.log('Turmas do professor:', esc0.turmas);
+    console.log('Anos do professor:', esc0.anos);
+    const turmas = esc0.turmas;
+    let candidatos=[];
     if(turmas.length){
       if(turmas.length<=10){
         const snap = await db.collection("alunos").where("turma","in",turmas).get();
-        snap.forEach(d=> alunos.push(Object.assign({ id:d.id }, d.data())));
-      } else { // 'in' aceita no máximo 10 valores → carrega todos e filtra
+        snap.forEach(d=> candidatos.push(Object.assign({ id:d.id }, d.data())));
+      } else { // 'in' aceita no máximo 10 valores → carrega todos e filtra em memória
         const snap = await db.collection("alunos").get();
-        snap.forEach(d=>{ const a=d.data(); if(turmas.indexOf(a.turma)>=0) alunos.push(Object.assign({ id:d.id }, a)); });
+        snap.forEach(d=> candidatos.push(Object.assign({ id:d.id }, d.data())));
       }
     }
+    // Bug 1: só entram alunos cuja turma E ano correspondem ao que o professor leciona.
+    const alunos = candidatos.filter(a=> alunoNoEscopo(a, professor));
+    console.log('Alunos filtrados:', alunos.length);
     const ids = {}; alunos.forEach(a=> ids[a.id]=true);
     const progresso=[];
     const snapP = await db.collection("progresso").get();
@@ -3065,7 +3124,9 @@ function teacherProgressTab(){
 
   if(P.erro) return filtros + `<div class="ia-erro">⚠️ ${esc(P.erro)}</div>`;
   if(!P.alunos.length){
-    return filtros + `<div class="empty"><div class="em">👥</div><p>Nenhum aluno encontrado nas suas turmas (${turmas.map(esc).join(", ")||'—'}).<br>Os alunos aparecem aqui após se cadastrarem.</p></div>`;
+    const anosProf = escopoProfessor(PROFESSOR).anos;
+    const escopoTxt = `turmas ${turmas.map(esc).join(", ")||'—'}${anosProf.length?(' • anos '+anosProf.map(esc).join(", ")):''}`;
+    return filtros + `<div class="empty"><div class="em">👥</div><p>Nenhum aluno encontrado no seu escopo (${escopoTxt}).<br>Os alunos aparecem aqui após se cadastrarem no mesmo ano e turma.</p></div>`;
   }
 
   const { alunos, prog } = rendimentoFiltrado();
@@ -3073,7 +3134,7 @@ function teacherProgressTab(){
   // ----- Resumo -----
   const totConcl = prog.length;
   const comTotal = prog.filter(p=>p.total>0);
-  const mediaAcertos = comTotal.length ? Math.round(comTotal.reduce((a,p)=>a + (p.acertos/p.total*100),0)/comTotal.length) : 0;
+  const mediaAcertos = comTotal.length ? Math.round(comTotal.reduce((a,p)=>a + pctDoProg(p),0)/comTotal.length) : 0;
   const resumo = `<div class="stat-row" style="margin:10px 0 4px">
     <div class="stat-pill" style="background:#ede7f6;color:#5e35b1"><div class="v">${alunos.length}</div><div class="l">Alunos</div></div>
     <div class="stat-pill" style="background:#e3f2fd;color:#1565c0"><div class="v">${totConcl}</div><div class="l">Lições feitas</div></div>
@@ -3113,7 +3174,7 @@ function teacherProgressTab(){
     const feitas = pAluno.length;
     const pct = possiveis ? Math.round(feitas/possiveis*100) : 0;
     const ct = pAluno.filter(p=>p.total>0);
-    const acc = ct.length ? Math.round(ct.reduce((s,p)=>s+(p.acertos/p.total*100),0)/ct.length) : 0;
+    const acc = ct.length ? Math.round(ct.reduce((s,p)=>s+pctDoProg(p),0)/ct.length) : 0;
     return `<div class="card" style="cursor:default">
       <div style="display:flex;align-items:center;gap:10px">
         <div style="flex:1"><b>${esc(a.nome)}</b>
@@ -3248,22 +3309,27 @@ function teacherContaTab(){
     </div>
     <div class="sec-title">Turmas que leciona</div>
     ${turmaChips}
+    <div class="sec-title">Anos / séries que leciona</div>
+    ${anosChipsHtml(C.anos, 'toggleContaAno')}
+    <p style="font-size:12px;color:#999;margin:-2px 0 6px">O rendimento mostra apenas alunos cujo <b>ano e turma</b> você leciona. Marque os anos para não ver alunos de outras séries.</p>
     <div class="sec-title">Disciplinas que leciona</div>
     ${discChips}
     ${btn}
     <p style="font-size:12px;color:#999;margin-top:8px">As turmas definidas aqui aparecem ao criar lições (campo "Turma") e no painel de rendimento. Use o mesmo formato de letra que os alunos (A, B, C…).</p>`;
 }
 function toggleContaTurma(t){ const a=Teacher.conta.turmas; const i=a.indexOf(t); if(i>=0)a.splice(i,1); else a.push(t); render(); }
+function toggleContaAno(v){ const a=Teacher.conta.anos; const i=a.indexOf(v); if(i>=0)a.splice(i,1); else a.push(v); render(); }
 function toggleContaDisc(id){ const a=Teacher.conta.disc; const i=a.indexOf(id); if(i>=0)a.splice(i,1); else a.push(id); render(); }
 async function salvarConta(){
-  const turmas=Teacher.conta.turmas.slice().sort(), disciplinas=Teacher.conta.disc.slice();
+  const turmas=Teacher.conta.turmas.slice().sort(), anos=Teacher.conta.anos.slice(), disciplinas=Teacher.conta.disc.slice();
   if(!turmas.length){ toast("Selecione ao menos uma turma."); return; }
+  if(!anos.length){ toast("Selecione ao menos um ano/série que você leciona."); return; }
   if(!disciplinas.length){ toast("Selecione ao menos uma disciplina."); return; }
   if(!PROFESSOR || !PROFESSOR.id){ toast("Sessão inválida. Entre novamente."); return; }
   Teacher.conta.salvando=true; render();
   try{
-    await db.collection("professores").doc(PROFESSOR.id).set({ turmas, disciplinas }, { merge:true });
-    PROFESSOR.turmas=turmas; PROFESSOR.disciplinas=disciplinas;
+    await db.collection("professores").doc(PROFESSOR.id).set({ turmas, anos, disciplinas }, { merge:true });
+    PROFESSOR.turmas=turmas; PROFESSOR.anos=anos; PROFESSOR.disciplinas=disciplinas;
     Teacher.conta.salvando=false; toast("Conta atualizada! ✅"); render();
   }catch(e){ Teacher.conta.salvando=false; toast("Erro ao salvar. Verifique a conexão."); render(); }
 }
@@ -3281,7 +3347,7 @@ window.App = {
   // autenticação
   irTela, logout, toggleSenha,
   irCadastroAluno, submitLoginAluno, onNivelCadAluno, submitCadastroAluno,
-  irCadastroProf, submitLoginProf, toggleDiscCad, toggleTurmaCad, submitCadastroProf,
+  irCadastroProf, submitLoginProf, toggleDiscCad, toggleTurmaCad, toggleAnoCad, submitCadastroProf,
   submitAdminSenha, salvarChaveOpenAI, testarChaveIA,
   // professor
   teacherTab, teacherSelectSubj, onLessonNivel,
@@ -3295,7 +3361,7 @@ window.App = {
   // premiações (Fase D)
   setPremCriterio, criarPremiacao, excluirPremiacao,
   // conta do professor
-  toggleContaTurma, toggleContaDisc, salvarConta,
+  toggleContaTurma, toggleContaAno, toggleContaDisc, salvarConta,
   // IA
   gerarExerciciosIA, toggleIaConfig, setModoIA, regenerarConteudoIA,
   // sistema

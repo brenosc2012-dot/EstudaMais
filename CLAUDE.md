@@ -118,7 +118,8 @@ best-effort para cache offline).
 | `licoes` | Lições (agora com `turma`, `ano`, `nivel` de escopo) |
 | `licoes_geradas` | Cache de conteúdo IA por lição: `{licaoId, resumo, exercicios, geradoEm, geradoPor}` |
 | `alunos` | Conta + progresso do aluno (nome, idade, ano, nível, turma, senha hash, XP, medalhas, premiações, disciplinas…) |
-| `professores` | Conta do professor (nome, email, senha hash, turmas[], disciplinas[]) |
+| `professores` | Conta do professor (nome, email, senha hash, turmas[] (letras A–F), anos[] (séries que leciona), disciplinas[]) |
+| `progresso` (campos) | inclui `percentualAcertos` (acertos/total*100) além de acertos/erros/total/xpGanho/concluido/concluidoEm |
 | `progresso` | `{alunoId}_{licaoId}`: acertos, erros, xpGanho, total, concluido, concluidoEm (painel do professor) |
 | `premiacoes` | Premiações personalizadas do professor |
 | `premiacoes_alunos` | `{alunoId}_{premiacaoId}`: conquistas |
