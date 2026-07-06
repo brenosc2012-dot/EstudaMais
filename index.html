@@ -686,12 +686,32 @@ function norm(s){ return String(s||"").trim().toLowerCase().normalize("NFD").rep
 // Documento Firestore: { disciplina, titulo, conteudo, exercicios, criadoEm, resumoIA, explicacoes }
 // Lição interna no app:  { id, titulo, texto, exercicios, resumoIA, explicacoes }
 // resumoIA / explicacoes guardam o conteúdo gerado pela IA para ser compartilhado entre dispositivos.
+// Migração/saneamento da resposta correta de um exercício ao carregar a lição.
+// O formato interno guarda `correta` como ÍNDICE em `opcoes`. Docs antigos podem ter
+// vindo com `correta` como STRING (rótulo "C" ou o próprio texto), o que quebrava a
+// validação. Aqui convertemos para um índice válido, priorizando o CONTEÚDO da opção.
+function migrarExercicioResposta(ex){
+  if(!ex || ex.tipo==="fill") return ex; // "fill" usa `resposta` (texto), já é conteúdo
+  const opcoes = Array.isArray(ex.opcoes) ? ex.opcoes.map(o=>String(o)) : [];
+  let c = ex.correta;
+  if(typeof c === "string" && c.trim()!==""){
+    ex.correta = acharIndiceCorreto(opcoes, c);        // rótulo/texto legado → índice (conteúdo primeiro)
+  } else if(typeof c === "number"){
+    if(c<0 || c>=opcoes.length) ex.correta = 0;        // índice fora de faixa → clampa
+  } else {
+    ex.correta = 0;
+  }
+  return ex;
+}
+function migrarExerciciosLicao(exs){
+  return (Array.isArray(exs)?exs:[]).map(migrarExercicioResposta);
+}
 function licaoDeDoc(id, d){
   return {
     id,
     titulo:d.titulo||"",
     texto:d.conteudo||"",
-    exercicios:Array.isArray(d.exercicios)?d.exercicios:[],
+    exercicios:migrarExerciciosLicao(d.exercicios),
     resumoIA: d.resumoIA||"",
     explicacoes: (d.explicacoes && typeof d.explicacoes==="object") ? d.explicacoes : {},
     // escopo (Fase B): turma e ano/nível a que a lição se destina ("" = todas)
@@ -1510,21 +1530,26 @@ function renderLessons(){
 }
 
 // ----- Escopo de lições: o aluno só vê as da sua turma/ano/nível -----
-// Campos vazios na lição significam "todas" (ex.: conteúdo de exemplo).
+// Campos vazios na lição significam "todas" (ex.: conteúdo de exemplo, ou o
+// professor escolheu "Todas as turmas"/"Todos os anos"). Quando o professor
+// DEFINE ano e turma, AMBOS precisam bater exatamente com os do aluno.
+// Comparação normalizada (trim + caixa) para tolerar dados legados/inconsistentes.
+function mesmaTurma(a,b){ return String(a==null?"":a).trim().toUpperCase() === String(b==null?"":b).trim().toUpperCase(); }
+function mesmoAno(a,b){ return norm(a)===norm(b); }
 function licaoVisivelPara(l, aluno){
-  const okTurma = !l.turma || l.turma===aluno.turma;
-  const okAno   = !l.ano   || l.ano===aluno.ano;
-  const okNivel = !l.nivel || l.nivel===aluno.nivel;
-  return okTurma && okAno && okNivel;
+  const okTurma = !l.turma || mesmaTurma(l.turma, aluno.turma);
+  const okAno   = !l.ano   || mesmoAno(l.ano, aluno.ano);
+  const okNivel = !l.nivel || mesmoAno(l.nivel, aluno.nivel);
+  return okTurma && okAno && okNivel; // exige ano E turma simultaneamente quando definidos
 }
 function licaoVisivel(l){ return ALUNO ? licaoVisivelPara(l, ALUNO) : true; }
 // Diagnóstico: por que uma lição está oculta para o aluno (campos que não casam).
 function motivoOculta(l){
   if(!ALUNO) return "";
   const m=[];
-  if(l.turma && l.turma!==ALUNO.turma) m.push(`turma "${l.turma}" ≠ sua "${ALUNO.turma||'?'}"`);
-  if(l.ano   && l.ano!==ALUNO.ano)     m.push(`ano "${l.ano}" ≠ seu "${ALUNO.ano||'?'}"`);
-  if(l.nivel && l.nivel!==ALUNO.nivel) m.push(`nível "${nomeNivel(l.nivel)}" ≠ seu "${nomeNivel(ALUNO.nivel)}"`);
+  if(l.turma && !mesmaTurma(l.turma, ALUNO.turma)) m.push(`turma "${l.turma}" ≠ sua "${ALUNO.turma||'?'}"`);
+  if(l.ano   && !mesmoAno(l.ano, ALUNO.ano))       m.push(`ano "${l.ano}" ≠ seu "${ALUNO.ano||'?'}"`);
+  if(l.nivel && !mesmoAno(l.nivel, ALUNO.nivel))   m.push(`nível "${nomeNivel(l.nivel)}" ≠ seu "${nomeNivel(ALUNO.nivel)}"`);
   return m.join("; ");
 }
 function licoesDoAluno(subjId){ return (DATA[subjId]||[]).filter(licaoVisivel); }
@@ -1791,10 +1816,21 @@ function checkAnswer(){
     if(!resp.trim()) return;
     Sess.respAluno=resp;
     ok = norm(resp)===norm(ex.resposta);
+    console.log('Selecionado:', resp);
+    console.log('Correto:', ex.resposta);
+    console.log('Resultado:', ok);
   } else {
     if(Sess.selecionado===null) return;
-    Sess.respAluno = (ex.opcoes? ex.opcoes[Sess.selecionado] : "");
-    ok = Sess.selecionado===ex.correta;
+    // Validação por CONTEÚDO da alternativa (não pelo rótulo A/B/C/D nem só pelo índice):
+    // compara o texto da opção escolhida com o texto da opção correta.
+    const opcoes = ex.opcoes || [];
+    const conteudoSelecionado = opcoes[Sess.selecionado];
+    const conteudoCorreto = opcoes[ex.correta];
+    Sess.respAluno = conteudoSelecionado || "";
+    ok = norm(conteudoSelecionado)===norm(conteudoCorreto);
+    console.log('Selecionado:', conteudoSelecionado);
+    console.log('Correto:', conteudoCorreto);
+    console.log('Resultado:', ok);
   }
   Sess.respondido=true; Sess.acertouAtual=ok;
   // registra para a revisão ao final da lição
@@ -2514,9 +2550,16 @@ Com base no conteúdo abaixo, gere exatamente 15 exercícios divididos em:
 ${pub.frase}
 
 Tipos permitidos: múltipla escolha (4 opções), verdadeiro/falso, completar lacunas.
+
+REGRA IMPORTANTE sobre "resposta_correta": ela deve conter o TEXTO EXATO da opção
+correta (o conteúdo), NUNCA a letra/rótulo (A, B, C, D). Copie a resposta exatamente
+como aparece dentro de "opcoes".
+Exemplo correto (repare que a resposta é o conteúdo "A", não o rótulo da posição):
+  {"enunciado": "Qual destas letras é uma vogal?", "opcoes": ["B","C","A","D"], "resposta_correta": "A"}
+
 Retorne APENAS um JSON válido, sem explicações, no formato:
 [
-  {"nivel": "facil", "tipo": "multipla_escolha", "enunciado": "...", "opcoes": ["A","B","C","D"], "resposta_correta": "A"},
+  {"nivel": "facil", "tipo": "multipla_escolha", "enunciado": "...", "opcoes": ["texto opção 1","texto opção 2","texto opção 3","texto opção 4"], "resposta_correta": "texto exato da opção correta"},
   {"nivel": "intermediario", "tipo": "verdadeiro_falso", "enunciado": "...", "resposta_correta": "verdadeiro"},
   {"nivel": "dificil", "tipo": "completar_lacunas", "enunciado": "O ___ é usado quando...", "resposta_correta": "palavra correta"}
 ]
@@ -2720,9 +2763,10 @@ async function saveLesson(){
     titulo: L.titulo,
     conteudo: L.texto,
     exercicios: L.exercicios,
-    turma: L.turma||"",
-    ano: L.ano||"",
-    nivel: L.nivel||""
+    // escopo normalizado para o filtro de visibilidade casar sempre (turma em MAIÚSCULA, ano/nível sem espaços)
+    turma: (L.turma||"").trim().toUpperCase(),
+    ano: (L.ano||"").trim(),
+    nivel: (L.nivel||"").trim()
   };
   toast("Salvando...");
   try{
@@ -2743,7 +2787,7 @@ async function saveLesson(){
     // atualiza o estado local (remove de onde estava e re-adiciona na disciplina atual)
     removeLicaoLocal(L.id);
     if(!DATA[disc]) DATA[disc]=[];
-    DATA[disc].push({ id:L.id, titulo:L.titulo, texto:L.texto, exercicios:L.exercicios, resumoIA:"", explicacoes:{}, turma:L.turma||"", ano:L.ano||"", nivel:L.nivel||"" });
+    DATA[disc].push({ id:L.id, titulo:L.titulo, texto:L.texto, exercicios:L.exercicios, resumoIA:"", explicacoes:{}, turma:(L.turma||"").trim().toUpperCase(), ano:(L.ano||"").trim(), nivel:(L.nivel||"").trim() });
 
     Teacher.editingLesson=null; Teacher.tab="licoes";
     toast("Lição salva com sucesso! ✅");
