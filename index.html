@@ -310,6 +310,21 @@ label{ display:block; font-weight:700; font-size:14px; margin-bottom:6px; color:
 .shake{ animation:shake .4s; }
 @keyframes pop{ 0%{transform:scale(.6);opacity:0;} 60%{transform:scale(1.1);} 100%{transform:scale(1);opacity:1;} }
 .pop{ animation:pop .4s; }
+
+/* Botão de leitura em voz alta (grande e amigável para crianças) */
+.fala-btn{
+  display:inline-flex; align-items:center; gap:8px; cursor:pointer; font-family:inherit;
+  border:none; border-radius:18px; padding:12px 22px; font-size:17px; font-weight:800;
+  color:#fff; background:var(--blue); box-shadow:0 4px 0 #1591cc;
+  transition:background .2s, box-shadow .2s; -webkit-tap-highlight-color:transparent;
+}
+.fala-btn:active{ transform:translateY(3px); box-shadow:0 1px 0 #1591cc; }
+.fala-btn .ico{ font-size:24px; line-height:1; display:inline-block; }
+/* enquanto lê: muda para roxo (cor da marca), pulsa e o ícone vira "⏹ Parar" */
+.fala-btn.falando{ background:var(--brand); box-shadow:0 4px 0 var(--brand-d); animation:pulseFala 1s ease-in-out infinite; }
+.fala-btn.falando .ico{ animation:pulseIco .8s ease-in-out infinite; }
+@keyframes pulseFala{ 0%,100%{ transform:scale(1); } 50%{ transform:scale(1.05); } }
+@keyframes pulseIco{ 0%,100%{ transform:scale(1); } 50%{ transform:scale(1.3); } }
 </style>
 </head>
 <body>
@@ -880,11 +895,42 @@ const Sound = {
   click(){ this.play([[440,0,.05,"sine",.12]]); }
 };
 
+// Preferência local: ler perguntas automaticamente (voz infantil).
+const AUTO_LER_KEY = "estudamais_autoler_v1";
+function autoLerLigado(){ try{ return localStorage.getItem(AUTO_LER_KEY)==="1"; }catch(e){ return false; } }
+function salvarAutoLer(v){ try{ localStorage.setItem(AUTO_LER_KEY, v?"1":"0"); }catch(e){} }
+
+// Expande abreviações e limpa o texto ANTES de mandar para a síntese de voz,
+// para a leitura ficar clara e natural para crianças pequenas.
+function adaptarTextoFala(t){
+  let s = String(t==null?"":t);
+  const L = "(?![a-zà-úA-ZÀ-Ú])"; // "não seguido de letra" — evita casar dentro de palavras
+  s = s.replace(/[*#_`~]/g, " ");                      // marcadores de markdown não são falados
+  s = s.replace(/N[º°]\.?/gi, "número");                // Nº / N° → número (só a forma ordinal)
+  s = s.replace(new RegExp("\\bProfa\\.?"+L, "gi"), "professora"); // antes de Prof.
+  s = s.replace(new RegExp("\\bProf\\.?"+L, "gi"), "professor");
+  s = s.replace(new RegExp("\\bDra\\.?"+L, "gi"), "doutora");
+  s = s.replace(new RegExp("\\bDr\\.?"+L, "gi"), "doutor");
+  s = s.replace(new RegExp("\\bSra\\.?"+L, "gi"), "senhora");
+  s = s.replace(new RegExp("\\bSr\\.?"+L, "gi"), "senhor");
+  s = s.replace(new RegExp("\\bpág\\.?"+L, "gi"), "página");
+  s = s.replace(/\bex\.:/gi, "exemplo:");
+  s = s.replace(new RegExp("\\betc\\.?"+L, "gi"), "et cetera");
+  s = s.replace(/\s{2,}/g, " ").trim();
+  return s;
+}
+
 // Módulo de LEITURA EM VOZ ALTA (TTS) — Web Speech API, sem arquivos, offline.
+// Fala uma SEQUÊNCIA de trechos com pausas controladas (encadeando utterances),
+// com voz infantil (lenta e um pouco mais aguda) e voz feminina pt-BR se houver.
 const Fala = {
   ok(){ return typeof window!=="undefined" && "speechSynthesis" in window && typeof SpeechSynthesisUtterance!=="undefined"; },
   voz: null,
-  // escolhe a melhor voz em português (preferindo pt-BR e vozes "naturais")
+  _fila: [],
+  _tocando: false,
+  _timer: null,
+  _protegerUmaVez: false, // deixa a próxima troca de tela NÃO cancelar a fala (feedback ao errar)
+  // escolhe voz FEMININA em pt-BR quando disponível (ex.: Google português do Brasil, Luciana)
   escolherVoz(){
     try{
       const vs = window.speechSynthesis.getVoices() || [];
@@ -892,29 +938,54 @@ const Fala = {
       const br = vs.filter(v=>/pt[-_]BR/i.test(v.lang));
       const pt = vs.filter(v=>/^pt/i.test(v.lang));
       const cand = (br.length?br:pt);
-      // prioriza vozes mais naturais (Google/Microsoft/online) quando houver
-      return cand.find(v=>/google|natural|online|luciana|francisca|microsoft/i.test(v.name)) || cand[0] || null;
+      if(!cand.length) return null;
+      const femininas = /luciana|francisca|maria|fernanda|vit[oó]ria|joana|ana|helena|female|feminin|google/i;
+      return cand.find(v=>femininas.test(v.name)) || cand[0];
     }catch(e){ return null; }
   },
-  ler(texto){
-    if(!this.ok() || !texto) return;
-    try{
-      window.speechSynthesis.cancel();
-      // remove marcadores de markdown (* e #) para não serem lidos/atrapalharem
-      const limpo = String(texto).replace(/[*#]/g, "").replace(/[ \t]{2,}/g, " ").trim();
-      if(!limpo) return;
-      const u = new SpeechSynthesisUtterance(limpo.slice(0,4000));
-      u.lang = "pt-BR";
-      if(!this.voz) this.voz = this.escolherVoz();
-      if(this.voz) u.voice = this.voz;
-      u.rate = 1.08;  // um pouco mais rápido (didático, sem soar arrastado)
-      u.pitch = 1.05; // tom levemente mais alegre, como um(a) professor(a)
-      u.volume = 1;
-      window.speechSynthesis.speak(u);
-    }catch(e){}
+  // aplica os parâmetros de voz infantil (com variação p/ trechos "animados")
+  _config(u, animado){
+    u.lang = "pt-BR";
+    if(!this.voz) this.voz = this.escolherVoz();
+    if(this.voz) u.voice = this.voz;
+    u.rate = animado ? 0.9 : 0.75;   // 0.75 = mais lento e compreensível p/ 5–6 anos
+    u.pitch = animado ? 1.35 : 1.2;  // levemente agudo/amigável; mais animado no acerto
+    u.volume = 1;
   },
-  parar(){ if(this.ok()){ try{ window.speechSynthesis.cancel(); }catch(e){} } },
-  falando(){ try{ return this.ok() && window.speechSynthesis.speaking; }catch(e){ return false; } }
+  // Fala uma lista de segmentos: [{texto, pausa(ms), animado?}, ...]
+  falarSequencia(segmentos){
+    if(!this.ok()) return;
+    this.parar();
+    this._fila = (segmentos||[]).filter(s=>s && s.texto!=null);
+    this._tocando = true;
+    atualizarBotoesFala();
+    this._proximo();
+  },
+  _proximo(){
+    if(!this._fila.length){ this._tocando=false; this._protegerUmaVez=false; atualizarBotoesFala(); return; }
+    const seg = this._fila.shift();
+    const texto = adaptarTextoFala(seg.texto);
+    if(!texto){ this._agendar(seg.pausa||0); return; }
+    try{
+      const u = new SpeechSynthesisUtterance(texto.slice(0,4000));
+      this._config(u, !!seg.animado);
+      const seguir = ()=> this._agendar(seg.pausa||0);
+      u.onend = seguir; u.onerror = seguir;
+      window.speechSynthesis.speak(u);
+    }catch(e){ this._agendar(0); }
+  },
+  _agendar(pausaMs){
+    clearTimeout(this._timer);
+    this._timer = setTimeout(()=>this._proximo(), Math.max(0, pausaMs||0));
+  },
+  // atalho para falar um texto único (resumo/explicação/feedback)
+  ler(texto, animado){ this.falarSequencia([{ texto, pausa:0, animado:!!animado }]); },
+  parar(){
+    clearTimeout(this._timer); this._fila=[]; this._tocando=false;
+    if(this.ok()){ try{ window.speechSynthesis.cancel(); }catch(e){} }
+    atualizarBotoesFala();
+  },
+  falando(){ try{ return !!this._tocando || (this.ok() && window.speechSynthesis.speaking); }catch(e){ return false; } }
 };
 // Aquece a lista de vozes (chega de forma assíncrona em alguns navegadores).
 if(Fala.ok()){
@@ -923,28 +994,67 @@ if(Fala.ok()){
     window.speechSynthesis.onvoiceschanged = function(){ Fala.voz = Fala.escolherVoz(); };
   }catch(e){}
 }
-// Botão reutilizável de "ouvir" (só aparece se o navegador suporta TTS).
+// Atualiza TODOS os botões de fala visíveis: pulsa + vira "⏹ Parar" enquanto lê.
+function atualizarBotoesFala(){
+  try{
+    const falando = Fala.falando();
+    const btns = document.querySelectorAll(".fala-btn");
+    btns.forEach(b=>{
+      const ico=b.querySelector(".ico"), txt=b.querySelector(".txt");
+      if(falando){ b.classList.add("falando"); if(ico) ico.textContent="⏹"; if(txt) txt.textContent="Parar"; }
+      else{ b.classList.remove("falando"); if(ico) ico.textContent="🔊"; if(txt) txt.textContent=b.getAttribute("data-rotulo")||"Ouvir"; }
+    });
+  }catch(e){}
+}
+// Botão reutilizável de "ouvir" (grande e visível; só aparece se o navegador suporta TTS).
 function botaoFala(handler, rotulo){
   if(!Fala.ok()) return "";
-  return `<button class="btn gray small" style="width:auto" onclick="App.${handler}()">🔊 ${esc(rotulo||'Ouvir')}</button>`;
+  const r = esc(rotulo||'Ouvir');
+  return `<button class="fala-btn" data-rotulo="${r}" onclick="App.${handler}()" aria-label="${r}">
+    <span class="ico">🔊</span><span class="txt">${r}</span></button>`;
 }
-function toggleLeitura(texto){ if(Fala.falando()) Fala.parar(); else Fala.ler(texto); }
-function lerResumo(){ toggleLeitura((State.estudo && State.estudo.texto) || ""); }
+// Monta os segmentos de leitura de uma questão, com pausas didáticas.
+function segmentosQuestao(ex){
+  if(!ex) return [];
+  if(ex.tipo==="fill"){
+    // lê o enunciado trocando a lacuna (___) por "lacuna"
+    const enun = String(ex.enunciado||"").replace(/_{1,}/g, " lacuna ");
+    return [{ texto: enun, pausa: 0 }];
+  }
+  const segs = [{ texto: ex.enunciado||"", pausa: 1000 }]; // enunciado + pausa de 1s
+  if(ex.tipo==="vf"){
+    segs.push({ texto: "A afirmação é verdadeira ou falsa?", pausa: 0 });
+    return segs;
+  }
+  // múltipla escolha: "As opções são:" (pausa 0.5s) + cada opção (pausa 0.8s)
+  segs.push({ texto: "As opções são:", pausa: 500 });
+  (ex.opcoes||[]).forEach((o,i)=>{
+    segs.push({ texto: `Opção ${String.fromCharCode(65+i)}: ${o}`, pausa: 800 });
+  });
+  return segs;
+}
+function lerResumo(){ if(Fala.falando()){ Fala.parar(); return; } Fala.ler((State.estudo && State.estudo.texto) || ""); }
 function lerQuestao(){
+  if(Fala.falando()){ Fala.parar(); return; }
   const ex = Sess && Sess.exercicios && Sess.exercicios[Sess.idx];
   if(!ex) return;
-  let t = ex.enunciado || "";
-  if(ex.tipo!=="fill" && Array.isArray(ex.opcoes)){
-    t += ". Opções: " + ex.opcoes.map((o,i)=>{
-      const letra = ex.tipo==="vf" ? (i===0?'Verdadeiro':'Falso') : (String.fromCharCode(65+i)+", "+o);
-      return ex.tipo==="vf" ? letra : letra;
-    }).join("; ");
-  }
-  toggleLeitura(t);
+  Fala.falarSequencia(segmentosQuestao(ex));
 }
 function lerExplicacao(){
+  if(Fala.falando()){ Fala.parar(); return; }
   const e = State.explic || {};
-  toggleLeitura((e.respCorreta ? ("Resposta certa: "+e.respCorreta+". ") : "") + (e.texto||""));
+  Fala.falarSequencia([
+    e.respCorreta ? { texto:"A resposta certa é: "+e.respCorreta, pausa:800 } : null,
+    { texto: e.texto||"", pausa:0 }
+  ].filter(Boolean));
+}
+// Fala o conteúdo da alternativa selecionada ("Você escolheu a letra A: ...").
+function falarSelecao(ex, i){
+  if(!Fala.ok() || !ex || i==null) return;
+  let escolha;
+  if(ex.tipo==="vf") escolha = (i===0 ? "Verdadeiro" : "Falso");
+  else escolha = "a letra "+String.fromCharCode(65+i)+": "+((ex.opcoes&&ex.opcoes[i])||"");
+  Fala.ler("Você escolheu "+escolha);
 }
 
 // Mascote em SVG — "Estrelinha", uma estrela alegre (distinta da coruja do Duolingo)
@@ -1110,7 +1220,9 @@ let resumoCache = {};
 let estudoTimer = null;
 
 function render(){
-  Fala.parar(); // interrompe leitura em voz alta ao trocar/recriar a tela
+  // interrompe a leitura em voz alta ao trocar/recriar a tela — exceto quando
+  // protegemos uma vez (para o feedback falado ao errar sobreviver à ida p/ a explicação)
+  if(Fala._protegerUmaVez){ Fala._protegerUmaVez=false; } else { Fala.parar(); }
   switch(State.tela){
     case "landing":      renderLanding(); break;
     case "loginAluno":   renderLoginAluno(); break;
@@ -1128,6 +1240,7 @@ function render(){
     case "teacher":   renderTeacher(); break;
     default: renderLanding();
   }
+  atualizarBotoesFala(); // reflete o estado atual da leitura nos botões recém-criados
 }
 
 function goHome(){ clearInterval(estudoTimer); State.tela="home"; render(); }
@@ -1757,6 +1870,19 @@ function startExercises(){
   Sess = { idx:0, vidas:3, acertos:0, erros:0, xpGanho:0, respondido:false, acertouAtual:false,
            selecionado:null, respAluno:"", total:ordenados.length, exercicios:ordenados, revisao:[] };
   State.tela="exercise"; render();
+  agendarAutoLeitura();
+}
+// Auto-leitura opcional: 1s após a questão aparecer, lê o enunciado (se ativado no perfil).
+let autoLerTimer = null;
+function agendarAutoLeitura(){
+  clearTimeout(autoLerTimer);
+  if(!autoLerLigado() || !Fala.ok()) return;
+  autoLerTimer = setTimeout(()=>{
+    if(State.tela==="exercise" && Sess && !Sess.respondido){
+      const ex = Sess.exercicios[Sess.idx];
+      if(ex) Fala.falarSequencia(segmentosQuestao(ex));
+    }
+  }, 1000);
 }
 
 function renderExercise(){
@@ -1823,7 +1949,7 @@ function renderExercise(){
         ${ex.nivel?`<span class="pill-tag" style="background:${nivelDificuldadeCor(ex.nivel)}">${nivelDificuldadeLabel(ex.nivel)} • +${xpDaQuestao(ex)} XP</span>`:''}
       </div>
       <div class="q-prompt">${esc(ex.enunciado)}</div>
-      ${Fala.ok()?`<div style="margin:-4px 0 12px">${botaoFala('lerQuestao','Ouvir a pergunta')}</div>`:''}
+      ${Fala.ok()?`<div style="text-align:center;margin:-4px 0 14px">${botaoFala('lerQuestao','Ouvir a pergunta')}</div>`:''}
       <div id="optWrap">${body}</div>
     </div>
     ${footer}
@@ -1834,6 +1960,8 @@ function tipoLabel(t){ return t==="mc"?"Múltipla escolha":(t==="vf"?"Verdadeiro
 function selectOpt(i){
   if(Sess.respondido) return;
   Sess.selecionado=i; renderExercise();
+  // lê em voz alta a alternativa escolhida antes de confirmar
+  falarSelecao(Sess.exercicios[Sess.idx], i);
 }
 function onFillInput(){
   const v=document.getElementById("fillAns");
@@ -1874,10 +2002,15 @@ function checkAnswer(){
   });
   if(ok){
     Sess.acertos++; Sess.xpGanho += xpDaQuestao(ex); Sound.correct(); renderExercise();
+    Fala.ler("Muito bem! Você acertou!", true); // voz animada
   } else {
     Sess.erros++; Sess.vidas--; Sound.wrong(); renderExercise();
     const wrap=document.getElementById("optWrap");
     if(wrap) wrap.classList.add("shake");
+    // feedback falado ao errar — protegido para não ser cortado pela tela de explicação
+    const respCorreta = ex.tipo==="fill" ? (ex.resposta||"") : (ex.opcoes? ex.opcoes[ex.correta] : "");
+    Fala._protegerUmaVez = true;
+    Fala.ler("Ops! A resposta certa era "+respCorreta+". Tente na próxima!");
     // mostra o feedback vermelho por um instante e então gera a explicação por IA
     setTimeout(()=>gerarExplicacao(), 950);
   }
@@ -1890,6 +2023,7 @@ function nextExercise(){
     // de explicação seria bloqueada pela guarda State.tela!=="exercise".
     State.tela="exercise";
     renderExercise();
+    agendarAutoLeitura();
   } else {
     // concluiu todos
     finishLesson();
@@ -2216,12 +2350,14 @@ function renderProfile(){
       ${rows}
 
       <button class="btn ${PROFILE.som?'blue':'gray'}" style="margin-top:14px" onclick="App.toggleSound()">${PROFILE.som?'🔊 Som: Ligado':'🔇 Som: Desligado'}</button>
+      ${Fala.ok()?`<button class="btn ${autoLerLigado()?'blue':'gray'}" style="margin-top:10px" onclick="App.toggleAutoLer()">${autoLerLigado()?'🗣️ Ler perguntas sozinho: Ligado':'🤫 Ler perguntas sozinho: Desligado'}</button>`:''}
       <button class="btn gray" style="margin-top:10px" onclick="App.resetProgress()">🗑️ Zerar meu progresso</button>
       <button class="btn gray" style="margin-top:10px" onclick="App.logout()">🚪 Sair da conta</button>
     </div>
   </div>`;
 }
 function toggleSound(){ PROFILE.som=!PROFILE.som; saveProfile(); if(PROFILE.som){ Sound.init(); Sound.correct(); } render(); }
+function toggleAutoLer(){ const novo=!autoLerLigado(); salvarAutoLer(novo); if(novo && Fala.ok()) Fala.ler("Pronto! Agora eu vou ler as perguntas para você.", true); render(); }
 // Permite corrigir nível/ano/turma de uma conta já criada (resolve lições "sumidas").
 function onPerfilNivel(v){ const t=val('pfTurma'); if(t!=null) ALUNO.turma=t.trim().toUpperCase(); ALUNO.nivel=v; ALUNO.ano=""; render(); }
 function salvarDadosEscolares(){
@@ -3160,6 +3296,7 @@ async function salvarConta(){
 window.App = {
   goHome, openSubject, openLesson, startExercises, selectOpt, onFillInput,
   checkAnswer, nextExercise, continuarAposExplicacao, confirmQuit, openProfile, resetProgress, toggleSound,
+  toggleAutoLer,
   onPerfilNivel, salvarDadosEscolares,
   // leitura em voz alta (TTS)
   lerResumo, lerQuestao, lerExplicacao,
