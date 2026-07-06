@@ -89,6 +89,8 @@ body{
 .btn.blue{ background:var(--blue); box-shadow:0 4px 0 #1899d6; }
 .btn.blue:active{ box-shadow:0 1px 0 #1899d6; }
 .btn.red{ background:var(--red); box-shadow:0 4px 0 #e63939; }
+.btn.orange{ background:#e67e22; box-shadow:0 4px 0 #ca6a15; }
+.btn.orange:active{ box-shadow:0 1px 0 #ca6a15; }
 .btn.gray{ background:#fff; color:var(--gray-d); box-shadow:0 4px 0 var(--gray); border:2px solid var(--gray); }
 .btn.gray:active{ box-shadow:0 1px 0 var(--gray); }
 .btn.small{ min-height:44px; font-size:14px; padding:10px 14px; width:auto; }
@@ -3352,6 +3354,36 @@ async function removerAluno(id){
     render();
   }catch(e){ toast("Erro ao remover o aluno. Verifique a conexão."); }
 }
+// Zera TODO o progresso de um aluno (mantém a conta). Só para alunos das turmas do professor.
+async function zerarProgressoAluno(id){
+  const aluno=(Teacher.prog.alunos||[]).find(a=>a.id===id);
+  if(!aluno){ toast("Aluno não encontrado."); return; }
+  // Segurança: o aluno precisa estar no escopo (turma+ano) do professor logado.
+  if(!alunoNoEscopo(aluno, PROFESSOR)){ toast("Você só pode zerar o progresso de alunos das suas turmas."); return; }
+  if(!confirm(`Tem certeza que deseja zerar todo o progresso de ${aluno.nome}?\nEsta ação não pode ser desfeita.`)) return;
+  toast("Zerando progresso...");
+  try{
+    // a) apaga os registros de progresso do aluno
+    const snapP = await db.collection("progresso").where("alunoId","==",id).get();
+    await Promise.all(snapP.docs.map(d=>d.ref.delete()));
+    // b) apaga as premiações conquistadas pelo aluno
+    const snapPrem = await db.collection("premiacoes_alunos").where("alunoId","==",id).get();
+    await Promise.all(snapPrem.docs.map(d=>d.ref.delete()));
+    // c) zera a gamificação no doc do aluno (preserva nome/idade/ano/turma/senha)
+    const g = novaGamificacao();
+    const zerado = { xpTotal:0, streak:0, ultimoDia:null, medalhas:[], premiacoes:[], premiacoesInfo:{}, disciplinas:g.disciplinas, licoesConcluidas:[] };
+    await db.collection("alunos").doc(id).set(zerado, { merge:true });
+    // d) 'licoes_geradas' é um cache de conteúdo por LIÇÃO (resumo/exercícios) compartilhado
+    //    entre todos os alunos — NÃO há documento vinculado a um aluno, então nada a apagar.
+    // atualiza o estado local em tempo real (sem recarregar)
+    Teacher.prog.progresso = (Teacher.prog.progresso||[]).filter(p=>p.alunoId!==id);
+    Object.assign(aluno, zerado);
+    render();
+    toast(`✅ Progresso de ${aluno.nome} zerado com sucesso`);
+  }catch(e){
+    toast("Erro ao zerar o progresso. Verifique a conexão e as regras do Firestore.");
+  }
+}
 function setProgTurma(v){ Teacher.prog.fTurma=v; render(); }
 function setProgDisc(v){ Teacher.prog.fDisc=v; render(); }
 function setProgPeriodo(v){ Teacher.prog.fPeriodo=v; render(); }
@@ -3488,9 +3520,10 @@ function teacherProgressTab(){
         <b style="color:#9b59b6">${pct}%</b>
       </div>
       <div class="prog-bar-mini"><div style="width:${pct}%;background:#9b59b6"></div></div>
-      <div style="display:flex;gap:8px;margin-top:10px">
-        <button class="btn gray small" style="flex:1" onclick="App.redefinirSenhaAluno('${a.id}')">🔑 Redefinir senha</button>
-        <button class="btn red small" style="flex:1" onclick="App.removerAluno('${a.id}')">🗑️ Remover</button>
+      <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
+        <button class="btn gray small" style="flex:1;min-width:130px" onclick="App.redefinirSenhaAluno('${a.id}')">🔑 Redefinir senha</button>
+        <button class="btn orange small" style="flex:1;min-width:130px" onclick="App.zerarProgressoAluno('${a.id}')">🔄 Zerar Progresso</button>
+        <button class="btn red small" style="flex:1;min-width:130px" onclick="App.removerAluno('${a.id}')">🗑️ Remover</button>
       </div>
     </div>`;
   }).join("");
@@ -3665,7 +3698,7 @@ window.App = {
   // rendimento (Fase C)
   recarregarRendimento, setProgTurma, setProgDisc, setProgPeriodo,
   // gestão de alunos
-  redefinirSenhaAluno, removerAluno,
+  redefinirSenhaAluno, removerAluno, zerarProgressoAluno,
   // premiações (Fase D)
   setPremCriterio, criarPremiacao, excluirPremiacao,
   // conta do professor
