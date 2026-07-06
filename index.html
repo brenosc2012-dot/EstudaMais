@@ -881,7 +881,7 @@ function saveProfile(){
 // ----- Sessão local (quem está logado neste aparelho) -----
 function salvarSessao(){ try{ if(SESSAO) localStorage.setItem(SESSAO_KEY, JSON.stringify(SESSAO)); else localStorage.removeItem(SESSAO_KEY); }catch(e){} }
 function carregarSessao(){ try{ const r=localStorage.getItem(SESSAO_KEY); if(r) SESSAO=JSON.parse(r); }catch(e){ SESSAO=null; } }
-function logout(){ SESSAO=null; ALUNO=null; PROFESSOR=null; PROFILE={}; salvarSessao(); try{ localStorage.removeItem(ALUNO_CACHE_KEY); }catch(e){} State.tela="landing"; render(); }
+function logout(){ try{ if(Teacher.editingLesson) limparMateriaisPendentes(Teacher.editingLesson); }catch(e){} SESSAO=null; ALUNO=null; PROFESSOR=null; PROFILE={}; salvarSessao(); try{ localStorage.removeItem(ALUNO_CACHE_KEY); }catch(e){} State.tela="landing"; render(); }
 
 function subjById(id){ return SUBJECTS.find(s=>s.id===id); }
 
@@ -2456,6 +2456,8 @@ function renderTeacher(){
   </div>`;
 }
 function teacherTab(t){
+  // ao sair do editor sem salvar, remove do Storage os anexos ainda não salvos
+  if(t!=="novo" && Teacher.editingLesson) limparMateriaisPendentes(Teacher.editingLesson);
   if(t!=="novo") Teacher.editingLesson=null;
   Teacher.tab=t;
   if(t==="progresso" && !Teacher.prog.carregada && !Teacher.prog.carregando){ carregarRendimento(); return; }
@@ -2501,7 +2503,7 @@ function escopoLicaoLabel(l){
 function teacherSelectSubj(v){ Teacher.subj=v; render(); }
 
 function resetIaEstado(){ Teacher.gerando=false; Teacher.regenerando=false; Teacher.previewing=false; Teacher.iaErro=""; Teacher.iaConfigAberta=false; }
-function newLesson(){ Teacher.editingLesson={ id:null, titulo:"", texto:"", exercicios:[], turma:"", nivel:"", ano:"", materialUrls:[], materialNomes:[], materialTipos:[], materialTexto:"", _persistido:false }; resetIaEstado(); Teacher.upload={ ativo:false, pct:0, nome:"", lendo:false }; Teacher.tab="novo"; render(); }
+function newLesson(){ Teacher.editingLesson={ id:null, titulo:"", texto:"", exercicios:[], turma:"", nivel:"", ano:"", materialUrls:[], materialNomes:[], materialTipos:[], materialTexto:"", _persistido:false, _materialPendentes:[] }; resetIaEstado(); Teacher.upload={ ativo:false, pct:0, nome:"", lendo:false }; Teacher.tab="novo"; render(); }
 function editLesson(id){
   const l=(DATA[Teacher.subj]||[]).find(x=>x.id===id);
   if(!l) return;
@@ -2511,6 +2513,7 @@ function editLesson(id){
   // garante os arrays de material em lições antigas (compatibilidade)
   const L=Teacher.editingLesson;
   L.materialUrls=L.materialUrls||[]; L.materialNomes=L.materialNomes||[]; L.materialTipos=L.materialTipos||[]; L.materialTexto=L.materialTexto||"";
+  L._materialPendentes=[]; // anexos enviados nesta sessão de edição ainda não salvos
   resetIaEstado(); Teacher.upload={ ativo:false, pct:0, nome:"", lendo:false }; Teacher.tab="novo"; render();
 }
 async function deleteLesson(id){
@@ -2568,7 +2571,7 @@ function teacherEditorTab(){
 
     <button class="btn blue" style="margin-top:8px" onclick="App.previewLesson()">👁️ Pré-visualizar (como o aluno vê)</button>
     <button class="btn" style="margin-top:10px" onclick="App.saveLesson()">💾 Salvar lição</button>
-    <button class="btn gray" style="margin-top:10px" onclick="App.teacherTab('licoes')">Cancelar</button>`;
+    <button class="btn gray" style="margin-top:10px" onclick="App.cancelarEdicaoLicao()">Cancelar</button>`;
 }
 function previewLesson(){ syncTextInputs(); Teacher.previewing=true; render(); }
 function fecharPreview(){ Teacher.previewing=false; render(); }
@@ -2741,6 +2744,8 @@ async function onSelecionarMateriais(fileList){
       // 2) faz o upload para o Storage (barra de progresso)
       const url = await uploadMaterialStorage(profId, L.id, f);
       L.materialUrls.push(url); L.materialNomes.push(f.name); L.materialTipos.push(f.type||"");
+      // marca como pendente (ainda não salvo no Firestore) para limpeza se cancelar
+      L._materialPendentes = L._materialPendentes || []; L._materialPendentes.push(url);
     }catch(e){
       algumErro=true;
       console.warn("Falha no material", f.name, e);
@@ -2763,12 +2768,31 @@ async function removerMaterial(i){
   // remove do Storage (best-effort — se falhar, seguimos removendo a referência)
   try{ if(storage && url) await storage.refFromURL(url).delete(); }catch(e){ console.warn("Não foi possível apagar do Storage:", e); }
   L.materialUrls.splice(i,1); L.materialNomes.splice(i,1); L.materialTipos.splice(i,1);
+  // já apagamos do Storage: tira da lista de pendentes para não tentar apagar de novo ao cancelar
+  if(Array.isArray(L._materialPendentes)){ const pi=L._materialPendentes.indexOf(url); if(pi>=0) L._materialPendentes.splice(pi,1); }
   // se a lição já existe, reflete a remoção imediatamente no Firestore
   if(L._persistido && L.id){
     try{ await db.collection("licoes").doc(L.id).set({ materialUrls:L.materialUrls, materialNomes:L.materialNomes, materialTipos:L.materialTipos }, { merge:true }); }catch(e){}
   }
   render();
   toast("Documento removido.");
+}
+
+// Apaga do Storage os anexos enviados nesta edição que ainda NÃO foram salvos na lição
+// (best-effort, em segundo plano) — evita arquivos órfãos ao cancelar/trocar de aba.
+function limparMateriaisPendentes(L){
+  const pend = (L && Array.isArray(L._materialPendentes)) ? L._materialPendentes.slice() : [];
+  if(L) L._materialPendentes = [];
+  if(!storage || !pend.length) return;
+  pend.forEach(url=>{ try{ storage.refFromURL(url).delete().catch(function(){}); }catch(e){} });
+}
+
+// Cancela a edição da lição, descartando (e apagando do Storage) anexos não salvos.
+function cancelarEdicaoLicao(){
+  const L=Teacher.editingLesson;
+  const pend = (L && Array.isArray(L._materialPendentes)) ? L._materialPendentes.length : 0;
+  if(pend && !confirm(`Cancelar a edição? ${pend} documento(s) anexado(s) mas ainda não salvos serão descartados.`)) return;
+  teacherTab("licoes"); // teacherTab faz a limpeza dos pendentes e volta à lista
 }
 
 // Painel "Material de Apoio" no editor de lição.
@@ -3226,6 +3250,7 @@ async function saveLesson(){
     if(!DATA[disc]) DATA[disc]=[];
     DATA[disc].push({ id:L.id, titulo:L.titulo, texto:L.texto, exercicios:L.exercicios, resumoIA:"", explicacoes:{}, turma:turmaN, ano:anoN, nivel:nivelN, materialUrls:materialUrls, materialNomes:materialNomes, materialTipos:materialTipos, materialTexto:materialTexto });
 
+    L._materialPendentes=[]; // anexos agora persistidos — não devem ser limpos
     Teacher.editingLesson=null; Teacher.tab="licoes";
     toast("Lição salva com sucesso! ✅");
     render();
@@ -3615,7 +3640,7 @@ window.App = {
   setExEnun, setExResp, setExNivel, setOpt, setCorrect, addOpt, removeOpt, saveLesson,
   previewLesson, fecharPreview,
   // material de apoio (upload/remoção de documentos)
-  onSelecionarMateriais, removerMaterial,
+  onSelecionarMateriais, removerMaterial, cancelarEdicaoLicao,
   // rendimento (Fase C)
   recarregarRendimento, setProgTurma, setProgDisc, setProgPeriodo,
   // gestão de alunos
