@@ -18,8 +18,10 @@ Ciências e Inglês.
 O núcleo do app é o **`index.html`** (HTML + CSS + JS puro, tudo inline; sem build/bundler).
 Há poucos arquivos de apoio na raiz: `manifest.json`, `sw.js` (service worker) e `icon.svg`
 para o **PWA** (instalável + offline), e `firestore.rules` (regras de partida do Firestore).
-Firebase entra por CDN. Funciona offline após o primeiro carregamento (o service worker
-faz cache do app shell; HTML em network-first para sempre pegar a versão fresca online).
+Firebase entra por CDN (app + firestore + **storage**). Funciona offline após o primeiro
+carregamento (o service worker faz cache do app shell; HTML em network-first para sempre
+pegar a versão fresca online). Há também `storage.rules` (regras do Firebase Storage) e,
+via CDN, **PDF.js** e **mammoth.js** para extrair texto de documentos anexados às lições.
 
 ## Como rodar
 
@@ -87,9 +89,20 @@ do Firestore (projeto `estudamais-5cb1b`). O Firebase é carregado por **CDN com
 inicializado em `initFirebase()` → `db = firebase.firestore()` (com `enablePersistence`
 best-effort para cache offline).
 
-- Documento Firestore: `{ disciplina, titulo, conteudo, exercicios, criadoEm, resumoIA, explicacoes }`.
-- Lição interna no app: `{ id, titulo, texto, exercicios, resumoIA, explicacoes }`
+- Documento Firestore: `{ disciplina, titulo, conteudo, exercicios, criadoEm, resumoIA, explicacoes,
+  turma, ano, nivel, materialUrls, materialNomes, materialTipos, materialTexto }`.
+- Lição interna no app: `{ id, titulo, texto, exercicios, resumoIA, explicacoes, turma, ano, nivel,
+  materialUrls, materialNomes, materialTipos, materialTexto }`
   (note: `conteudo`↔`texto`, `id` = id do documento). Conversão em `licaoDeDoc()`.
+- **Material de apoio (documentos anexados):** o professor anexa PDF/DOC/DOCX/TXT/PNG/JPG
+  (até 10MB, 3 por lição) no editor. Vão para o **Firebase Storage** em
+  `materiais/{professorId}/{licaoId}/{arquivo}`; as URLs/nomes/tipos ficam na lição.
+  O texto é extraído no navegador (TXT via FileReader, PDF via PDF.js, DOCX via mammoth,
+  imagens via **visão** da OpenAI/OCR — `ocrImagemIA`), limitado a 8.000 caracteres em
+  `materialTexto`, e alimenta a geração de exercícios e o resumo. `storage = firebase.storage()`
+  em `initFirebase()`; regras em `storage.rules`. O aluno vê os anexos na tela de estudo
+  (seção colapsável "📚 Material de Apoio"). Lições novas ganham o id (`db.collection().doc().id`)
+  ao anexar o 1º arquivo; `L._persistido` distingue criar vs. editar em `saveLesson()`.
 - **Conteúdo de IA é persistido no Firestore para compartilhar entre dispositivos:**
   `resumoIA` (resumo de estudo, string) e `explicacoes` (mapa `{exId: texto}` das
   explicações de erro). Gerado uma vez por qualquer aparelho e salvo no doc; os demais

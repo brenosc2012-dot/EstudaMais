@@ -1,0 +1,22 @@
+rules_version = '2';
+// ============================================================
+// EstudaMais — Regras do Firebase Storage (PONTO DE PARTIDA)
+// ------------------------------------------------------------
+// Materiais de apoio anexados pelo professor às lições ficam em
+//   materiais/{professorId}/{licaoId}/{arquivo}
+//
+// ⚠️ SEGURANÇA: como o app é client-only e usa "hash simples" (sem Firebase
+// Authentication), estas regras liberam leitura/escrita para o app funcionar.
+// Qualquer pessoa com o endereço do projeto pode ler/gravar os arquivos.
+// Use somente em contexto fechado (turma/família). Para um app público,
+// migre para Firebase Authentication + regras por usuário.
+//
+// Como aplicar: Firebase Console → Storage → Regras → cole e publique.
+// ============================================================
+service firebase.storage {
+  match /b/{bucket}/o {
+    match /materiais/{professorId}/{licaoId}/{arquivo} {
+      allow read, write: if true;
+    }
+  }
+}
