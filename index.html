@@ -3268,13 +3268,21 @@ function escopoProfessor(prof){
     anos:   Array.isArray(p.anos)   ? p.anos   : [],
   };
 }
-// Um aluno está no escopo do professor quando a LETRA da turma bate e — se o
-// professor definiu os anos que leciona — o ANO também bate. Contas legadas
-// (sem `anos`) caem no comportamento antigo: filtram só pela turma.
+// O escopo é considerado COMPLETO só quando o professor tem turmas E anos.
+// Sem isso não dá para identificar as turmas dele — e NÃO usamos fallback
+// (mostrar todos), pois vazaria alunos de outros anos/turmas.
+function escopoCompleto(prof){
+  const e = escopoProfessor(prof);
+  return e.turmas.length>0 && e.anos.length>0;
+}
+// Um aluno está no escopo do professor quando a LETRA da turma E o ANO batem.
+// Comparação normalizada (norm) para tolerar acentos/maiúsculas/espaços.
+// Se o escopo do professor estiver incompleto, NINGUÉM entra (sem fallback).
 function alunoNoEscopo(aluno, prof){
   const e = escopoProfessor(prof);
-  const turmaOk = e.turmas.length ? e.turmas.some(t=>norm(t)===norm(aluno.turma)) : false;
-  const anoOk   = e.anos.length   ? e.anos.some(a=>norm(a)===norm(aluno.ano))   : true;
+  if(!e.turmas.length || !e.anos.length) return false;
+  const turmaOk = e.turmas.some(t=>norm(t)===norm(aluno.turma));
+  const anoOk   = e.anos.some(a=>norm(a)===norm(aluno.ano));
   return turmaOk && anoOk;
 }
 // % de acertos de um registro de progresso (prefere o campo salvo; senão calcula).
@@ -3288,22 +3296,20 @@ async function carregarRendimento(){
   try{
     const professor = PROFESSOR || {};
     const esc0 = escopoProfessor(professor);
-    console.log('Turmas do professor:', esc0.turmas);
-    console.log('Anos do professor:', esc0.anos);
+    // ---- DIAGNÓSTICO (abra o console para conferir os dados exatos do Firestore) ----
+    console.log('Professor:', JSON.stringify(professor));
+    console.log('Turmas do professor:', professor.turmas);
+    console.log('Anos do professor:', professor.anos);
     const turmas = esc0.turmas;
+    // carrega TODOS os alunos para o diagnóstico (e para filtrar em memória por ano+turma)
     let candidatos=[];
-    if(turmas.length){
-      if(turmas.length<=10){
-        const snap = await db.collection("alunos").where("turma","in",turmas).get();
-        snap.forEach(d=> candidatos.push(Object.assign({ id:d.id }, d.data())));
-      } else { // 'in' aceita no máximo 10 valores → carrega todos e filtra em memória
-        const snap = await db.collection("alunos").get();
-        snap.forEach(d=> candidatos.push(Object.assign({ id:d.id }, d.data())));
-      }
-    }
-    // Bug 1: só entram alunos cuja turma E ano correspondem ao que o professor leciona.
+    const snap = await db.collection("alunos").get();
+    snap.forEach(d=> candidatos.push(Object.assign({ id:d.id }, d.data())));
+    console.log('Todos os alunos:', candidatos.map(a=>({ nome:a.nome, ano:a.ano, turma:a.turma })));
+    // só entram alunos cuja turma E ano correspondem ao que o professor leciona (sem fallback).
     const alunos = candidatos.filter(a=> alunoNoEscopo(a, professor));
-    console.log('Alunos filtrados:', alunos.length);
+    console.log('Alunos filtrados:', alunos.map(a=>({ nome:a.nome, ano:a.ano, turma:a.turma })));
+    console.log('Total de alunos filtrados:', alunos.length);
     const ids = {}; alunos.forEach(a=> ids[a.id]=true);
     const progresso=[];
     const snapP = await db.collection("progresso").get();
@@ -3408,9 +3414,24 @@ function teacherProgressTab(){
     <button class="btn gray small" style="width:100%;margin:4px 0 6px" onclick="App.recarregarRendimento()">🔄 Atualizar dados</button>`;
 
   if(P.erro) return filtros + `<div class="ia-erro">⚠️ ${esc(P.erro)}</div>`;
+
+  // Escopo incompleto: sem turmas E/OU anos cadastrados não dá para saber quais alunos
+  // são das turmas do professor. Orienta a atualizar o perfil — NUNCA mostra todos.
+  const e0 = escopoProfessor(PROFESSOR);
+  if(!e0.turmas.length || !e0.anos.length){
+    const faltando=[];
+    if(!e0.turmas.length) faltando.push("as <b>turmas</b>");
+    if(!e0.anos.length)   faltando.push("os <b>anos/séries</b>");
+    return filtros + `<div class="empty"><div class="em">⚙️</div>
+      <p><b>Complete seu perfil para ver o rendimento.</b><br>
+      Você ainda não cadastrou ${faltando.join(" e ")} que leciona. Sem essa informação
+      não é possível identificar quais alunos são das suas turmas.</p>
+      <button class="btn" style="margin-top:12px" onclick="App.teacherTab('conta')">👤 Atualizar meu perfil</button>
+    </div>`;
+  }
+
   if(!P.alunos.length){
-    const anosProf = escopoProfessor(PROFESSOR).anos;
-    const escopoTxt = `turmas ${turmas.map(esc).join(", ")||'—'}${anosProf.length?(' • anos '+anosProf.map(esc).join(", ")):''}`;
+    const escopoTxt = `turmas ${e0.turmas.map(esc).join(", ")} • anos ${e0.anos.map(esc).join(", ")}`;
     return filtros + `<div class="empty"><div class="em">👥</div><p>Nenhum aluno encontrado no seu escopo (${escopoTxt}).<br>Os alunos aparecem aqui após se cadastrarem no mesmo ano e turma.</p></div>`;
   }
 
