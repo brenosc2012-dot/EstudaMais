@@ -1607,19 +1607,8 @@ function renderLessons(){
   const licoes = licoesDoAluno(s.id);
   let list;
   if(licoes.length===0){
-    // diagnóstico: mostra as lições que existem mas estão fora do escopo do aluno
-    const todas = DATA[s.id]||[];
-    const ocultas = todas.length ? `<div class="sec-title">🔒 Existem ${todas.length} lição(ões) nesta disciplina, mas fora da sua turma/ano</div>` +
-      todas.map(l=>{
-        const motivo = motivoOculta(l);
-        return `<div class="t-lesson-row" style="opacity:.85">
-          <span style="font-size:20px">🔒</span>
-          <div class="info"><div class="t">${esc(l.titulo)}</div>
-            <div class="d">Destinada a: ${esc(escopoLicaoLabel(l))}${motivo?` <span style="color:var(--red)">— não bate: ${esc(motivo)}</span>`:''}</div></div>
-        </div>`;
-      }).join("") +
-      `<p style="font-size:12px;color:#777;margin-top:8px">Ajuste seus dados no 👤 Perfil para baterem com o escopo acima, ou peça ao professor para corrigir a turma/ano da lição.</p>` : "";
-    list = `<div class="empty"><div class="em">📭</div><p>Nenhuma lição para <b>Turma ${esc(PROFILE.turma||'?')} • ${esc(PROFILE.ano||'?')}</b> ainda.</p></div>${ocultas}`;
+    // O aluno vê apenas as lições da sua turma/ano; nada sobre lições fora do escopo.
+    list = `<div class="empty"><div class="em">📭</div><p>Nenhuma lição disponível ainda</p></div>`;
   } else {
     list = licoes.map((l,i)=>{
       const feita = d.licoesConcluidas.indexOf(l.id)>=0;
@@ -1687,17 +1676,6 @@ function diagLicoes(){
   console.log(`=== ${visiveis}/${total} lições visíveis para ${ALUNO.nome}`);
 }
 function licaoVisivel(l){ return ALUNO ? licaoVisivelPara(l, ALUNO) : true; }
-// Diagnóstico: por que uma lição está oculta para o aluno (campos que não casam).
-function motivoOculta(l){
-  if(!ALUNO) return "";
-  const m=[];
-  if(!norm(l.ano))                                  m.push('a lição está sem ANO definido (o professor precisa escolher o ano)');
-  else if(!mesmoAno(l.ano, ALUNO.ano))              m.push(`ano "${l.ano}" ≠ seu "${ALUNO.ano||'?'}"`);
-  if(!norm(l.turma))                                m.push('a lição está sem TURMA definida (o professor precisa escolher a turma)');
-  else if(!mesmaTurma(l.turma, ALUNO.turma))        m.push(`turma "${l.turma}" ≠ sua "${ALUNO.turma||'?'}"`);
-  if(l.nivel && !mesmoAno(l.nivel, ALUNO.nivel))    m.push(`nível "${nomeNivel(l.nivel)}" ≠ seu "${nomeNivel(ALUNO.nivel)}"`);
-  return m.join("; ");
-}
 function licoesDoAluno(subjId){ return (DATA[subjId]||[]).filter(licaoVisivel); }
 
 // ----- Cache compartilhado de conteúdo gerado por IA (coleção "licoes_geradas") -----
