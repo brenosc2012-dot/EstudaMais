@@ -19,8 +19,9 @@ service cloud.firestore {
   match /databases/{database}/documents {
 
     // Lições e o cache de conteúdo gerado pela IA
-    match /licoes/{id}          { allow read, write: if true; }
-    match /licoes_geradas/{id}  { allow read, write: if true; }
+    match /licoes/{id}            { allow read, write: if true; }
+    match /licoes_geradas/{id}    { allow read, write: if true; }
+    match /historias_geradas/{id} { allow read, write: if true; } // Modo História (cache)
 
     // Contas (senha guardada como hash simples — barreira, não segurança real)
     match /alunos/{id}          { allow read, write: if true; }

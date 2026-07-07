@@ -137,6 +137,7 @@ best-effort para cache offline).
 | `premiacoes` | Premiações personalizadas do professor |
 | `premiacoes_alunos` | `{alunoId}_{premiacaoId}`: conquistas |
 | `config` | doc `openai`: `{apiKey}` cadastrada no painel Admin |
+| `historias_geradas` | Cache do Modo História por lição: `{titulo, cenario, protagonista, capitulos[], desfecho_heroi, desfecho_aprendiz, geradoEm}` |
 
 Regras necessárias em `firestore.rules` (ponto de partida; ver arquivo no repo).
 
@@ -162,6 +163,24 @@ Regras necessárias em `firestore.rules` (ponto de partida; ver arquivo no repo)
   - `"vf"` (verdadeiro/falso): `opcoes:["Verdadeiro","Falso"]`, `correta:0|1`
   - `"fill"` (completar lacuna): `resposta:"<texto>"` (correção via `norm()`,
     ignora acentos/maiúsculas)
+
+### Modo História (aventura interativa)
+- Após o resumo, a tela de estudo leva à **seleção de modo** (`renderModoSelect`,
+  `State.tela="modo"`): **Clássico** (`iniciarModoClassico`) ou **História**
+  (`iniciarModoHistoria`). O Modo História dá **+50% de XP** (`Sess.xpMult=1.5`).
+- `prepararHistoria()`: memória → `historias_geradas` (Firestore) → gera pela IA
+  (`gerarHistoriaIA`, timeout 20s); se falhar, cai no Modo Clássico. Loading animado
+  (`renderHistoriaLoading`) com mensagens rotativas.
+- Reusa o motor de exercícios (`Sess`, `selectOpt`, `checkAnswer`): `Sess.modo="historia"`
+  ramifica em `responderHistoria` (narrativa de acerto/erro + explicação da IA inline,
+  sem tela `explain`). Telas: `renderHistoria` (capítulo), `renderHistoriaDone`
+  (desfecho herói >70% com confete / aprendiz com estrelas), `gameOverHistoria`.
+- Ordem **natural** das questões no Modo História (alinha com os capítulos);
+  `normalizarHistoria(h,nQ)` garante 1 capítulo por questão. Cenário detectado por
+  palavra-chave (`detectarCenario`/`cenarioArte`: floresta/espaço/mar/castelo/cidade/deserto).
+- Progresso salvo com `modo:"historia"`; conquista **"Contador de Histórias"** (5 aventuras,
+  `PROFILE.historiasCompletas`). Professor: painel por lição com toggle
+  `historiaHabilitada`, botão gerar/regenerar (`regenerarHistoriaProf`) e preview.
 
 ### Gamificação
 - `XP_POR_NIVEL=50`, `XP_POR_ACERTO=10`, `XP_BONUS_LICAO=20`.

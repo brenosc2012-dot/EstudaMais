@@ -277,6 +277,29 @@ label{ display:block; font-weight:700; font-size:14px; margin-bottom:6px; color:
 
 /* ---------- 6. CONFETE ---------- */
 .confetti{ position:absolute; top:-20px; width:10px; height:16px; opacity:.9; animation:fall linear forwards; z-index:5; }
+.confetti{ display:flex; align-items:center; justify-content:center; }
+
+/* ---------- MODO HISTÓRIA ---------- */
+.modo-card{ display:flex; align-items:center; gap:14px; text-align:left; width:100%;
+  background:#fff; border:2px solid var(--gray); border-radius:18px; padding:18px 16px;
+  margin-bottom:14px; cursor:pointer; font-family:inherit; box-shadow:0 4px 0 var(--gray);
+  transition:transform .05s, box-shadow .05s; }
+.modo-card:active{ transform:translateY(3px); box-shadow:0 1px 0 var(--gray); }
+.modo-card.historia{ border-color:#d9bfff; box-shadow:0 4px 0 #d9bfff; background:linear-gradient(#faf5ff,#fff); }
+.modo-ic{ font-size:38px; line-height:1; flex-shrink:0; }
+.modo-t{ font-size:18px; font-weight:800; color:#333; }
+.modo-d{ font-size:13px; color:#777; margin-top:2px; line-height:1.4; }
+.modo-xp{ font-size:12px; color:#fff; background:#9b59b6; border-radius:10px; padding:2px 8px; margin-left:4px; white-space:nowrap; }
+.hist-cena{ height:120px; border-radius:16px; margin:6px 0 12px; display:flex; align-items:center;
+  justify-content:center; overflow:hidden; box-shadow:inset 0 -20px 30px rgba(0,0,0,.15); }
+.hist-cena-emojis{ font-size:40px; letter-spacing:6px; filter:drop-shadow(0 2px 3px rgba(0,0,0,.25)); animation:bob 3s ease-in-out infinite; }
+@keyframes bob{ 0%,100%{ transform:translateY(0) } 50%{ transform:translateY(-8px) } }
+.hist-narrativa{ background:#fff; border:2px solid #e9d9ff; border-left:6px solid #9b59b6; border-radius:12px;
+  padding:12px 14px; font-size:15px; line-height:1.55; color:#444; font-style:italic; }
+.hist-divisor{ text-align:center; color:#9b59b6; font-weight:800; font-size:13px; margin:14px 0 10px; letter-spacing:.5px; }
+.hist-desfecho{ background:#faf5ff; border:2px solid #e9d9ff; border-radius:14px; padding:14px 16px;
+  font-size:15px; line-height:1.6; color:#444; margin:10px 0; }
+.hist-bounce{ animation:bounce 1s infinite; }
 
 /* ---------- 7. MASCOTE ---------- */
 .mascot{ width:120px; height:120px; }
@@ -761,7 +784,8 @@ function licaoDeDoc(id, d){
     materialUrls:  Array.isArray(d.materialUrls)  ? d.materialUrls  : [],
     materialNomes: Array.isArray(d.materialNomes) ? d.materialNomes : [],
     materialTipos: Array.isArray(d.materialTipos) ? d.materialTipos : [],
-    materialTexto: d.materialTexto || "" // texto extraído dos documentos (p/ IA)
+    materialTexto: d.materialTexto || "", // texto extraído dos documentos (p/ IA)
+    historiaHabilitada: d.historiaHabilitada!==false // Modo História (padrão: habilitado)
   };
 }
 function removeLicaoLocal(id){ SUBJECTS.forEach(s=>{ DATA[s.id]=(DATA[s.id]||[]).filter(l=>l.id!==id); }); }
@@ -836,7 +860,7 @@ async function seedFirestore(){
 
 // Estrutura de gamificação que vive DENTRO do doc do aluno.
 function novaGamificacao(){
-  const g={ xpTotal:0, streak:0, ultimoDia:null, medalhas:[], premiacoes:[], som:true, disciplinas:{}, licoesConcluidas:[] };
+  const g={ xpTotal:0, streak:0, ultimoDia:null, medalhas:[], premiacoes:[], som:true, disciplinas:{}, licoesConcluidas:[], historiasCompletas:[] };
   SUBJECTS.forEach(s=> g.disciplinas[s.id]={ xp:0, nivel:1, licoesConcluidas:[] });
   return g;
 }
@@ -853,6 +877,7 @@ function normalizarAluno(a){
   if(!a.disciplinas || typeof a.disciplinas!=="object") a.disciplinas={};
   SUBJECTS.forEach(s=>{ if(!a.disciplinas[s.id]) a.disciplinas[s.id]={xp:0,nivel:1,licoesConcluidas:[]}; });
   if(!Array.isArray(a.licoesConcluidas)) a.licoesConcluidas=[];
+  if(!Array.isArray(a.historiasCompletas)) a.historiasCompletas=[]; // Modo História concluídas
   if(!a.nome) a.nome="Aluno(a)";
   if(!a.nivel) a.nivel="fund1";
   // NÃO forçar um ano/turma padrão: um default (ex.: "5º ano"/"A") faria o aluno ver,
@@ -1162,6 +1187,7 @@ const ACHIEVEMENTS = [
   { id:"streak7",   icon:"⚡", titulo:"Imparável",         desc:"Mantenha uma ofensiva de 7 dias",       check:(p)=> p.streak>=7 },
   { id:"nivel5",    icon:"🏆", titulo:"Especialista",     desc:"Chegue ao nível 5 em uma disciplina",   check:(p,s)=> s.nivelMax>=5 },
   { id:"explorador",icon:"🗺️", titulo:"Explorador",       desc:"Conclua lições em 3 disciplinas",       check:(p,s)=> s.discComConcl>=3 },
+  { id:"contador",  icon:"📖", titulo:"Contador de Histórias", desc:"Complete 5 aventuras no Modo História", check:(p)=> (p.historiasCompletas||[]).length>=5 },
   { id:"mestre",    icon:"👑", titulo:"Grande Mestre",    desc:"Conclua ao menos 1 lição em todas as 9 disciplinas", check:(p,s)=> s.discComConcl>=SUBJECTS.length },
 ];
 
@@ -1262,6 +1288,10 @@ function render(){
     case "home":      renderHome(); break;
     case "lessons":   renderLessons(); break;
     case "study":     renderStudy(); break;
+    case "modo":      renderModoSelect(); break;
+    case "historiaLoading": renderHistoriaLoading(); break;
+    case "historia":  renderHistoria(); break;
+    case "historiaDone": renderHistoriaDone(); break;
     case "exercise":  renderExercise(); break;
     case "explain":   renderExplain(); break;
     case "done":      renderDone(); break;
@@ -1859,7 +1889,7 @@ function renderStudy(){
       ${materialApoioAluno(l)}
     </div>
     <div style="padding:16px;border-top:2px solid var(--gray);background:#fff">
-      <button class="btn" id="btnEstudei" disabled style="background:${s.cor};box-shadow:0 4px 0 rgba(0,0,0,.2)" onclick="App.startExercises()">
+      <button class="btn" id="btnEstudei" disabled style="background:${s.cor};box-shadow:0 4px 0 rgba(0,0,0,.2)" onclick="App.escolherModo()">
         ⏳ Aguarde <span id="estudoCount">10</span>s...
       </button>
     </div>
@@ -1905,12 +1935,15 @@ function startExercises(){
   Sound.init(); // habilita áudio após o toque do usuário
   const l=getLesson();
   if(!l || l.exercicios.length===0){ openSubject(State.subj); return; }
-  // resolve em ordem crescente de dificuldade (fácil → intermediário → difícil)
-  const ordenados = ordenarPorDificuldade(l.exercicios);
+  const modo = State.modo || "classico";
+  // história: ordem natural (alinha com os capítulos gerados); clássico: por dificuldade
+  const exs = (modo==="historia") ? l.exercicios.slice() : ordenarPorDificuldade(l.exercicios);
   Sess = { idx:0, vidas:3, acertos:0, erros:0, xpGanho:0, respondido:false, acertouAtual:false,
-           selecionado:null, respAluno:"", total:ordenados.length, exercicios:ordenados, revisao:[] };
-  State.tela="exercise"; render();
-  agendarAutoLeitura();
+           selecionado:null, respAluno:"", total:exs.length, exercicios:exs, revisao:[],
+           modo:modo, historia:(modo==="historia"?State._historia:null), xpMult:(modo==="historia"?1.5:1), feedback:null };
+  State.tela = (modo==="historia") ? "historia" : "exercise";
+  render();
+  if(modo!=="historia") agendarAutoLeitura();
 }
 // Auto-leitura opcional: 1s após a questão aparecer, lê o enunciado (se ativado no perfil).
 let autoLerTimer = null;
@@ -1999,7 +2032,7 @@ function tipoLabel(t){ return t==="mc"?"Múltipla escolha":(t==="vf"?"Verdadeiro
 
 function selectOpt(i){
   if(Sess.respondido) return;
-  Sess.selecionado=i; renderExercise();
+  Sess.selecionado=i; (Sess && Sess.modo==="historia") ? renderHistoria() : renderExercise();
   // lê em voz alta a alternativa escolhida antes de confirmar
   falarSelecao(Sess.exercicios[Sess.idx], i);
 }
@@ -2040,8 +2073,10 @@ function checkAnswer(){
     correta: ex.tipo==="fill" ? (ex.resposta||"") : (ex.opcoes? ex.opcoes[ex.correta] : ""),
     resp: Sess.respAluno, ok: ok
   });
+  const xpQ = Math.round(xpDaQuestao(ex) * (Sess.xpMult||1)); // Modo História: +50%
+  if(Sess.modo==="historia"){ responderHistoria(ok, ex, xpQ); return; }
   if(ok){
-    Sess.acertos++; Sess.xpGanho += xpDaQuestao(ex); Sound.correct(); renderExercise();
+    Sess.acertos++; Sess.xpGanho += xpQ; Sound.correct(); renderExercise();
     Fala.ler("Muito bem! Você acertou!", true); // voz animada
   } else {
     Sess.erros++; Sess.vidas--; Sound.wrong(); renderExercise();
@@ -2238,7 +2273,7 @@ function finishLesson(){
 }
 
 // Grava o desempenho do aluno na lição (doc {alunoId}_{licaoId}) para o painel do professor.
-async function salvarProgresso(subjId, lessonId, sess){
+async function salvarProgresso(subjId, lessonId, sess, modo){
   if(!db || !ALUNO || !ALUNO.id || !lessonId){ console.warn('salvarProgresso: sem db/aluno/lição — progresso não gravado.'); return; }
   const total = sess.total||0;
   const percentualAcertos = total>0 ? Math.round(sess.acertos/total*100) : 0;
@@ -2247,7 +2282,7 @@ async function salvarProgresso(subjId, lessonId, sess){
       alunoId: ALUNO.id, alunoNome: ALUNO.nome, licaoId: lessonId, disciplina: subjId,
       turma: ALUNO.turma, ano: ALUNO.ano, nivel: ALUNO.nivel,
       acertos: sess.acertos, erros: sess.erros, xpGanho: sess.xpGanho, total: total,
-      percentualAcertos: percentualAcertos,
+      percentualAcertos: percentualAcertos, modo: modo||"classico",
       concluido: true, concluidoEm: firebase.firestore.FieldValue.serverTimestamp()
     }, { merge:true });
     console.log('Progresso salvo:', ALUNO.id+"_"+lessonId, '→', sess.acertos+'/'+total, '('+percentualAcertos+'%)');
@@ -2326,7 +2361,437 @@ function launchConfetti(){
 }
 
 function confirmQuit(){
-  if(confirm("Deseja sair da atividade? Seu progresso nesta lição será perdido.")) openSubject(State.subj);
+  if(confirm("Deseja sair da atividade? Seu progresso nesta lição será perdido.")){ clearTimeout(histLoadTimer); openSubject(State.subj); }
+}
+
+/* ============================================================
+   D2) MODO HISTÓRIA INTERATIVA (aventura gerada por IA)
+   ============================================================ */
+let historiaCache = {}; // cache em memória por licaoId
+
+// ----- Cache no Firestore (coleção "historias_geradas") -----
+async function getHistoriaGerada(licaoId){
+  if(!db || !licaoId) return null;
+  try{ const d=await db.collection("historias_geradas").doc(licaoId).get(); return d.exists ? d.data() : null; }
+  catch(e){ return null; }
+}
+function salvarHistoriaGerada(licaoId, h){
+  if(!db || !licaoId || !h) return;
+  try{
+    db.collection("historias_geradas").doc(licaoId).set({
+      titulo:h.titulo, cenario:h.cenario, protagonista:h.protagonista, capitulos:h.capitulos,
+      desfecho_heroi:h.desfecho_heroi, desfecho_aprendiz:h.desfecho_aprendiz,
+      geradoEm: firebase.firestore.FieldValue.serverTimestamp(), geradoPor: deviceId()
+    }, { merge:true });
+  }catch(e){ /* best-effort */ }
+}
+function limparHistoriaGerada(licaoId){
+  if(!db || !licaoId) return;
+  try{ db.collection("historias_geradas").doc(licaoId).delete(); }catch(e){}
+}
+
+// ----- Seleção de modo (Clássico x História) -----
+function escolherModo(){
+  clearInterval(estudoTimer);
+  const l=getLesson();
+  if(!l || !l.exercicios || l.exercicios.length===0){ openSubject(State.subj); return; }
+  State.tela="modo"; render();
+}
+function renderModoSelect(){
+  const s=subjById(State.subj); const l=getLesson();
+  if(!l){ goHome(); return; }
+  const historiaOn = l.historiaHabilitada!==false;
+  app.innerHTML = `<div class="screen active">
+    <div class="topbar" style="background:${s.cor};color:#fff">
+      <button class="back-btn" style="color:#fff" onclick="App.openLesson('${l.id}')">←</button>
+      <h2>${s.icon} ${esc(l.titulo)}</h2>
+    </div>
+    <div class="content" style="display:flex;flex-direction:column;justify-content:center">
+      <h1 style="text-align:center;font-size:22px;color:${s.cor};margin-bottom:4px">Como você quer aprender hoje?</h1>
+      <p style="text-align:center;color:#777;font-size:14px;margin-bottom:18px">Escolha o seu jeito de estudar 🎒</p>
+      <button class="modo-card" onclick="App.iniciarModoClassico()">
+        <div class="modo-ic">📝</div>
+        <div><div class="modo-t">Modo Clássico</div><div class="modo-d">Responda as questões no formato tradicional.</div></div>
+      </button>
+      ${historiaOn ? `<button class="modo-card historia" onclick="App.iniciarModoHistoria()">
+        <div class="modo-ic">📖</div>
+        <div><div class="modo-t">Modo História <span class="modo-xp">⭐ +50% XP</span></div>
+        <div class="modo-d">Aprenda através de uma aventura interativa criada só para você!</div></div>
+      </button>` : `<p style="text-align:center;color:#999;font-size:13px;margin-top:6px">📖 O Modo História está desativado para esta lição.</p>`}
+    </div>
+  </div>`;
+}
+function iniciarModoClassico(){ clearInterval(histLoadTimer); State.modo="classico"; State._historia=null; startExercises(); }
+async function iniciarModoHistoria(){ await prepararHistoria(); }
+
+// ----- Carrega/gera a história e inicia a aventura -----
+let histLoadTimer = null;
+const HIST_LOAD_MSGS = ["Construindo o cenário...","Apresentando os personagens...","Preparando os desafios...","Escrevendo a aventura..."];
+async function prepararHistoria(){
+  const l=getLesson();
+  if(!l || !l.exercicios || !l.exercicios.length){ toast("Esta lição ainda não tem exercícios."); return; }
+  const lid=l.id;
+  State.tela="historiaLoading"; State._histLoadMsg=0; render(); iniciarRotacaoHistLoad();
+  const ativo=()=> State.tela==="historiaLoading" && State.lesson===lid;
+  // 1) memória
+  if(historiaCache[lid]){ State._historia=historiaCache[lid]; iniciarHistoriaComStory(); return; }
+  // 2) Firestore
+  const cache = await getHistoriaGerada(lid);
+  if(cache && Array.isArray(cache.capitulos) && cache.capitulos.length){
+    historiaCache[lid]=cache; if(ativo()){ State._historia=cache; iniciarHistoriaComStory(); } return;
+  }
+  // 3) sem IA neste aparelho → não dá para gerar → cai no clássico
+  if(!iaConfigurada()){ toast("Modo História indisponível (IA não configurada). Vamos no Modo Clássico! 📝"); iniciarModoClassico(); return; }
+  // 4) gera pela IA (timeout de 20s dentro de chamarIA); se falhar, oferece o clássico
+  try{
+    const h = await gerarHistoriaIA(l);
+    historiaCache[lid]=h; salvarHistoriaGerada(lid, h);
+    if(ativo()){ State._historia=h; iniciarHistoriaComStory(); }
+  }catch(e){
+    console.warn("Falha ao gerar história:", e);
+    if(ativo()){ toast("Não consegui criar a aventura agora. Vamos no Modo Clássico! 📝"); iniciarModoClassico(); }
+  }
+}
+function iniciarHistoriaComStory(){
+  clearInterval(histLoadTimer);
+  const l=getLesson(); if(!l) return;
+  State._historia = normalizarHistoria(State._historia, l.exercicios.length);
+  State.modo="historia";
+  startExercises();
+}
+function renderHistoriaLoading(){
+  const i=State._histLoadMsg||0;
+  app.innerHTML = `<div class="screen active">
+    <div class="content" style="display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;background:linear-gradient(#f3e9ff,#ffffff)">
+      <div class="hist-bounce" style="font-size:64px">📖✨</div>
+      <h1 style="color:#9b59b6;font-size:22px;margin:10px 0">✨ Criando sua aventura...</h1>
+      <div class="ia-loading" style="color:#9b59b6"><span class="ia-spinner" style="border-top-color:#9b59b6"></span> <span id="histMsg">${esc(HIST_LOAD_MSGS[i%HIST_LOAD_MSGS.length])}</span></div>
+      <p style="color:#999;font-size:13px;margin-top:8px">Isso leva alguns segundos ✨</p>
+    </div>
+  </div>`;
+}
+function iniciarRotacaoHistLoad(){
+  clearInterval(histLoadTimer); State._histLoadMsg=0;
+  histLoadTimer=setInterval(()=>{
+    State._histLoadMsg=(State._histLoadMsg||0)+1;
+    const el=document.getElementById("histMsg");
+    if(el) el.textContent = HIST_LOAD_MSGS[State._histLoadMsg%HIST_LOAD_MSGS.length];
+  }, 1800);
+}
+
+// ----- Geração da história pela IA -----
+async function gerarHistoriaIA(l){
+  const pub = ALUNO ? descreverPublico(ALUNO)
+    : (function(){ const p=descreverPublicoLicao(l); return { ano:p.ano, nivel:nomeNivel(p.nivelId), idade:p.idade, frase:p.frase }; })();
+  const nQ = l.exercicios.length;
+  const questoes = l.exercicios.map((ex,i)=>{
+    if(ex.tipo==="fill") return `${i}. ${ex.enunciado} (Resposta correta: ${ex.resposta||""})`;
+    const opc=(ex.opcoes||[]).map((o,j)=>`${String.fromCharCode(65+j)}) ${o}`).join("  ");
+    const correta = ex.opcoes ? ex.opcoes[ex.correta] : "";
+    return `${i}. ${ex.enunciado} | Opções: ${opc} | Correta: ${correta}`;
+  }).join("\n");
+  const prompt =
+`Você é um escritor criativo e professor do ${pub.ano} do ${pub.nivel}.
+Crie uma história interativa curta (aventura, mistério ou fantasia) para uma criança de ${pub.idade} anos, onde cada capítulo apresenta uma situação que só pode ser resolvida respondendo uma questão educacional.
+
+A história deve:
+- Ter um protagonista com nome divertido que a criança controla
+- Ser ambientada em um cenário adequado à faixa etária (floresta mágica, espaço sideral, fundo do mar, castelo, cidade futurista, etc.)
+- Ter ${nQ} capítulos, um para cada questão
+- Cada capítulo deve apresentar um desafio narrativo que só é resolvido com a resposta correta da questão educacional
+- Se o aluno acertar: a história avança positivamente
+- Se o aluno errar: a história tem um contratempo mas continua
+- Ter um desfecho épico se o aluno acertar mais de 70% das questões
+- Ter um desfecho encorajador se acertar menos de 70%
+
+Use as seguintes questões educacionais como base para os desafios:
+${questoes}
+
+Conteúdo da lição: ${l.texto||""}
+
+Retorne APENAS um JSON válido:
+{
+  "titulo": "título da história",
+  "cenario": "descrição do cenário em 2 frases",
+  "protagonista": "nome do personagem",
+  "capitulos": [
+    {
+      "narrativa_intro": "texto da situação que leva à questão (2-3 frases)",
+      "questao_index": 0,
+      "narrativa_acerto": "o que acontece na história se acertar (1-2 frases)",
+      "narrativa_erro": "o que acontece na história se errar (1-2 frases, sem punição severa)"
+    }
+  ],
+  "desfecho_heroi": "texto final se acertar mais de 70% (3-4 frases épicas)",
+  "desfecho_aprendiz": "texto final encorajador se acertar menos de 70% (3-4 frases)"
+}`;
+  const txt = await chamarIA(prompt, 20000);
+  const h = parseHistoriaIA(txt);
+  if(!h || !Array.isArray(h.capitulos) || !h.capitulos.length) throw new Error("A IA não retornou uma história válida.");
+  return h;
+}
+function parseHistoriaIA(texto){
+  if(!texto) return null;
+  let s=String(texto).trim().replace(/^```(?:json)?\s*/i,"").replace(/\s*```$/,"");
+  const ini=s.indexOf("{"), fim=s.lastIndexOf("}");
+  if(ini>=0 && fim>ini) s=s.slice(ini,fim+1);
+  try{ return JSON.parse(s); }catch(e){ return null; }
+}
+// Garante título/cenário/protagonista e exatamente nQ capítulos (preenche/apara).
+function normalizarHistoria(h, nQ){
+  h = h || {};
+  let caps = Array.isArray(h.capitulos) ? h.capitulos.slice(0, nQ) : [];
+  while(caps.length < nQ){
+    caps.push({ narrativa_intro:"O desafio continua! Resolva a próxima questão para seguir em frente.",
+      questao_index:caps.length, narrativa_acerto:"Você superou mais um obstáculo!", narrativa_erro:"Um tropeço, mas a jornada continua!" });
+  }
+  return {
+    titulo: h.titulo || "Uma Grande Aventura",
+    cenario: h.cenario || "Uma floresta mágica cheia de surpresas.",
+    protagonista: h.protagonista || "Herói(na)",
+    capitulos: caps,
+    desfecho_heroi: h.desfecho_heroi || "Você venceu todos os desafios como um verdadeiro herói! Sua coragem e inteligência salvaram o dia. Parabéns, campeão(ã)!",
+    desfecho_aprendiz: h.desfecho_aprendiz || "Que jornada incrível! Você enfrentou cada desafio com bravura e aprendeu muito pelo caminho. Continue praticando, grande aprendiz — a próxima aventura será ainda melhor!"
+  };
+}
+
+// ----- Ilustrações por cenário (CSS/emoji) -----
+const CENARIOS = {
+  floresta: { grad:"linear-gradient(160deg,#a8e063,#3a8f3a)", emojis:"🌲🍄🦊🌿🦉" },
+  espaco:   { grad:"linear-gradient(160deg,#2b2f77,#0b0b2b)", emojis:"🚀🪐⭐🌙👽" },
+  mar:      { grad:"linear-gradient(160deg,#48c6ef,#1565c0)", emojis:"🐠🐙🌊🐚🐢" },
+  castelo:  { grad:"linear-gradient(160deg,#b993d6,#8ca6db)", emojis:"🏰🐉⚔️👑🛡️" },
+  cidade:   { grad:"linear-gradient(160deg,#7f7fd5,#2b5876)", emojis:"🏙️🤖🚦✨🛸" },
+  deserto:  { grad:"linear-gradient(160deg,#f6d365,#d9954b)", emojis:"🏜️🐪🌵☀️🔺" },
+};
+function detectarCenario(txt){
+  const t=norm(txt);
+  if(/espac|galax|planeta|estrela|foguete|nave|astronaut|cosmo|lua/.test(t)) return "espaco";
+  if(/mar|ocean|submar|agua|peixe|sereia|coral|praia/.test(t)) return "mar";
+  if(/castel|medieval|reino|\brei\b|rainha|cavaleir|dragao|princes/.test(t)) return "castelo";
+  if(/cidade|futur|robo|tecnolog|neon|arranha/.test(t)) return "cidade";
+  if(/desert|piramid|egito|areia|farao|faraó|oasis/.test(t)) return "deserto";
+  if(/florest|selva|bosque|arvore|árvore|magic|mágic|jardim/.test(t)) return "floresta";
+  return "floresta";
+}
+function cenarioArte(cenario){
+  const c = CENARIOS[detectarCenario(cenario)] || CENARIOS.floresta;
+  return `<div class="hist-cena" style="background:${c.grad}">
+    <div class="hist-cena-emojis">${c.emojis}</div>
+  </div>`;
+}
+
+// ----- Tela de capítulo -----
+function capituloAtual(){ return (Sess && Sess.historia && Sess.historia.capitulos && Sess.historia.capitulos[Sess.idx]) || {}; }
+function renderHistoria(){
+  const s=subjById(State.subj); const l=getLesson();
+  if(!l || !Sess || !Sess.exercicios[Sess.idx]){ goHome(); return; }
+  const ex = Sess.exercicios[Sess.idx];
+  const h = Sess.historia || {};
+  const cap = capituloAtual();
+  const progresso = (Sess.idx / Sess.total)*100;
+  const hearts = "❤️".repeat(Sess.vidas) + "🤍".repeat(3-Sess.vidas);
+
+  let body;
+  if(ex.tipo==="fill"){
+    body = `<input type="text" class="fill-input" id="fillAns" placeholder="Digite aqui..." autocomplete="off" ${Sess.respondido?'disabled':''} oninput="App.onFillInput()">`;
+  } else {
+    body = (ex.opcoes||[]).map((o,i)=>{
+      let cls="opt";
+      if(Sess.respondido){ if(i===ex.correta) cls+=" correct"; else if(i===Sess.selecionado) cls+=" wrong"; }
+      else if(Sess.selecionado===i) cls+=" selected";
+      const letra = ex.tipo==="vf" ? (i===0?'V':'F') : String.fromCharCode(65+i);
+      return `<div class="${cls}" onclick="App.selectOpt(${i})"><span class="letter">${letra}</span><span>${esc(o)}</span></div>`;
+    }).join("");
+  }
+
+  let footer;
+  if(!Sess.respondido){
+    const dis = (ex.tipo==="fill") ? '' : (Sess.selecionado===null?'disabled':'');
+    footer = `<div class="feedback-bar"><button class="btn" id="checkBtn" ${dis} onclick="App.checkAnswer()">Verificar</button></div>`;
+  } else {
+    const fb = Sess.feedback||{};
+    if(fb.ok){
+      footer = `<div class="feedback-bar correct"><div class="feedback-msg">🌟 Incrível! ${esc(fb.texto||"")}</div></div>`;
+    } else {
+      const explicHtml = (fb.explic===null || fb.explic===undefined)
+        ? `<span class="ia-spinner" style="width:16px;height:16px;vertical-align:middle;border-top-color:#c0392b"></span> gerando dica...`
+        : esc(fb.explic);
+      footer = `<div class="feedback-bar wrong" style="flex-direction:column;align-items:stretch;gap:8px">
+        <div class="feedback-msg" style="text-align:left">😮 ${esc(fb.texto||"")}<br><span style="font-weight:600">Mas não desanime! ${explicHtml}</span></div>
+        <button class="btn ${Sess.vidas<=0?'red':''}" onclick="App.continuarHistoria()">${Sess.vidas<=0?'Ver desfecho':'Continuar a aventura ➡️'}</button>
+      </div>`;
+    }
+  }
+
+  app.innerHTML = `<div class="screen active">
+    <div class="exercise-top">
+      <button class="back-btn" onclick="App.confirmQuit()">✕</button>
+      <div class="progress-track"><div class="progress-fill" style="width:${progresso}%;background:#9b59b6"></div></div>
+      <div class="hearts">${hearts}</div>
+    </div>
+    <div class="content">
+      <div style="text-align:center;font-size:13px;color:#9b59b6;font-weight:800">📖 ${esc(h.titulo||"Aventura")}</div>
+      <div style="text-align:center;font-size:12px;color:var(--gray-d);font-weight:700;margin-bottom:8px">Capítulo ${Sess.idx+1} de ${Sess.total} • ⭐ ${Sess.acertos} acerto(s)</div>
+      ${cenarioArte(h.cenario)}
+      <div class="hist-narrativa">${esc(cap.narrativa_intro||"")}</div>
+      <div class="hist-divisor">── Desafio do Caminho ──</div>
+      <div style="margin-bottom:6px;display:flex;gap:6px;align-items:center;justify-content:center">
+        <span class="pill-tag" style="background:${s.cor}">${tipoLabel(ex.tipo)}</span>
+        ${ex.nivel?`<span class="pill-tag" style="background:${nivelDificuldadeCor(ex.nivel)}">+${Math.round(xpDaQuestao(ex)*1.5)} XP</span>`:''}
+      </div>
+      <div class="q-prompt">${esc(ex.enunciado)}</div>
+      ${Fala.ok()?`<div style="text-align:center;margin:-4px 0 14px">${botaoFala('lerQuestao','Ouvir a pergunta')}</div>`:''}
+      <div id="optWrap">${body}</div>
+    </div>
+    ${footer}
+  </div>`;
+}
+
+// Resultado da resposta no Modo História (chamado por checkAnswer).
+function responderHistoria(ok, ex, xpQ){
+  const cap = capituloAtual();
+  const myIdx=Sess.idx, myLesson=State.lesson;
+  if(ok){
+    Sess.acertos++; Sess.xpGanho += xpQ; Sound.correct();
+    Sess.feedback = { ok:true, texto: cap.narrativa_acerto || "Você superou o desafio!" };
+    renderHistoria();
+    Fala.ler("Incrível! "+(cap.narrativa_acerto||""), true);
+    setTimeout(()=>{ if(State.tela==="historia" && Sess && Sess.modo==="historia" && State.lesson===myLesson && Sess.idx===myIdx) avancarHistoria(); }, 2200);
+  } else {
+    Sess.erros++; Sess.vidas--; Sound.wrong();
+    Sess.feedback = { ok:false, texto: cap.narrativa_erro || "Um contratempo na jornada...", explic:null };
+    renderHistoria();
+    const wrap=document.getElementById("optWrap"); if(wrap) wrap.classList.add("shake");
+    Fala._protegerUmaVez=true; Fala.ler("Ops! "+(cap.narrativa_erro||""));
+    gerarExplicacaoTexto(ex).then(txt=>{
+      if(Sess && Sess.modo==="historia" && Sess.feedback && Sess.idx===myIdx && State.lesson===myLesson){
+        Sess.feedback.explic = txt || "Revise o resumo e tente na próxima!";
+        if(State.tela==="historia") renderHistoria();
+      }
+    });
+  }
+}
+// Explicação do erro como TEXTO (reusa o cache/persistência de "explicacoes"); não troca de tela.
+async function gerarExplicacaoTexto(ex){
+  const l=getLesson();
+  const respCorreta = ex.tipo==="fill" ? (ex.resposta||"") : (ex.opcoes? ex.opcoes[ex.correta] : "");
+  const padrao = `A resposta certa é "${respCorreta}". Releia o resumo com calma — você consegue! 💪`;
+  if(l && l.explicacoes && ex.id && l.explicacoes[ex.id]) return l.explicacoes[ex.id];
+  if(!iaConfigurada()) return padrao;
+  const pub = descreverPublico(ALUNO);
+  const prompt =
+`Você é um professor gentil e encorajador do ${pub.ano} do ${pub.nivel}.
+Um aluno de aproximadamente ${pub.idade} anos errou a seguinte questão:
+Enunciado: ${ex.enunciado}
+Resposta correta: ${respCorreta}
+Conteúdo da lição: ${l?l.texto:""}
+Explique em no máximo 60 palavras, de forma simples e acolhedora, por que a resposta certa é a correta. ${pub.frase}`;
+  try{
+    const txt = await chamarIA(prompt, IA_EXPLIC_TIMEOUT);
+    const final = (txt && txt.trim()) || padrao;
+    if(txt && txt.trim() && ex.id && l){
+      l.explicacoes = l.explicacoes||{}; l.explicacoes[ex.id]=final;
+      const upd={}; upd["explicacoes."+ex.id]=final;
+      try{ db.collection("licoes").doc(l.id).update(upd); }catch(_){}
+    }
+    return final;
+  }catch(e){ return padrao; }
+}
+function continuarHistoria(){ if(Sess.vidas<=0){ gameOverHistoria(); return; } avancarHistoria(); }
+function avancarHistoria(){
+  if(Sess.idx < Sess.total-1){
+    Sess.idx++; Sess.respondido=false; Sess.acertouAtual=false; Sess.selecionado=null; Sess.respAluno=""; Sess.feedback=null;
+    State.tela="historia"; renderHistoria();
+  } else {
+    finishHistoria();
+  }
+}
+function finishHistoria(){
+  const pct = Sess.total ? Math.round(Sess.acertos/Sess.total*100) : 0;
+  const heroi = pct>70; // desfecho épico com mais de 70%
+  const r = concederRecompensa(State.subj, State.lesson, Sess.xpGanho); // XP já com bônus de +50%
+  registrarHistoriaCompleta(State.lesson);
+  const novasMedalhas = verificarMedalhas({ perfeito: Sess.acertos===Sess.total });
+  salvarProgresso(State.subj, State.lesson, Sess, "historia");
+  State.tela="historiaDone"; State._reward=r; State._medalhas=novasMedalhas; State._premios=[]; State._histPct=pct; State._histHeroi=heroi;
+  render();
+  avaliarPremiacoes({ pctAcertos:pct }).then(novas=>{
+    if(novas && novas.length){ State._premios=novas; if(State.tela==="historiaDone") renderHistoriaDone(); novas.forEach(p=>{ Sound.unlock(); toast(`🏆 ${p.nome}!`); }); }
+  });
+}
+function registrarHistoriaCompleta(lessonId){
+  PROFILE.historiasCompletas = PROFILE.historiasCompletas||[];
+  if(lessonId && PROFILE.historiasCompletas.indexOf(lessonId)<0){ PROFILE.historiasCompletas.push(lessonId); saveProfile(); }
+}
+function renderHistoriaDone(){
+  const s=subjById(State.subj); const r=State._reward||{ganho:0}; const h=Sess.historia||{};
+  const heroi=State._histHeroi; const pct=State._histPct||0;
+  const desfecho = heroi ? (h.desfecho_heroi||"") : (h.desfecho_aprendiz||"");
+  const medalhas=State._medalhas||[];
+  const medalhasHtml = medalhas.length ? `<div style="width:100%;margin-top:6px">
+      <div class="sec-title" style="text-align:center">🏅 Nova(s) conquista(s)!</div>
+      ${medalhas.map((m,i)=>`<div class="medal-pop pop" style="animation-delay:${.15*i}s">
+        <span style="font-size:30px">${m.icon}</span>
+        <div style="text-align:left"><b>${esc(m.titulo)}</b><div style="font-size:12px;color:#777">${esc(m.desc)}</div></div>
+      </div>`).join("")}
+    </div>` : '';
+  const premios=State._premios||[];
+  const premiosHtml = premios.length ? `<div style="width:100%;margin-top:6px">
+      <div class="sec-title" style="text-align:center">🏆 Premiação conquistada!</div>
+      ${premios.map((p,i)=>`<div class="medal-pop pop" style="animation-delay:${.15*i}s;background:#f3e9ff;border-color:#d9bfff">
+        <span style="font-size:30px">${esc(p.icone||'🏆')}</span>
+        <div style="text-align:left"><b>${esc(p.nome||'Prêmio')}</b><div style="font-size:12px;color:#777">${esc(p.descricao||'')}</div></div>
+      </div>`).join("")}
+    </div>` : '';
+  app.innerHTML = `<div class="screen active">
+    <div class="celebrate" id="celebrate">
+      <div style="font-size:64px" class="pop">${heroi?'🏆':'🌟'}</div>
+      <h1 style="color:#9b59b6">${heroi?'Herói da Aventura!':'Grande Aprendiz!'}</h1>
+      <div style="font-size:12px;color:#9b59b6;font-weight:800">📖 ${esc(h.titulo||"")}</div>
+      <div class="hist-desfecho">${esc(desfecho)}</div>
+      <p style="color:#777">Você acertou <b>${Sess.acertos}</b> de <b>${Sess.total}</b> (${pct}%)!</p>
+      <div class="reward-row">
+        <div class="reward-box xp pop"><div class="rv">+${r.ganho}</div><div style="font-size:12px;color:#777">XP <b style="color:#9b59b6">+50%</b></div></div>
+        <div class="reward-box streak pop" style="animation-delay:.1s"><div class="rv">🔥 ${PROFILE.streak}</div><div style="font-size:12px;color:#777">Ofensiva</div></div>
+      </div>
+      ${r.subiuNivel? `<div class="pill-tag pop" style="background:var(--yellow);font-size:14px;padding:8px 16px">🎊 Subiu para o Nível ${r.nivel}!</div>`:''}
+      ${medalhasHtml}
+      ${premiosHtml}
+      <div style="width:100%;margin-top:28px">
+        <button class="btn" style="background:#9b59b6;box-shadow:0 4px 0 #7d3c98" onclick="App.iniciarModoHistoria()">🔁 Jogar novamente</button>
+        <button class="btn gray" style="margin-top:10px" onclick="App.openSubject('${s.id}')">Voltar às lições</button>
+      </div>
+    </div>
+  </div>`;
+  if(heroi) launchConfetti(); else launchStars();
+  if(r.subiuNivel) Sound.level(); else if(medalhas.length) Sound.unlock(); else Sound.celebrate();
+}
+function launchStars(){
+  const host=document.getElementById("celebrate"); if(!host) return;
+  const estrelas=["⭐","🌟","✨","💫"];
+  for(let i=0;i<40;i++){
+    const c=document.createElement("div"); c.className="confetti"; c.style.background="transparent";
+    c.textContent=estrelas[i%estrelas.length];
+    c.style.left=(Math.random()*100)+"%"; c.style.fontSize=(14+Math.random()*14)+"px";
+    c.style.animationDuration=(2+Math.random()*2)+"s"; c.style.animationDelay=(Math.random()*0.6)+"s";
+    host.appendChild(c); setTimeout(()=>c.remove(),4500);
+  }
+}
+function gameOverHistoria(){
+  const s=subjById(State.subj); Sound.wrong();
+  app.innerHTML = `<div class="screen active">
+    <div class="celebrate">
+      <div style="font-size:64px">💔</div>
+      <h1 style="color:var(--red)">A aventura foi interrompida!</h1>
+      <p style="color:#777;margin:8px 0 20px">Os corações acabaram, mas todo herói tenta outra vez. Revise o resumo e volte mais forte! 💪</p>
+      ${mascot('')}
+      <div style="width:100%;margin-top:24px">
+        <button class="btn" style="background:#9b59b6;box-shadow:0 4px 0 #7d3c98" onclick="App.iniciarModoHistoria()">🔁 Recomeçar a aventura</button>
+        <button class="btn gray" style="margin-top:10px" onclick="App.openSubject('${s.id}')">Voltar às lições</button>
+      </div>
+    </div>
+  </div>`;
 }
 
 // ----- PERFIL -----
@@ -2431,7 +2896,9 @@ const Teacher = { tab:"licoes", subj:"mat", editingLesson:null, gerando:false, r
   // premiações personalizadas (Fase D)
   prem:{ carregada:false, carregando:false, erro:"", lista:[], salvando:false, form:null },
   // edição da própria conta (turmas/disciplinas)
-  conta:{ turmas:[], anos:[], disc:[], salvando:false } };
+  conta:{ turmas:[], anos:[], disc:[], salvando:false },
+  // gerenciamento do Modo História por lição
+  hist:{ gerando:false, preview:null, erro:"" } };
 
 function renderTeacher(){
   if(Teacher.previewing){ renderPreview(); return; }
@@ -2530,18 +2997,22 @@ function escopoLicaoLabel(l){
 function teacherSelectSubj(v){ Teacher.subj=v; render(); }
 
 function resetIaEstado(){ Teacher.gerando=false; Teacher.regenerando=false; Teacher.previewing=false; Teacher.iaErro=""; Teacher.iaConfigAberta=false; }
-function newLesson(){ Teacher.editingLesson={ id:null, titulo:"", texto:"", exercicios:[], turma:"", nivel:"", ano:"", materialUrls:[], materialNomes:[], materialTipos:[], materialTexto:"", _persistido:false, _materialPendentes:[] }; resetIaEstado(); Teacher.upload={ ativo:false, pct:0, nome:"", lendo:false }; Teacher.tab="novo"; render(); }
+function newLesson(){ Teacher.editingLesson={ id:null, titulo:"", texto:"", exercicios:[], turma:"", nivel:"", ano:"", materialUrls:[], materialNomes:[], materialTipos:[], materialTexto:"", historiaHabilitada:true, _persistido:false, _materialPendentes:[] }; resetIaEstado(); Teacher.upload={ ativo:false, pct:0, nome:"", lendo:false }; Teacher.hist={ gerando:false, preview:null, erro:"" }; Teacher.tab="novo"; render(); }
 function editLesson(id){
   const l=(DATA[Teacher.subj]||[]).find(x=>x.id===id);
   if(!l) return;
   // clone profundo para edição
   Teacher.editingLesson = JSON.parse(JSON.stringify(l));
   Teacher.editingLesson._persistido = true; // já existe no Firestore
-  // garante os arrays de material em lições antigas (compatibilidade)
+  // garante os campos em lições antigas (compatibilidade)
   const L=Teacher.editingLesson;
   L.materialUrls=L.materialUrls||[]; L.materialNomes=L.materialNomes||[]; L.materialTipos=L.materialTipos||[]; L.materialTexto=L.materialTexto||"";
+  if(L.historiaHabilitada===undefined) L.historiaHabilitada=true;
   L._materialPendentes=[]; // anexos enviados nesta sessão de edição ainda não salvos
-  resetIaEstado(); Teacher.upload={ ativo:false, pct:0, nome:"", lendo:false }; Teacher.tab="novo"; render();
+  resetIaEstado(); Teacher.upload={ ativo:false, pct:0, nome:"", lendo:false }; Teacher.hist={ gerando:false, preview:null, erro:"" };
+  // carrega a história já gerada (se houver) para mostrar o indicador/preview
+  if(id) getHistoriaGerada(id).then(h=>{ if(h && Teacher.editingLesson && Teacher.editingLesson.id===id){ Teacher.hist.preview=h; if(Teacher.tab==="novo") render(); } });
+  Teacher.tab="novo"; render();
 }
 async function deleteLesson(id){
   if(!confirm("Excluir esta lição e todos os seus exercícios?")) return;
@@ -2591,6 +3062,8 @@ function teacherEditorTab(){
     ${materialApoioPanel(L)}
 
     ${iaPanel(L)}
+
+    ${historiaPanel(L)}
 
     <div class="sec-title">Exercícios (${L.exercicios.length})</div>
     <div id="exList">${exs}</div>
@@ -2854,6 +3327,50 @@ function materialApoioPanel(L){
     </label>
     ${cheio?`<p style="font-size:12px;color:#c0392b;text-align:center;margin-top:6px">Limite de ${MATERIAL_MAX_ARQUIVOS} documentos atingido.</p>`:''}
   </div>`;
+}
+
+// ---- PAINEL: MODO HISTÓRIA (professor gerencia a aventura da lição) ----
+function historiaPanel(L){
+  const on = L.historiaHabilitada!==false;
+  const H = Teacher.hist||{};
+  const temChave = iaConfigurada();
+  let status="";
+  if(H.gerando) status=`<div class="ia-loading" style="color:#9b59b6;margin-top:8px"><span class="ia-spinner" style="border-top-color:#9b59b6"></span> Criando a aventura...</div>`;
+  else if(H.erro) status=`<div class="ia-erro">⚠️ ${esc(H.erro)}</div>`;
+  else if(H.preview) status=`<div class="card" style="cursor:default;background:#faf5ff;margin-top:8px">
+      <div style="font-weight:800;color:#9b59b6">📖 História disponível: ${esc(H.preview.titulo||'')}</div>
+      <div style="font-size:12px;color:#777;margin:4px 0">🎭 ${esc(H.preview.protagonista||'')} • 🗺️ ${esc(H.preview.cenario||'')}</div>
+      <div style="font-size:12px;color:#777">${(H.preview.capitulos||[]).length} capítulo(s) — um por questão</div>
+    </div>`;
+  return `<div class="ia-panel">
+    <div class="ia-head"><b>📖 Modo História</b></div>
+    <p style="font-size:12px;color:#777;margin-bottom:8px">Aventura interativa gerada por IA a partir dos exercícios desta lição. O aluno ganha <b>+50% de XP</b>.</p>
+    <button type="button" class="btn ${on?'':'gray'} small" style="width:100%" onclick="App.toggleHistoriaHabilitada()">${on?'✅ Modo História habilitado':'❌ Modo História desabilitado'}</button>
+    ${status}
+    ${L.id ? `<button class="btn" style="background:#9b59b6;box-shadow:0 4px 0 #7d3c98;margin-top:8px" ${(!temChave||H.gerando)?'disabled':''} onclick="App.regenerarHistoriaProf()">🔄 ${H.preview?'Regenerar':'Gerar'} história</button>
+      <p style="font-size:11px;color:#999;margin-top:4px">Cria/atualiza a aventura salva (historias_geradas) para todos os alunos.</p>`
+      : `<p style="font-size:12px;color:#999;margin-top:6px">Salve a lição para gerar a história.</p>`}
+    ${!temChave?`<p style="font-size:12px;color:#c0392b;text-align:center;margin-top:6px">Chave da IA não configurada (peça ao Administrador ⚙️).</p>`:''}
+  </div>`;
+}
+function toggleHistoriaHabilitada(){ syncTextInputs(); const L=Teacher.editingLesson; if(!L) return; L.historiaHabilitada = !(L.historiaHabilitada!==false); render(); }
+async function regenerarHistoriaProf(){
+  syncTextInputs();
+  const L=Teacher.editingLesson;
+  if(!L || !L.id){ toast("Salve a lição primeiro para gerar a história."); return; }
+  if(!L.exercicios || !L.exercicios.length){ toast("Gere/adicione exercícios antes de criar a história."); return; }
+  if(!iaConfigurada()){ Teacher.hist.erro="IA não configurada (peça ao Administrador)."; render(); return; }
+  Teacher.hist.gerando=true; Teacher.hist.erro=""; render();
+  try{
+    const h = await gerarHistoriaIA(L);
+    const norm = normalizarHistoria(h, L.exercicios.length);
+    salvarHistoriaGerada(L.id, norm);
+    delete historiaCache[L.id];
+    Teacher.hist.gerando=false; Teacher.hist.preview=norm; render();
+    toast("História criada e salva! 📖✅");
+  }catch(err){
+    Teacher.hist.gerando=false; Teacher.hist.erro=mensagemErroIA(err); render();
+  }
 }
 
 // ---- PAINEL DE GERAÇÃO POR IA (OpenAI / gpt-4o-mini; chave compartilhada via Admin) ----
@@ -3237,6 +3754,7 @@ async function saveLesson(){
   const disc = Teacher.subj;
   const turmaN=(L.turma||"").trim().toUpperCase(), anoN=(L.ano||"").trim(), nivelN=(L.nivel||"").trim();
   const materialUrls=L.materialUrls||[], materialNomes=L.materialNomes||[], materialTipos=L.materialTipos||[], materialTexto=L.materialTexto||"";
+  const historiaHabilitada = L.historiaHabilitada!==false;
   const payload = {
     disciplina: disc,
     titulo: L.titulo,
@@ -3250,7 +3768,8 @@ async function saveLesson(){
     materialUrls: materialUrls,
     materialNomes: materialNomes,
     materialTipos: materialTipos,
-    materialTexto: materialTexto
+    materialTexto: materialTexto,
+    historiaHabilitada: historiaHabilitada
   };
   toast("Salvando...");
   try{
@@ -3271,11 +3790,12 @@ async function saveLesson(){
     L._persistido = true;
     // limpa o cache (memória + nuvem) do conteúdo gerado — o material pode ter mudado
     delete resumoCache[L.id];
+    delete historiaCache[L.id]; // relê a história salva; o professor regenera se mudou as questões
     if(L.id) limparLicaoGerada(L.id);
     // atualiza o estado local (remove de onde estava e re-adiciona na disciplina atual)
     removeLicaoLocal(L.id);
     if(!DATA[disc]) DATA[disc]=[];
-    DATA[disc].push({ id:L.id, titulo:L.titulo, texto:L.texto, exercicios:L.exercicios, resumoIA:"", explicacoes:{}, turma:turmaN, ano:anoN, nivel:nivelN, materialUrls:materialUrls, materialNomes:materialNomes, materialTipos:materialTipos, materialTexto:materialTexto });
+    DATA[disc].push({ id:L.id, titulo:L.titulo, texto:L.texto, exercicios:L.exercicios, resumoIA:"", explicacoes:{}, turma:turmaN, ano:anoN, nivel:nivelN, materialUrls:materialUrls, materialNomes:materialNomes, materialTipos:materialTipos, materialTexto:materialTexto, historiaHabilitada:historiaHabilitada });
 
     L._materialPendentes=[]; // anexos agora persistidos — não devem ser limpos
     Teacher.editingLesson=null; Teacher.tab="licoes";
@@ -3716,6 +4236,8 @@ async function salvarConta(){
 window.App = {
   goHome, openSubject, openLesson, startExercises, selectOpt, onFillInput,
   checkAnswer, nextExercise, continuarAposExplicacao, confirmQuit, openProfile, resetProgress, toggleSound,
+  // modo história (aluno)
+  escolherModo, iniciarModoClassico, iniciarModoHistoria, continuarHistoria,
   toggleAutoLer,
   onPerfilNivel, salvarDadosEscolares,
   // leitura em voz alta (TTS)
@@ -3732,6 +4254,8 @@ window.App = {
   previewLesson, fecharPreview,
   // material de apoio (upload/remoção de documentos)
   onSelecionarMateriais, removerMaterial, cancelarEdicaoLicao,
+  // modo história (professor)
+  toggleHistoriaHabilitada, regenerarHistoriaProf,
   // rendimento (Fase C)
   recarregarRendimento, setProgTurma, setProgDisc, setProgPeriodo,
   // gestão de alunos
