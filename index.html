@@ -301,6 +301,23 @@ label{ display:block; font-weight:700; font-size:14px; margin-bottom:6px; color:
   font-size:15px; line-height:1.6; color:#444; margin:10px 0; }
 .hist-bounce{ animation:bounce 1s infinite; }
 
+/* ---------- INTERPRETAÇÃO DE TEXTO ---------- */
+.tipo-card{ display:flex; align-items:flex-start; gap:10px; width:100%; text-align:left; font-family:inherit;
+  background:#fff; border:2px solid var(--gray); border-radius:14px; padding:12px 14px; margin-bottom:8px; cursor:pointer; }
+.tipo-card.sel{ border-color:var(--blue); background:#eaf7ff; }
+.tipo-radio{ font-size:18px; color:var(--blue); line-height:1.3; }
+.tipo-d{ font-size:12px; color:#777; }
+.interp-textarea{ width:100%; min-height:180px; font-size:15px; line-height:1.6; padding:12px; border:2px solid var(--gray);
+  border-radius:12px; font-family:inherit; resize:vertical; }
+.interp-texto{ font-size:16px; line-height:1.6; color:#333; }
+.interp-par{ margin:10px 0; padding:6px 8px; border-radius:8px; transition:background .2s; }
+.interp-par.lendo{ background:#fff3c4; box-shadow:0 0 0 2px #ffe699; }
+.interp-mark{ background:#fff3c4; border-radius:3px; padding:0 2px; }
+.interp-modal{ position:fixed; inset:0; background:rgba(0,0,0,.5); z-index:60; display:flex; align-items:center; justify-content:center; padding:16px; }
+.interp-modal-box{ background:#fff; border-radius:18px; max-width:440px; width:100%; max-height:82vh; display:flex; flex-direction:column; overflow:hidden; }
+.interp-modal-head{ display:flex; align-items:center; justify-content:space-between; gap:8px; padding:14px 16px; border-bottom:2px solid var(--gray); }
+.interp-modal-body{ padding:14px 16px; overflow-y:auto; }
+
 /* ---------- 7. MASCOTE ---------- */
 .mascot{ width:120px; height:120px; }
 .mascot.bounce{ animation:bounce 1s infinite; }
@@ -785,7 +802,13 @@ function licaoDeDoc(id, d){
     materialNomes: Array.isArray(d.materialNomes) ? d.materialNomes : [],
     materialTipos: Array.isArray(d.materialTipos) ? d.materialTipos : [],
     materialTexto: d.materialTexto || "", // texto extraído dos documentos (p/ IA)
-    historiaHabilitada: d.historiaHabilitada!==false // Modo História (padrão: habilitado)
+    historiaHabilitada: d.historiaHabilitada!==false, // Modo História (padrão: habilitado)
+    // Lição de interpretação de texto (Português)
+    tipo: d.tipo || "padrao", // "padrao" | "interpretacao_texto"
+    textoGerado: d.textoGerado || "",
+    tituloTexto: d.tituloTexto || "",
+    generoTextual: d.generoTextual || "",
+    tema: d.tema || ""
   };
 }
 function removeLicaoLocal(id){ SUBJECTS.forEach(s=>{ DATA[s.id]=(DATA[s.id]||[]).filter(l=>l.id!==id); }); }
@@ -1288,6 +1311,7 @@ function render(){
     case "home":      renderHome(); break;
     case "lessons":   renderLessons(); break;
     case "study":     renderStudy(); break;
+    case "interpRead": renderInterpRead(); break;
     case "modo":      renderModoSelect(); break;
     case "historiaLoading": renderHistoriaLoading(); break;
     case "historia":  renderHistoria(); break;
@@ -1786,6 +1810,9 @@ async function openLesson(lid){
   // para que qualquer dispositivo já encontre a explicação pronta no Firestore
   if(iaConfigurada()) pregerarExplicacoes(l);
 
+  // Lição de interpretação: vai direto para a tela de leitura do texto (sem resumo IA)
+  if(l.tipo==="interpretacao_texto"){ State.tela="interpRead"; State._interpLido=false; render(); return; }
+
   // 1) cache em memória desta sessão
   if(resumoCache[lid]){ State.estudo={ status:"ok", texto:resumoCache[lid] }; render(); return; }
 
@@ -2017,9 +2044,10 @@ function renderExercise(){
         <span>Questão ${Sess.idx+1} de ${Sess.total}</span>
         <span>✅ ${Sess.acertos} acerto${Sess.acertos===1?'':'s'}</span>
       </div>
-      <div style="margin-bottom:6px;display:flex;gap:6px;align-items:center">
+      <div style="margin-bottom:6px;display:flex;gap:6px;align-items:center;flex-wrap:wrap">
         <span class="pill-tag" style="background:${s.cor}">${tipoLabel(ex.tipo)}</span>
         ${ex.nivel?`<span class="pill-tag" style="background:${nivelDificuldadeCor(ex.nivel)}">${nivelDificuldadeLabel(ex.nivel)} • +${xpDaQuestao(ex)} XP</span>`:''}
+        ${(getLesson()&&getLesson().tipo==="interpretacao_texto")?`<button class="btn blue small" style="width:auto;margin-left:auto;padding:6px 10px" onclick="App.abrirTextoInterp()">📖 Ver o texto</button>`:''}
       </div>
       <div class="q-prompt">${esc(ex.enunciado)}</div>
       ${Fala.ok()?`<div style="text-align:center;margin:-4px 0 14px">${botaoFala('lerQuestao','Ouvir a pergunta')}</div>`:''}
@@ -2319,11 +2347,16 @@ function renderDone(){
       </div>`).join("")}
     </details>` :
     `<div class="pill-tag pop" style="background:var(--green);font-size:14px;padding:8px 16px;margin-top:14px">🎯 Gabarito perfeito!</div>`;
+  // "fato curioso" sobre o gênero textual (lições de interpretação)
+  const lDone = getLesson();
+  const fatoHtml = (lDone && lDone.tipo==="interpretacao_texto")
+    ? `<div class="hist-desfecho" style="border-color:#bfe3ff;background:#eef8ff"><b>💡 Você sabia?</b><br>${esc(fatoCuriosoGenero(lDone.generoTextual))}</div>` : '';
   app.innerHTML = `<div class="screen active">
     <div class="celebrate" id="celebrate">
       ${mascot('bounce')}
       <h1>Lição Concluída!</h1>
       <p style="color:#777">Você acertou <b>${Sess.acertos}</b> de <b>${Sess.total}</b> ${Sess.total===1?'exercício':'exercícios'}!</p>
+      ${fatoHtml}
       <div class="reward-row">
         <div class="reward-box xp pop"><div class="rv">+${r.ganho}</div><div style="font-size:12px;color:#777">XP</div></div>
         <div class="reward-box streak pop" style="animation-delay:.1s"><div class="rv">🔥 ${PROFILE.streak}</div><div style="font-size:12px;color:#777">Ofensiva</div></div>
@@ -2535,7 +2568,7 @@ function parseHistoriaIA(texto){
   let s=String(texto).trim().replace(/^```(?:json)?\s*/i,"").replace(/\s*```$/,"");
   const ini=s.indexOf("{"), fim=s.lastIndexOf("}");
   if(ini>=0 && fim>ini) s=s.slice(ini,fim+1);
-  try{ return JSON.parse(s); }catch(e){ return null; }
+  const o=jsonParseTolerante(s); return (o===undefined)?null:o;
 }
 // Garante título/cenário/protagonista e exatamente nQ capítulos (preenche/apara).
 function normalizarHistoria(h, nQ){
@@ -2794,6 +2827,146 @@ function gameOverHistoria(){
   </div>`;
 }
 
+/* ============================================================
+   D3) LIÇÃO DE INTERPRETAÇÃO DE TEXTO (fluxo do aluno)
+   ============================================================ */
+// Divide o texto gerado em parágrafos (para leitura/destaque).
+function paragrafosTexto(txt){ return String(txt||"").split(/\n+/).map(p=>p.trim()).filter(Boolean); }
+
+// Leitor de texto por parágrafo com destaque, controles e pausa de 0.5s entre trechos.
+const LeitorTexto = {
+  paras:[], idx:0, ativo:false, pausado:false, _timer:null,
+  iniciar(paras){
+    this.parar(); if(!Fala.ok() || !paras.length) return;
+    this.paras=paras; this.idx=0; this.ativo=true; this.pausado=false;
+    atualizarControlesLeitor(); this._falar();
+  },
+  _falar(){
+    if(!this.ativo || State.tela!=="interpRead") { this.ativo=false; return; }
+    if(this.idx>=this.paras.length){ this.ativo=false; this.pausado=false; destacarParagrafo(-1); atualizarControlesLeitor(); return; }
+    destacarParagrafo(this.idx);
+    try{
+      const u=new SpeechSynthesisUtterance(adaptarTextoFala(this.paras[this.idx]).slice(0,4000));
+      u.lang="pt-BR"; if(!Fala.voz)Fala.voz=Fala.escolherVoz(); if(Fala.voz)u.voice=Fala.voz;
+      u.rate=0.8; u.pitch=1.1; u.volume=1; // parâmetros de leitura de texto
+      const seguir=()=>{ if(!this.ativo) return; this.idx++; this._timer=setTimeout(()=>this._falar(), 500); }; // pausa 0.5s
+      u.onend=seguir; u.onerror=seguir;
+      window.speechSynthesis.speak(u);
+    }catch(e){ this.idx++; this._timer=setTimeout(()=>this._falar(), 500); }
+  },
+  pausar(){ if(this.ativo && !this.pausado){ try{window.speechSynthesis.pause();}catch(e){} this.pausado=true; atualizarControlesLeitor(); } },
+  retomar(){ if(this.ativo && this.pausado){ try{window.speechSynthesis.resume();}catch(e){} this.pausado=false; atualizarControlesLeitor(); } },
+  parar(){ this.ativo=false; this.pausado=false; clearTimeout(this._timer); try{ if(Fala.ok()) window.speechSynthesis.cancel(); }catch(e){} destacarParagrafo(-1); atualizarControlesLeitor(); }
+};
+function destacarParagrafo(i){
+  try{ document.querySelectorAll(".interp-par").forEach((el,j)=>{ el.classList.toggle("lendo", j===i); });
+    if(i>=0){ const el=document.getElementById("ipar-"+i); if(el && el.scrollIntoView) el.scrollIntoView({block:"center", behavior:"smooth"}); }
+  }catch(e){}
+}
+function atualizarControlesLeitor(){
+  const box=document.getElementById("leitorCtrl"); if(!box) return;
+  const L=LeitorTexto;
+  if(!L.ativo){ box.innerHTML=`<button class="btn blue small" style="width:auto" onclick="App.ouvirTextoInterp()">🔊 Ouvir o texto</button>`; return; }
+  box.innerHTML =
+    (L.pausado ? `<button class="btn blue small" style="width:auto" onclick="App.retomarTextoInterp()">▶️ Continuar</button>`
+               : `<button class="btn gray small" style="width:auto" onclick="App.pausarTextoInterp()">⏸️ Pausar</button>`)
+    + `<button class="btn red small" style="width:auto;margin-left:8px" onclick="App.pararTextoInterp()">⏹️ Parar</button>`;
+}
+function ouvirTextoInterp(){ const l=getLesson(); if(!l) return; LeitorTexto.iniciar(paragrafosTexto(l.textoGerado)); }
+function pausarTextoInterp(){ LeitorTexto.pausar(); }
+function retomarTextoInterp(){ LeitorTexto.retomar(); }
+function pararTextoInterp(){ LeitorTexto.parar(); }
+
+// Etapa 1 — tela de leitura do texto
+function renderInterpRead(){
+  const s=subjById(State.subj); const l=getLesson();
+  if(!l){ goHome(); return; }
+  const titulo = l.tituloTexto || l.titulo;
+  const paras = paragrafosTexto(l.textoGerado);
+  const corpo = paras.map((p,i)=>`<p class="interp-par" id="ipar-${i}">${esc(p)}</p>`).join("") || `<p class="interp-par">${esc(l.textoGerado||'(texto indisponível)')}</p>`;
+  const genero = l.generoTextual ? `<span class="pill-tag" style="background:#1cb0f6">📖 ${esc(l.generoTextual)}</span>` : "";
+  app.innerHTML = `<div class="screen active">
+    <div class="topbar" style="background:${s.cor};color:#fff">
+      <button class="back-btn" style="color:#fff" onclick="App.sairInterpRead()">←</button>
+      <h2>${s.icon} ${esc(l.titulo)}</h2>
+    </div>
+    <div class="read-track"><div class="read-fill" id="interpProg" style="background:${s.cor}"></div></div>
+    <div class="content" id="interpContent" style="background:#f7fbff">
+      <div style="text-align:center;margin-bottom:6px">${genero}</div>
+      <h1 style="text-align:center;font-size:22px;color:${s.cor};margin:6px 0 2px">📖 ${esc(titulo)}</h1>
+      <div id="leitorCtrl" style="text-align:center;margin:10px 0">${Fala.ok()?`<button class="btn blue small" style="width:auto" onclick="App.ouvirTextoInterp()">🔊 Ouvir o texto</button>`:''}</div>
+      <div class="interp-texto">${corpo}</div>
+    </div>
+    <div style="padding:16px;border-top:2px solid var(--gray);background:#fff">
+      <button class="btn" id="btnLido" disabled style="background:${s.cor};box-shadow:0 4px 0 rgba(0,0,0,.2)" onclick="App.iniciarQuestoesInterp()">
+        ⏳ Leia com atenção <span id="lidoCount">30</span>s...
+      </button>
+    </div>
+  </div>`;
+  setupInterpRead(s.cor);
+}
+function setupInterpRead(cor){
+  const cont=document.getElementById("interpContent");
+  const bar=document.getElementById("interpProg");
+  const btn=document.getElementById("btnLido");
+  const liberar=()=>{ if(btn && btn.disabled){ btn.disabled=false; btn.innerHTML="✅ Já li! Partir para as questões →"; } };
+  if(cont && bar){
+    const upd=()=>{ const max=cont.scrollHeight-cont.clientHeight; const pct=(max>4?(cont.scrollTop/max*100):100); bar.style.width=pct+"%"; if(pct>=98) liberar(); };
+    cont.addEventListener("scroll", upd); upd();
+  }
+  // libera também após 30s de leitura
+  const cnt=document.getElementById("lidoCount"); let restante=30;
+  clearInterval(estudoTimer);
+  estudoTimer=setInterval(()=>{ restante--; if(restante<=0){ clearInterval(estudoTimer); liberar(); } else if(cnt){ cnt.textContent=restante; } },1000);
+}
+function sairInterpRead(){ LeitorTexto.parar(); clearInterval(estudoTimer); openSubject(State.subj); }
+function iniciarQuestoesInterp(){ LeitorTexto.parar(); clearInterval(estudoTimer); State.modo="classico"; startExercises(); }
+
+// Etapa 2 — modal "Ver o texto novamente" (consulta durante as questões)
+function abrirTextoInterp(){
+  const l=getLesson(); if(!l) return;
+  fecharTextoInterp();
+  const ex = Sess && Sess.exercicios && Sess.exercicios[Sess.idx];
+  const paras = paragrafosTexto(l.textoGerado);
+  const corpo = paras.map(p=>`<p style="margin:8px 0">${destacarTrechoRelevante(p, ex)}</p>`).join("");
+  const ov=document.createElement("div"); ov.id="interpModal"; ov.className="interp-modal";
+  ov.innerHTML = `<div class="interp-modal-box">
+    <div class="interp-modal-head">
+      <b>📖 ${esc(l.tituloTexto||l.titulo)}</b>
+      <button class="icon-btn" onclick="App.fecharTextoInterp()" aria-label="Fechar">✕</button>
+    </div>
+    <div class="interp-modal-body interp-texto">${corpo}</div>
+  </div>`;
+  ov.addEventListener("click", e=>{ if(e.target===ov) fecharTextoInterp(); });
+  document.body.appendChild(ov);
+}
+function fecharTextoInterp(){ const m=document.getElementById("interpModal"); if(m) m.remove(); }
+// Destaca (best-effort) as palavras do parágrafo que aparecem no enunciado da questão atual.
+// Token a token (cada token é escapado individualmente) — sem manipular HTML já montado.
+function destacarTrechoRelevante(paragrafo, ex){
+  if(!ex || !ex.enunciado) return esc(paragrafo);
+  const kws = new Set(String(ex.enunciado).split(/\s+/).map(w=>norm(w.replace(/[^\wÀ-ÿ]/g,""))).filter(w=>w.length>4));
+  if(!kws.size) return esc(paragrafo);
+  const chaves = Array.from(kws);
+  return String(paragrafo).split(/(\s+)/).map(tok=>{
+    if(/^\s*$/.test(tok)) return esc(tok);
+    const limpo = norm(tok.replace(/[^\wÀ-ÿ]/g,""));
+    const hit = limpo.length>3 && chaves.some(k=> limpo===k || limpo.indexOf(k)>=0 || k.indexOf(limpo)>=0);
+    return hit ? `<mark class="interp-mark">${esc(tok)}</mark>` : esc(tok);
+  }).join("");
+}
+function fatoCuriosoGenero(g){
+  const k=norm(g||"");
+  if(k.indexOf("fabula")>=0||k.indexOf("fábula")>=0) return "As fábulas são histórias antigas com animais que falam e sempre terminam com uma lição de moral. Muitas vêm de Esopo, há mais de 2.500 anos!";
+  if(k.indexOf("poema")>=0) return "Os poemas brincam com o som das palavras: rimas, ritmo e versos deixam a leitura musical!";
+  if(k.indexOf("noticia")>=0||k.indexOf("notícia")>=0) return "Uma notícia responde às perguntas: o quê, quem, quando, onde e por quê. Assim contamos um fato de verdade!";
+  if(k.indexOf("carta")>=0) return "Antes da internet, as cartas viajavam dias pelo correio para levar recados e carinho de longe!";
+  if(k.indexOf("tirinha")>=0) return "As tirinhas contam histórias em poucos quadrinhos e quase sempre terminam com uma piada ou surpresa!";
+  if(k.indexOf("receita")>=0) return "Uma receita é um texto que dá instruções em ordem — igual a um mapa para chegar a um prato delicioso!";
+  if(k.indexOf("conto")>=0) return "O conto é uma história curta com começo, meio e fim, e costuma ter poucos personagens bem marcantes!";
+  return "Cada gênero textual tem um jeito próprio de contar as coisas — quanto mais você lê, mais esperto(a) fica na leitura!";
+}
+
 // ----- PERFIL -----
 function openProfile(){ State.tela="profile"; render(); }
 function renderProfile(){
@@ -2898,7 +3071,9 @@ const Teacher = { tab:"licoes", subj:"mat", editingLesson:null, gerando:false, r
   // edição da própria conta (turmas/disciplinas)
   conta:{ turmas:[], anos:[], disc:[], salvando:false },
   // gerenciamento do Modo História por lição
-  hist:{ gerando:false, preview:null, erro:"" } };
+  hist:{ gerando:false, preview:null, erro:"" },
+  // geração de lição de interpretação de texto (Português)
+  interp:{ gerando:false, erro:"" } };
 
 function renderTeacher(){
   if(Teacher.previewing){ renderPreview(); return; }
@@ -2973,11 +3148,18 @@ function teacherLessonsTab(){
   if(licoes.length===0){
     list = `<div class="empty"><div class="em">📝</div><p>Nenhuma lição desta disciplina para as suas turmas/anos.<br>Crie uma na aba "Nova".</p></div>`;
   } else {
-    list = licoes.map(l=>`<div class="t-lesson-row">
-      <div class="info"><div class="t">${esc(l.titulo)}</div><div class="d">${l.exercicios.length} exercício(s) • ${esc(escopoLicaoLabel(l))}</div></div>
-      <button class="icon-btn" title="Editar" onclick="App.editLesson('${l.id}')">✏️</button>
-      <button class="icon-btn" title="Excluir" onclick="App.deleteLesson('${l.id}')">🗑️</button>
-    </div>`).join("");
+    list = licoes.map(l=>{
+      const interp = l.tipo==="interpretacao_texto";
+      const badge = interp ? `<span class="pill-tag" style="background:#1cb0f6;font-size:10px;margin-right:4px">📖 Interpretação</span>` : "";
+      const detInterp = interp ? `<div class="d" style="font-size:11px;color:#1cb0f6">${esc(l.generoTextual||'texto')}${l.tema?(' • tema: '+esc(l.tema)):''}</div>
+        ${l.textoGerado?`<div class="d" style="font-size:11px;color:#999;font-style:italic">"${esc(String(l.textoGerado).slice(0,100))}${String(l.textoGerado).length>100?'…':''}"</div>`:''}` : "";
+      return `<div class="t-lesson-row">
+        <div class="info"><div class="t">${badge}${esc(l.titulo)}</div>
+          <div class="d">${l.exercicios.length} exercício(s) • ${esc(escopoLicaoLabel(l))}</div>${detInterp}</div>
+        <button class="icon-btn" title="Editar" onclick="App.editLesson('${l.id}')">✏️</button>
+        <button class="icon-btn" title="Excluir" onclick="App.deleteLesson('${l.id}')">🗑️</button>
+      </div>`;
+    }).join("");
   }
   return `<label>Disciplina</label>${sel}
     <div class="sec-title">Lições cadastradas</div>${list}
@@ -2997,7 +3179,7 @@ function escopoLicaoLabel(l){
 function teacherSelectSubj(v){ Teacher.subj=v; render(); }
 
 function resetIaEstado(){ Teacher.gerando=false; Teacher.regenerando=false; Teacher.previewing=false; Teacher.iaErro=""; Teacher.iaConfigAberta=false; }
-function newLesson(){ Teacher.editingLesson={ id:null, titulo:"", texto:"", exercicios:[], turma:"", nivel:"", ano:"", materialUrls:[], materialNomes:[], materialTipos:[], materialTexto:"", historiaHabilitada:true, _persistido:false, _materialPendentes:[] }; resetIaEstado(); Teacher.upload={ ativo:false, pct:0, nome:"", lendo:false }; Teacher.hist={ gerando:false, preview:null, erro:"" }; Teacher.tab="novo"; render(); }
+function newLesson(){ Teacher.editingLesson={ id:null, titulo:"", texto:"", exercicios:[], turma:"", nivel:"", ano:"", materialUrls:[], materialNomes:[], materialTipos:[], materialTexto:"", historiaHabilitada:true, tipo:"padrao", textoGerado:"", tituloTexto:"", generoTextual:"", tema:"", _tamanho:"", _focos:[], _persistido:false, _materialPendentes:[] }; resetIaEstado(); Teacher.upload={ ativo:false, pct:0, nome:"", lendo:false }; Teacher.hist={ gerando:false, preview:null, erro:"" }; Teacher.interp={ gerando:false, erro:"" }; Teacher.tab="novo"; render(); }
 function editLesson(id){
   const l=(DATA[Teacher.subj]||[]).find(x=>x.id===id);
   if(!l) return;
@@ -3008,8 +3190,9 @@ function editLesson(id){
   const L=Teacher.editingLesson;
   L.materialUrls=L.materialUrls||[]; L.materialNomes=L.materialNomes||[]; L.materialTipos=L.materialTipos||[]; L.materialTexto=L.materialTexto||"";
   if(L.historiaHabilitada===undefined) L.historiaHabilitada=true;
+  if(!L.tipo) L.tipo="padrao"; if(!Array.isArray(L._focos)) L._focos=[]; if(L._tamanho===undefined) L._tamanho="";
   L._materialPendentes=[]; // anexos enviados nesta sessão de edição ainda não salvos
-  resetIaEstado(); Teacher.upload={ ativo:false, pct:0, nome:"", lendo:false }; Teacher.hist={ gerando:false, preview:null, erro:"" };
+  resetIaEstado(); Teacher.upload={ ativo:false, pct:0, nome:"", lendo:false }; Teacher.hist={ gerando:false, preview:null, erro:"" }; Teacher.interp={ gerando:false, erro:"" };
   // carrega a história já gerada (se houver) para mostrar o indicador/preview
   if(id) getHistoriaGerada(id).then(h=>{ if(h && Teacher.editingLesson && Teacher.editingLesson.id===id){ Teacher.hist.preview=h; if(Teacher.tab==="novo") render(); } });
   Teacher.tab="novo"; render();
@@ -3043,21 +3226,50 @@ function teacherEditorTab(){
   const nivelOpts = `<option value="">Todos os níveis</option>` + NIVEIS_ENSINO.map(n=>`<option value="${n.id}" ${L.nivel===n.id?'selected':''}>${esc(n.nome)}</option>`).join("");
   const anoOpts = `<option value="">Todos os anos</option>` + (L.nivel?nivelById(L.nivel).anos:[]).map(a=>`<option value="${esc(a)}" ${L.ano===a?'selected':''}>${esc(a)}</option>`).join("");
 
-  return `<div class="sec-title">${L.id?'Editando lição':'Nova lição'}</div>
-    <label>Disciplina</label>${sel}
-    <label>Título da lição</label>
-    <input id="lTitulo" value="${esc(L.titulo)}" placeholder="Ex: Frações Simples">
-    <label>Texto explicativo / material de estudo</label>
-    <textarea id="lTexto" placeholder="Escreva o conteúdo da lição aqui...">${esc(L.texto)}</textarea>
-
-    <div class="sec-title">Destinada a (escopo)</div>
+  // bloco de escopo (turma/ano/nível) — reaproveitado nos dois tipos de lição
+  const escopoHtml = `<div class="sec-title">Destinada a (escopo)</div>
     <p style="font-size:12px;color:#999;margin:-2px 0 8px">Deixe "Todos/Todas" para liberar a lição a qualquer turma/ano.</p>
     <label>Nível de ensino</label>
     <select id="lNivel" onchange="App.onLessonNivel(this.value)">${nivelOpts}</select>
     <label>Ano</label>
     <select id="lAno">${anoOpts}</select>
     <label>Turma</label>
-    <select id="lTurma">${turmaOpts}</select>
+    <select id="lTurma">${turmaOpts}</select>`;
+
+  // seletor de tipo de lição — só para Português
+  const tipoSelectorHtml = (Teacher.subj==="por") ? tipoLicaoSelector(L) : "";
+
+  // ----- Lição de INTERPRETAÇÃO DE TEXTO (Português) -----
+  if(Teacher.subj==="por" && L.tipo==="interpretacao_texto"){
+    const temTexto = (L.textoGerado||"").trim().length>0;
+    return `<div class="sec-title">${L.id?'Editando lição':'Nova lição'}</div>
+      <label>Disciplina</label>${sel}
+      ${tipoSelectorHtml}
+      <label>Título da lição</label>
+      <input id="lTitulo" value="${esc(L.titulo)}" placeholder="Ex: Interpretação de texto — Junho">
+      ${interpConfigPanel(L)}
+      ${temTexto ? `
+        <div class="sec-title">Exercícios de interpretação (${L.exercicios.length})</div>
+        <p style="font-size:12px;color:#999;margin:-2px 0 6px">${contarPorDificuldadeLabel(L.exercicios)}</p>
+        <button class="btn gray small" style="width:100%;margin-bottom:8px" ${!iaConfigurada()||Teacher.interp.gerando?'disabled':''} onclick="App.regenerarExerciciosInterp()">🔄 Regenerar exercícios (mesmo texto)</button>
+        <div id="exList">${exs}</div>
+        <button class="btn blue small" style="width:100%;margin-bottom:8px" onclick="App.addExercise()">➕ Adicionar exercício</button>
+      ` : ''}
+      ${escopoHtml}
+      <button class="btn" style="margin-top:12px" ${!temTexto?'disabled':''} onclick="App.saveLesson()">✅ Publicar lição</button>
+      <button class="btn gray" style="margin-top:10px" onclick="App.cancelarEdicaoLicao()">Cancelar</button>`;
+  }
+
+  // ----- Lição PADRÃO -----
+  return `<div class="sec-title">${L.id?'Editando lição':'Nova lição'}</div>
+    <label>Disciplina</label>${sel}
+    ${tipoSelectorHtml}
+    <label>Título da lição</label>
+    <input id="lTitulo" value="${esc(L.titulo)}" placeholder="Ex: Frações Simples">
+    <label>Texto explicativo / material de estudo</label>
+    <textarea id="lTexto" placeholder="Escreva o conteúdo da lição aqui...">${esc(L.texto)}</textarea>
+
+    ${escopoHtml}
 
     ${materialApoioPanel(L)}
 
@@ -3072,6 +3284,194 @@ function teacherEditorTab(){
     <button class="btn blue" style="margin-top:8px" onclick="App.previewLesson()">👁️ Pré-visualizar (como o aluno vê)</button>
     <button class="btn" style="margin-top:10px" onclick="App.saveLesson()">💾 Salvar lição</button>
     <button class="btn gray" style="margin-top:10px" onclick="App.cancelarEdicaoLicao()">Cancelar</button>`;
+}
+// Seletor visual do tipo de lição (padrão x interpretação de texto).
+function tipoLicaoSelector(L){
+  const t = L.tipo || "padrao";
+  return `<div class="sec-title">Tipo de lição</div>
+    <button type="button" class="tipo-card ${t==='padrao'?'sel':''}" onclick="App.setTipoLicao('padrao')">
+      <span class="tipo-radio">${t==='padrao'?'●':'○'}</span>
+      <span><b>📝 Lição padrão</b><br><span class="tipo-d">Conteúdo + exercícios normais</span></span>
+    </button>
+    <button type="button" class="tipo-card ${t==='interpretacao_texto'?'sel':''}" onclick="App.setTipoLicao('interpretacao_texto')">
+      <span class="tipo-radio">${t==='interpretacao_texto'?'●':'○'}</span>
+      <span><b>📖 Texto para interpretação</b><br><span class="tipo-d">A IA gera um texto e exercícios de interpretação sobre ele</span></span>
+    </button>`;
+}
+function setTipoLicao(t){ syncTextInputs(); if(Teacher.editingLesson){ Teacher.editingLesson.tipo=t; } render(); }
+function contarPorDificuldadeLabel(arr){
+  const c=contarPorDificuldade(arr||[]);
+  return `${c.facil} fácil • ${c.intermediario} intermediário • ${c.dificil} difícil`;
+}
+
+/* ----- INTERPRETAÇÃO DE TEXTO: config, geração e prompts ----- */
+const INTERP_FOCOS = [
+  { k:"ideia",       l:"Ideia principal do texto" },
+  { k:"personagens", l:"Personagens e características" },
+  { k:"sequencia",   l:"Sequência de eventos" },
+  { k:"vocabulario", l:"Vocabulário e significado de palavras" },
+  { k:"inferencia",  l:"Inferência e interpretação" },
+  { k:"opiniao",     l:"Opinião e argumentação" },
+];
+const INTERP_GENEROS = ["Conto infantil","Fábula","Poema","Notícia infantil","Carta","Tirinha (descrição textual)","Receita com história"];
+const INTERP_TAMANHOS = [
+  { v:"curto", l:"Curto (150-200 palavras) — 1º ao 3º ano", palavras:"150 a 200" },
+  { v:"medio", l:"Médio (250-350 palavras) — 4º ao 6º ano", palavras:"250 a 350" },
+  { v:"longo", l:"Longo (400-500 palavras) — 7º ao 9º e Médio", palavras:"400 a 500" },
+];
+const INTERP_LOAD_MSGS = ["✍️ Escrevendo o texto...","📚 Criando as questões...","🎨 Finalizando a lição..."];
+let interpLoadTimer = null;
+function iniciarRotacaoInterp(){
+  clearInterval(interpLoadTimer); let i=0;
+  interpLoadTimer=setInterval(()=>{ i=(i+1)%INTERP_LOAD_MSGS.length; const e=document.getElementById("interpMsg"); if(e) e.textContent=INTERP_LOAD_MSGS[i]; }, 1800);
+}
+function tamanhoInterp(v){ return INTERP_TAMANHOS.find(t=>t.v===v) || INTERP_TAMANHOS[1]; }
+
+function interpConfigPanel(L){
+  const I=Teacher.interp||{}; const temChave=iaConfigurada();
+  const generoOpts = `<option value="">Selecione o gênero</option>` + INTERP_GENEROS.map(g=>`<option ${L.generoTextual===g?'selected':''}>${esc(g)}</option>`).join("");
+  const tamOpts = `<option value="">Selecione o tamanho</option>` + INTERP_TAMANHOS.map(t=>`<option value="${t.v}" ${L._tamanho===t.v?'selected':''}>${esc(t.l)}</option>`).join("");
+  const focosChips = INTERP_FOCOS.map(f=>{ const on=(L._focos||[]).indexOf(f.k)>=0;
+    return `<button type="button" class="btn ${on?'':'gray'} small" style="width:auto;min-width:0;margin:0 6px 6px 0;text-transform:none;font-size:13px" onclick="App.toggleFocoInterp('${f.k}')">${on?'✓ ':''}${esc(f.l)}</button>`;
+  }).join("");
+  let status="";
+  if(I.gerando) status=`<div class="ia-loading" style="color:#1cb0f6;margin-top:8px"><span class="ia-spinner"></span> <span id="interpMsg">${esc(INTERP_LOAD_MSGS[0])}</span></div>`;
+  else if(I.erro) status=`<div class="ia-erro">⚠️ ${esc(I.erro)}</div>`;
+  const temTexto=(L.textoGerado||"").trim().length>0;
+  const preview = temTexto ? `
+    <div class="sec-title" style="margin-top:12px">📖 Texto gerado${L.tituloTexto?(' — '+esc(L.tituloTexto)):''}</div>
+    <p style="font-size:12px;color:#999;margin:-2px 0 6px">📝 Edite o texto abaixo se quiser ajustar antes de publicar.</p>
+    <textarea id="lTextoGerado" class="interp-textarea">${esc(L.textoGerado)}</textarea>
+    <button class="btn gray small" style="width:100%;margin-top:6px" ${(!temChave||I.gerando)?'disabled':''} onclick="App.regenerarTextoInterp()">🔄 Regenerar texto (nova versão)</button>
+  ` : "";
+  return `<div class="ia-panel">
+    <div class="ia-head"><b>📖 Texto para Interpretação (IA)</b></div>
+    <p style="font-size:12px;color:#777;margin-bottom:6px">A IA cria um texto original e 15 questões de interpretação sobre ele.</p>
+    <label>Tema do texto</label>
+    <input id="itTema" value="${esc(L.tema||'')}" placeholder="Ex: amizade, meio ambiente, festa junina, animais da fazenda...">
+    <label>Gênero textual</label>
+    <select id="itGenero">${generoOpts}</select>
+    <label>Tamanho do texto</label>
+    <select id="itTamanho">${tamOpts}</select>
+    <label>Foco de interpretação (um ou mais)</label>
+    <div style="display:flex;flex-wrap:wrap;margin-bottom:6px">${focosChips}</div>
+    ${status}
+    <button class="btn" style="background:#1cb0f6;box-shadow:0 4px 0 #1899d6;margin-top:6px" ${(!temChave||I.gerando)?'disabled':''} onclick="App.gerarInterpretacao()">✨ Gerar texto e exercícios</button>
+    ${!temChave?`<p style="font-size:12px;color:#c0392b;text-align:center;margin-top:6px">Chave da IA não configurada (peça ao Administrador ⚙️).</p>`:''}
+    ${preview}
+  </div>`;
+}
+function toggleFocoInterp(k){ syncTextInputs(); const L=Teacher.editingLesson; if(!L) return; L._focos=L._focos||[]; const i=L._focos.indexOf(k); if(i>=0)L._focos.splice(i,1); else L._focos.push(k); render(); }
+
+// Converte o array de exercícios da IA para o formato interno (reusa o parser existente).
+function mapearExerciciosInterp(arr){ try{ return parseExerciciosIA(JSON.stringify(arr)); }catch(e){ return []; } }
+function parseJsonObjIA(texto){
+  if(!texto) return null;
+  let s=String(texto).trim().replace(/^```(?:json)?\s*/i,"").replace(/\s*```$/,"");
+  const ini=s.indexOf("{"), fim=s.lastIndexOf("}");
+  if(ini>=0 && fim>ini) s=s.slice(ini,fim+1);
+  const o=jsonParseTolerante(s); return (o===undefined)?null:o;
+}
+function focosTexto(L){
+  const focos=(L._focos||[]).map(k=>{ const f=INTERP_FOCOS.find(x=>x.k===k); return f?f.l:null; }).filter(Boolean);
+  return focos.length ? focos.join(", ") : "a compreensão geral do texto";
+}
+// Gera TEXTO + 15 exercícios (objeto). Timeout de 30s (texto é mais longo).
+async function gerarInterpretacaoIA(L){
+  const pub=descreverPublicoLicao(L); const tam=tamanhoInterp(L._tamanho);
+  const prompt =
+`Você é um professor de Português do ${pub.ano} do ${nomeNivel(pub.nivelId)} (Sistema Positivo). Crie um ${L.generoTextual} original sobre o tema '${L.tema}' adequado para uma criança de ${pub.idade} anos, com aproximadamente ${tam.palavras} palavras.
+
+O texto deve:
+- Ter linguagem adequada à faixa etária
+- Ser envolvente e educativo
+- Ter título criativo
+- Usar vocabulário variado mas acessível
+- Incluir elementos que permitam explorar: ${focosTexto(L)}
+
+Após o texto, gere exatamente 15 questões de interpretação divididas em:
+- 5 questões fáceis (identificação direta de informações no texto)
+- 5 questões intermediárias (relações entre informações, vocabulário)
+- 5 questões difíceis (inferência, opinião fundamentada, análise)
+
+Tipos de questão: múltipla escolha (4 opções), verdadeiro/falso, completar lacunas com palavras do próprio texto.
+
+IMPORTANTE: A resposta_correta deve conter o TEXTO da resposta correta, não o label (A, B, C, D).
+
+Retorne APENAS um JSON válido:
+{
+  "titulo_texto": "título do texto gerado",
+  "genero": "gênero textual",
+  "texto": "texto completo aqui...",
+  "exercicios": [
+    {"nivel": "facil", "tipo": "multipla_escolha", "enunciado": "...", "opcoes": ["texto opção 1","texto opção 2","texto opção 3","texto opção 4"], "resposta_correta": "texto da resposta correta"}
+  ]
+}`;
+  const txt=await chamarIA(prompt, 30000);
+  const obj=parseJsonObjIA(txt);
+  if(!obj || !obj.texto) throw new Error("A IA não retornou um texto válido. Tente novamente.");
+  return obj;
+}
+// Gera SÓ as 15 questões sobre o texto já existente (regenerar exercícios).
+async function gerarExerciciosInterpIA(L){
+  const pub=descreverPublicoLicao(L);
+  const prompt =
+`Você é um professor de Português do ${pub.ano} do ${nomeNivel(pub.nivelId)} (Sistema Positivo).
+Com base no TEXTO abaixo, gere exatamente 15 questões de interpretação: 5 fáceis (identificação direta), 5 intermediárias (relações/vocabulário) e 5 difíceis (inferência/opinião/análise).
+Tipos: múltipla escolha (4 opções), verdadeiro/falso, completar lacunas com palavras do próprio texto.
+Explore: ${focosTexto(L)}.
+IMPORTANTE: resposta_correta deve conter o TEXTO da resposta, não a letra (A, B, C, D).
+Retorne APENAS um JSON array no formato:
+[ {"nivel":"facil","tipo":"multipla_escolha","enunciado":"...","opcoes":["a","b","c","d"],"resposta_correta":"texto correto"} ]
+
+TEXTO:
+${L.textoGerado}`;
+  const txt=await chamarIA(prompt, 30000);
+  return parseExerciciosIA(txt);
+}
+function aplicarInterpGerado(L, dados){
+  if(dados.titulo_texto) L.tituloTexto=String(dados.titulo_texto);
+  if(dados.genero) L.generoTextual=String(dados.genero);
+  if(dados.texto) L.textoGerado=String(dados.texto).trim();
+  if(Array.isArray(dados.exercicios)) L.exercicios = mapearExerciciosInterp(dados.exercicios);
+  if(!L.titulo || !L.titulo.trim()) L.titulo = L.tituloTexto || ("Interpretação de texto — "+(L.tema||""));
+}
+async function gerarInterpretacao(){
+  syncTextInputs();
+  const L=Teacher.editingLesson; if(!L) return;
+  if(!(L.tema||"").trim()){ Teacher.interp.erro="Informe o tema do texto."; render(); return; }
+  if(!L.generoTextual){ Teacher.interp.erro="Escolha o gênero textual."; render(); return; }
+  if(!iaConfigurada()){ Teacher.interp.erro="IA não configurada (peça ao Administrador)."; render(); return; }
+  Teacher.interp.gerando=true; Teacher.interp.erro=""; render(); iniciarRotacaoInterp();
+  try{
+    const dados = await gerarInterpretacaoIA(L);
+    aplicarInterpGerado(L, dados);
+    clearInterval(interpLoadTimer); Teacher.interp.gerando=false;
+    // se o texto veio mas as questões falharam, mantém o texto e orienta a regenerar só elas
+    if(!L.exercicios.length) Teacher.interp.erro="O texto foi gerado, mas as questões não. Use '🔄 Regenerar exercícios'.";
+    render();
+    if(L.exercicios.length) toast("Texto e exercícios gerados! ✅ Revise e publique.");
+  }catch(err){
+    clearInterval(interpLoadTimer); Teacher.interp.gerando=false; Teacher.interp.erro=mensagemErroIA(err); render();
+  }
+}
+async function regenerarTextoInterp(){
+  if(!confirm("Gerar uma NOVA versão do texto? As questões serão refeitas para combinar com o novo texto.")) return;
+  gerarInterpretacao();
+}
+async function regenerarExerciciosInterp(){
+  syncTextInputs();
+  const L=Teacher.editingLesson; if(!L) return;
+  if(!(L.textoGerado||"").trim()){ toast("Gere o texto primeiro."); return; }
+  if(!iaConfigurada()){ Teacher.interp.erro="IA não configurada."; render(); return; }
+  Teacher.interp.gerando=true; Teacher.interp.erro=""; render(); iniciarRotacaoInterp();
+  try{
+    const arr = await gerarExerciciosInterpIA(L);
+    clearInterval(interpLoadTimer); Teacher.interp.gerando=false;
+    if(arr && arr.length){ L.exercicios=arr; toast("Novas questões geradas! ✅"); }
+    else Teacher.interp.erro="Não consegui gerar as questões. Tente novamente.";
+    render();
+  }catch(err){ clearInterval(interpLoadTimer); Teacher.interp.gerando=false; Teacher.interp.erro=mensagemErroIA(err); render(); }
 }
 function previewLesson(){ syncTextInputs(); Teacher.previewing=true; render(); }
 function fecharPreview(){ Teacher.previewing=false; render(); }
@@ -3579,6 +3979,29 @@ ${conteudo}${blocoMaterial}`;
   }
 }
 
+// Escapa quebras de linha/controles CRUS dentro de strings JSON (a IA às vezes devolve
+// texto multiparágrafo com \n literal, o que quebra o JSON.parse). Preserva a estrutura.
+function sanitizarControlesJson(s){
+  let out="", inStr=false, esc=false;
+  for(let i=0;i<s.length;i++){
+    const c=s[i];
+    if(esc){ out+=c; esc=false; continue; }
+    if(c==='\\'){ out+=c; esc=true; continue; }
+    if(c==='"'){ inStr=!inStr; out+=c; continue; }
+    if(inStr){
+      if(c==='\n'){ out+='\\n'; continue; }
+      if(c==='\r'){ out+='\\r'; continue; }
+      if(c==='\t'){ out+='\\t'; continue; }
+    }
+    out+=c;
+  }
+  return out;
+}
+// JSON.parse tolerante: tenta direto e, se falhar, com os controles escapados.
+function jsonParseTolerante(s){
+  try{ return JSON.parse(s); }catch(e){}
+  try{ return JSON.parse(sanitizarControlesJson(s)); }catch(e){ return undefined; }
+}
 // Converte o JSON retornado pela IA para o formato interno de exercícios
 function parseExerciciosIA(texto){
   if(!texto) return [];
@@ -3588,8 +4011,7 @@ function parseExerciciosIA(texto){
   // tenta extrair o array, caso venha com texto ao redor
   const ini=s.indexOf("["), fim=s.lastIndexOf("]");
   if(ini>=0 && fim>ini) s = s.slice(ini, fim+1);
-  let arr;
-  try{ arr = JSON.parse(s); }catch(e){ return []; }
+  const arr = jsonParseTolerante(s);
   if(!Array.isArray(arr)) return [];
 
   const out=[];
@@ -3701,6 +4123,11 @@ function syncTextInputs(){
   const nv=document.getElementById("lNivel"); if(nv) Teacher.editingLesson.nivel=nv.value;
   const an=document.getElementById("lAno");   if(an) Teacher.editingLesson.ano=an.value;
   const tu=document.getElementById("lTurma"); if(tu) Teacher.editingLesson.turma=tu.value;
+  // interpretação de texto: config e texto gerado (editável)
+  const it=document.getElementById("itTema");   if(it) Teacher.editingLesson.tema=it.value;
+  const ig=document.getElementById("itGenero");  if(ig) Teacher.editingLesson.generoTextual=ig.value;
+  const iz=document.getElementById("itTamanho"); if(iz) Teacher.editingLesson._tamanho=iz.value;
+  const tg=document.getElementById("lTextoGerado"); if(tg) Teacher.editingLesson.textoGerado=tg.value;
 }
 function onLessonNivel(v){
   syncTextInputs();
@@ -3740,6 +4167,11 @@ async function saveLesson(){
   syncTextInputs();
   const L=Teacher.editingLesson;
   if(!L.titulo.trim()){ toast("Dê um título à lição."); return; }
+  const ehInterp = (L.tipo==="interpretacao_texto");
+  if(ehInterp){
+    if(!(L.textoGerado||"").trim()){ toast("Gere o texto de interpretação antes de publicar."); return; }
+    if(!L.exercicios.length){ toast("Gere os exercícios de interpretação antes de publicar."); return; }
+  }
   // validação dos exercícios
   for(let k=0;k<L.exercicios.length;k++){
     const ex=L.exercicios[k];
@@ -3755,15 +4187,24 @@ async function saveLesson(){
   const turmaN=(L.turma||"").trim().toUpperCase(), anoN=(L.ano||"").trim(), nivelN=(L.nivel||"").trim();
   const materialUrls=L.materialUrls||[], materialNomes=L.materialNomes||[], materialTipos=L.materialTipos||[], materialTexto=L.materialTexto||"";
   const historiaHabilitada = L.historiaHabilitada!==false;
+  // interpretação: guarda o texto gerado e espelha em `conteudo` (compat. com o resto do app)
+  const tipo = ehInterp ? "interpretacao_texto" : "padrao";
+  const conteudo = ehInterp ? (L.textoGerado||"") : L.texto;
   const payload = {
     disciplina: disc,
     titulo: L.titulo,
-    conteudo: L.texto,
+    conteudo: conteudo,
     exercicios: L.exercicios,
     // escopo normalizado para o filtro de visibilidade casar sempre (turma em MAIÚSCULA, ano/nível sem espaços)
     turma: turmaN,
     ano: anoN,
     nivel: nivelN,
+    // tipo de lição + campos de interpretação de texto
+    tipo: tipo,
+    textoGerado: ehInterp ? (L.textoGerado||"") : "",
+    tituloTexto: ehInterp ? (L.tituloTexto||"") : "",
+    generoTextual: ehInterp ? (L.generoTextual||"") : "",
+    tema: ehInterp ? (L.tema||"") : "",
     // material de apoio anexado
     materialUrls: materialUrls,
     materialNomes: materialNomes,
@@ -3795,7 +4236,7 @@ async function saveLesson(){
     // atualiza o estado local (remove de onde estava e re-adiciona na disciplina atual)
     removeLicaoLocal(L.id);
     if(!DATA[disc]) DATA[disc]=[];
-    DATA[disc].push({ id:L.id, titulo:L.titulo, texto:L.texto, exercicios:L.exercicios, resumoIA:"", explicacoes:{}, turma:turmaN, ano:anoN, nivel:nivelN, materialUrls:materialUrls, materialNomes:materialNomes, materialTipos:materialTipos, materialTexto:materialTexto, historiaHabilitada:historiaHabilitada });
+    DATA[disc].push({ id:L.id, titulo:L.titulo, texto:conteudo, exercicios:L.exercicios, resumoIA:"", explicacoes:{}, turma:turmaN, ano:anoN, nivel:nivelN, materialUrls:materialUrls, materialNomes:materialNomes, materialTipos:materialTipos, materialTexto:materialTexto, historiaHabilitada:historiaHabilitada, tipo:tipo, textoGerado:payload.textoGerado, tituloTexto:payload.tituloTexto, generoTextual:payload.generoTextual, tema:payload.tema });
 
     L._materialPendentes=[]; // anexos agora persistidos — não devem ser limpos
     Teacher.editingLesson=null; Teacher.tab="licoes";
@@ -4238,6 +4679,9 @@ window.App = {
   checkAnswer, nextExercise, continuarAposExplicacao, confirmQuit, openProfile, resetProgress, toggleSound,
   // modo história (aluno)
   escolherModo, iniciarModoClassico, iniciarModoHistoria, continuarHistoria,
+  // interpretação de texto (aluno)
+  ouvirTextoInterp, pausarTextoInterp, retomarTextoInterp, pararTextoInterp,
+  sairInterpRead, iniciarQuestoesInterp, abrirTextoInterp, fecharTextoInterp,
   toggleAutoLer,
   onPerfilNivel, salvarDadosEscolares,
   // leitura em voz alta (TTS)
@@ -4256,6 +4700,8 @@ window.App = {
   onSelecionarMateriais, removerMaterial, cancelarEdicaoLicao,
   // modo história (professor)
   toggleHistoriaHabilitada, regenerarHistoriaProf,
+  // interpretação de texto (professor)
+  setTipoLicao, toggleFocoInterp, gerarInterpretacao, regenerarTextoInterp, regenerarExerciciosInterp,
   // rendimento (Fase C)
   recarregarRendimento, setProgTurma, setProgDisc, setProgPeriodo,
   // gestão de alunos

@@ -164,6 +164,24 @@ Regras necessárias em `firestore.rules` (ponto de partida; ver arquivo no repo)
   - `"fill"` (completar lacuna): `resposta:"<texto>"` (correção via `norm()`,
     ignora acentos/maiúsculas)
 
+### Interpretação de Texto (Português)
+- Novo **tipo de lição** (`lesson.tipo="interpretacao_texto"`, seletor só em Português):
+  a IA gera um **texto original** + 15 questões de interpretação sobre ele.
+- Editor (professor): `interpConfigPanel` — tema, gênero (`INTERP_GENEROS`), tamanho
+  (`INTERP_TAMANHOS`), focos (`INTERP_FOCOS`). `gerarInterpretacao` (30s) →
+  `gerarInterpretacaoIA` retorna `{titulo_texto,genero,texto,exercicios}`; `regenerarTextoInterp`
+  (nova versão) e `regenerarExerciciosInterp` (mesmo texto). Campos salvos: `tipo`,
+  `textoGerado`, `tituloTexto`, `generoTextual`, `tema` (e `conteudo`=textoGerado). Badge
+  "📖 Interpretação" na lista de lições.
+- Aluno: `openLesson` desvia para `renderInterpRead` (Etapa 1 — leitura com TTS por
+  parágrafo via `LeitorTexto`, rate 0.8/pitch 1.1, destaque + pausa 0.5s, controles
+  play/pausar/continuar/parar; botão "Já li" liberado após 30s **ou** fim do scroll) →
+  questões clássicas com botão "📖 Ver o texto" (`abrirTextoInterp`, modal com destaque
+  best-effort das palavras da questão) → conclusão com "💡 Você sabia?" (`fatoCuriosoGenero`).
+- **Parser tolerante** (`jsonParseTolerante`/`sanitizarControlesJson`): escapa `\n`/`\r`/`\t`
+  CRUS dentro de strings JSON (a IA devolve texto multiparágrafo que quebrava o `JSON.parse`).
+  Usado por `parseExerciciosIA`, `parseJsonObjIA` e `parseHistoriaIA`.
+
 ### Modo História (aventura interativa)
 - Após o resumo, a tela de estudo leva à **seleção de modo** (`renderModoSelect`,
   `State.tela="modo"`): **Clássico** (`iniciarModoClassico`) ou **História**
