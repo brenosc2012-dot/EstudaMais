@@ -3618,7 +3618,6 @@ async function onSelecionarMateriais(fileList){
   const L = Teacher.editingLesson;
   const arquivos = Array.prototype.slice.call(fileList||[]);
   if(!arquivos.length) return;
-  if(!storage){ toast("Firebase Storage indisponível. Recarregue a página (Ctrl+Shift+R)."); return; }
   L.materialUrls=L.materialUrls||[]; L.materialNomes=L.materialNomes||[]; L.materialTipos=L.materialTipos||[];
   if(L.materialUrls.length + arquivos.length > MATERIAL_MAX_ARQUIVOS){
     toast(`Máximo de ${MATERIAL_MAX_ARQUIVOS} documentos por lição.`); return;
@@ -3631,31 +3630,56 @@ async function onSelecionarMateriais(fileList){
   if(!L.id) L.id = db.collection("licoes").doc().id;
   const profId = (PROFESSOR && PROFESSOR.id) || "anon";
   let textoAcumulado = L.materialTexto || "";
-  let algumErro=false;
+  let algumErro=false;   // arquivo do qual não deu para aproveitar nada (nem texto, nem upload)
+  let houveFallback=false; // ao menos 1 arquivo ficou só com o texto (upload indisponível/bloqueado por CORS)
   for(const f of arquivos){
     try{
-      // 1) extrai o texto (mostra "Lendo documento...")
+      // 1) extrai o texto LOCALMENTE (PDF.js / mammoth / TXT; imagens via visão da OpenAI em base64).
+      //    Isso não depende do Storage — o texto extraído é o que alimenta a geração das atividades.
       Teacher.upload={ ativo:true, pct:0, nome:f.name, lendo:true }; render();
       const txt = await extrairTextoArquivo(f);
-      if(txt && txt.trim() && textoAcumulado.length < MATERIAL_TEXTO_MAX){
+      const temTexto = !!(txt && txt.trim());
+      if(temTexto && textoAcumulado.length < MATERIAL_TEXTO_MAX){
         textoAcumulado += (textoAcumulado?"\n\n":"") + `[${f.name}]\n` + txt.trim();
         if(textoAcumulado.length > MATERIAL_TEXTO_MAX) textoAcumulado = textoAcumulado.slice(0, MATERIAL_TEXTO_MAX);
       }
-      // 2) faz o upload para o Storage (barra de progresso)
-      const url = await uploadMaterialStorage(profId, L.id, f);
-      L.materialUrls.push(url); L.materialNomes.push(f.name); L.materialTipos.push(f.type||"");
-      // marca como pendente (ainda não salvo no Firestore) para limpeza se cancelar
-      L._materialPendentes = L._materialPendentes || []; L._materialPendentes.push(url);
+      // 2) tenta subir o arquivo ao Storage (barra de progresso) para o aluno poder abri-lo.
+      //    Se o Storage estiver indisponível ou o upload for bloqueado (ex.: CORS não configurado no
+      //    GitHub Pages), NÃO abortamos: seguimos apenas com o texto extraído localmente.
+      let url=null;
+      if(storage){
+        try{
+          url = await uploadMaterialStorage(profId, L.id, f);
+        }catch(upErr){
+          houveFallback=true;
+          console.warn("Upload ao Storage falhou (CORS não configurado?) — usando só o texto extraído localmente:", f.name, upErr);
+        }
+      }else{
+        houveFallback=true;
+      }
+      if(url){
+        L.materialUrls.push(url); L.materialNomes.push(f.name); L.materialTipos.push(f.type||"");
+        // marca como pendente (ainda não salvo no Firestore) para limpeza se cancelar
+        L._materialPendentes = L._materialPendentes || []; L._materialPendentes.push(url);
+      }else if(!temTexto){
+        // não subiu ao Storage e também não foi possível extrair texto: nada aproveitável deste arquivo
+        algumErro=true;
+        toast(`Não foi possível ler "${f.name}". Tente um PDF/DOCX/TXT com texto selecionável.`);
+      }
     }catch(e){
       algumErro=true;
       console.warn("Falha no material", f.name, e);
-      toast(`Erro ao anexar "${f.name}". Verifique a conexão e as regras do Storage.`);
+      toast(`Erro ao processar "${f.name}". Verifique o arquivo e tente novamente.`);
     }
   }
   L.materialTexto = textoAcumulado;
   Teacher.upload={ ativo:false, pct:0, nome:"", lendo:false };
   render();
-  if(!algumErro) toast("Documento(s) anexado(s)! ✅ Salve a lição para confirmar.");
+  if(houveFallback && !algumErro){
+    toast("Arquivo lido localmente — o texto foi extraído com sucesso para geração das atividades. ✅");
+  }else if(!algumErro){
+    toast("Documento(s) anexado(s)! ✅ Salve a lição para confirmar.");
+  }
 }
 
 // Remove um material anexado (do Storage, best-effort, e da lição).
@@ -3707,6 +3731,11 @@ function materialApoioPanel(L){
       <button class="btn red small" style="width:auto;padding:6px 10px" onclick="App.removerMaterial(${i})" ${Teacher.upload.ativo?'disabled':''}>Remover</button>
     </div>`).join("") : `<p style="font-size:12px;color:#999;margin:4px 0">Nenhum documento anexado ainda.</p>`;
 
+  // Aviso quando há texto extraído localmente sem arquivo no Storage (fallback de CORS):
+  // o documento não fica visível ao aluno, mas seu texto alimenta a IA.
+  const chars = (L.materialTexto||"").trim().length;
+  const notaTexto = (chars && !nomes.length) ? `<p style="font-size:12px;color:#27ae60;margin:4px 0">✅ Texto extraído localmente (${chars} caracteres) — será usado pela IA para gerar as atividades.</p>` : "";
+
   const progresso = Teacher.upload.ativo ? (
     Teacher.upload.lendo
       ? `<div class="ia-loading" style="color:#9b59b6;margin-top:8px"><span class="ia-spinner"></span> Lendo documento: ${esc(Teacher.upload.nome)}...</div>`
@@ -3720,6 +3749,7 @@ function materialApoioPanel(L){
     <div class="ia-head"><b>📎 Material de Apoio</b></div>
     <p style="font-size:12px;color:#777;margin-bottom:8px">Anexe apostilas/documentos (PDF, DOC, DOCX, TXT, PNG, JPG — até 10MB, ${MATERIAL_MAX_ARQUIVOS} por lição). O texto é extraído e usado pela IA ao gerar exercícios e resumos.</p>
     <div id="materialLista">${lista}</div>
+    ${notaTexto}
     ${progresso}
     <label class="btn blue" style="margin-top:8px;display:block;text-align:center;cursor:pointer;${(cheio||Teacher.upload.ativo)?'opacity:.5;pointer-events:none':''}">
       📎 Anexar documento
