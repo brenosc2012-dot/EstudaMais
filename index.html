@@ -376,7 +376,6 @@ label{ display:block; font-weight:700; font-size:14px; margin-bottom:6px; color:
 <!-- Firebase (módulos compat via CDN — sem bundler/import) -->
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-storage-compat.js"></script>
 <!-- Extração de texto de documentos anexados (Material de Apoio) -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js"></script>
@@ -385,7 +384,7 @@ label{ display:block; font-weight:700; font-size:14px; margin-bottom:6px; color:
 /* ============================================================
    ESTUDAMAIS — JavaScript
    Seções:
-   A) DADOS (disciplinas, conteúdo inicial, storage)
+   A) DADOS (disciplinas, conteúdo inicial, config)
    B) ESTADO & UTILITÁRIOS
    C) GAMIFICAÇÃO (XP, vidas, streak, níveis)
    D) UI DO ALUNO (home, lições, conteúdo, exercícios, celebração)
@@ -476,13 +475,13 @@ const firebaseConfig = {
   appId: "1:638423075835:web:9d1cbf3be714fa20a2595e",
   measurementId: "G-1K93EM8LZ9"
 };
-let db = null, storage = null;
+let db = null;
 function initFirebase(){
   if(typeof firebase === "undefined") throw new Error("Firebase não carregou (sem conexão?).");
   if(!firebase.apps.length) firebase.initializeApp(firebaseConfig);
   db = firebase.firestore();
-  // Firebase Storage (upload de materiais de apoio); best-effort para não quebrar o boot
-  try{ storage = firebase.storage ? firebase.storage() : null; }catch(e){ storage = null; }
+  // OBS.: não usamos mais Firebase Storage — o texto dos documentos é extraído localmente
+  // no navegador (PDF.js/mammoth/TXT; imagens via visão da OpenAI) e só o texto é salvo.
   // configura o worker do PDF.js (extração de texto de PDFs), se disponível
   try{ if(typeof pdfjsLib!=="undefined") pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js"; }catch(e){}
   // cache offline (best-effort; não bloqueia se falhar)
@@ -797,8 +796,8 @@ function licaoDeDoc(id, d){
     turma: d.turma||"",
     ano: d.ano||"",
     nivel: d.nivel||"",
-    // material de apoio (documentos anexados pelo professor)
-    materialUrls:  Array.isArray(d.materialUrls)  ? d.materialUrls  : [],
+    // material de apoio: só o TEXTO extraído localmente (não usamos mais Storage/URLs).
+    // Campos antigos de URL (materialUrls) em lições salvas antes desta versão são ignorados.
     materialNomes: Array.isArray(d.materialNomes) ? d.materialNomes : [],
     materialTipos: Array.isArray(d.materialTipos) ? d.materialTipos : [],
     materialTexto: d.materialTexto || "", // texto extraído dos documentos (p/ IA)
@@ -931,7 +930,7 @@ function saveProfile(){
 // ----- Sessão local (quem está logado neste aparelho) -----
 function salvarSessao(){ try{ if(SESSAO) localStorage.setItem(SESSAO_KEY, JSON.stringify(SESSAO)); else localStorage.removeItem(SESSAO_KEY); }catch(e){} }
 function carregarSessao(){ try{ const r=localStorage.getItem(SESSAO_KEY); if(r) SESSAO=JSON.parse(r); }catch(e){ SESSAO=null; } }
-function logout(){ try{ if(Teacher.editingLesson) limparMateriaisPendentes(Teacher.editingLesson); }catch(e){} SESSAO=null; ALUNO=null; PROFESSOR=null; PROFILE={}; salvarSessao(); try{ localStorage.removeItem(ALUNO_CACHE_KEY); }catch(e){} State.tela="landing"; render(); }
+function logout(){ SESSAO=null; ALUNO=null; PROFESSOR=null; PROFILE={}; salvarSessao(); try{ localStorage.removeItem(ALUNO_CACHE_KEY); }catch(e){} State.tela="landing"; render(); }
 
 function subjById(id){ return SUBJECTS.find(s=>s.id===id); }
 
@@ -1858,27 +1857,24 @@ CONTEÚDO DA LIÇÃO: ${l.texto}${blocoMaterialAluno}`;
   }
 }
 
-// Seção colapsável com os documentos anexados pelo professor (tela de estudo do aluno).
+// Seção colapsável listando os documentos que o professor usou como base (tela de estudo).
+// Não há mais arquivo para abrir (sem Storage): o texto extraído alimentou o resumo/exercícios.
 function materialApoioAluno(l){
-  const urls=(l&&l.materialUrls)||[], nomes=(l&&l.materialNomes)||[], tipos=(l&&l.materialTipos)||[];
-  if(!urls.length) return "";
-  const itens = urls.map((url,i)=>{
-    const nome=nomes[i]||("Documento "+(i+1)), tipo=tipos[i]||"";
-    if(materialEhImagem(tipo, nome)){
-      return `<a href="${esc(url)}" target="_blank" rel="noopener" style="display:block;margin:8px 0;text-decoration:none;color:inherit">
-        <img src="${esc(url)}" alt="${esc(nome)}" style="max-width:100%;border-radius:10px;border:2px solid var(--gray)">
-        <div style="font-size:12px;color:#777;margin-top:2px">🖼️ ${esc(nome)} — toque para ampliar</div>
-      </a>`;
-    }
+  const nomes=(l&&l.materialNomes)||[], tipos=(l&&l.materialTipos)||[];
+  if(!nomes.length) return "";
+  const itens = nomes.map((nome,i)=>{
+    const tipo=tipos[i]||"";
     return `<div class="t-lesson-row" style="align-items:center">
-      <div style="width:28px;text-align:center;font-size:18px">${materialIcone(tipo, nome)}</div>
-      <div class="info" style="min-width:0"><div class="t" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(nome)}</div></div>
-      <a class="btn blue small" style="width:auto;padding:6px 10px;text-decoration:none" href="${esc(url)}" target="_blank" rel="noopener">Ver documento</a>
+      <div style="width:28px;text-align:center;font-size:18px">${materialIcone(tipo, nome||("Documento "+(i+1)))}</div>
+      <div class="info" style="min-width:0"><div class="t" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(nome||("Documento "+(i+1)))}</div></div>
     </div>`;
   }).join("");
   return `<details style="margin-top:14px;background:#fff;border:2px solid var(--gray);border-radius:14px;padding:2px 14px">
-    <summary style="font-weight:800;cursor:pointer;padding:10px 0">📚 Material de Apoio (${urls.length})</summary>
-    <div style="padding-bottom:10px">${itens}</div>
+    <summary style="font-weight:800;cursor:pointer;padding:10px 0">📚 Material de Apoio (${nomes.length})</summary>
+    <div style="padding-bottom:10px">
+      <p style="font-size:12px;color:#777;margin:4px 0">O professor usou este material para preparar o conteúdo e os exercícios desta lição.</p>
+      ${itens}
+    </div>
   </details>`;
 }
 
@@ -3100,8 +3096,6 @@ function renderTeacher(){
   </div>`;
 }
 function teacherTab(t){
-  // ao sair do editor sem salvar, remove do Storage os anexos ainda não salvos
-  if(t!=="novo" && Teacher.editingLesson) limparMateriaisPendentes(Teacher.editingLesson);
   if(t!=="novo") Teacher.editingLesson=null;
   Teacher.tab=t;
   if(t==="progresso" && !Teacher.prog.carregada && !Teacher.prog.carregando){ carregarRendimento(); return; }
@@ -3179,7 +3173,7 @@ function escopoLicaoLabel(l){
 function teacherSelectSubj(v){ Teacher.subj=v; render(); }
 
 function resetIaEstado(){ Teacher.gerando=false; Teacher.regenerando=false; Teacher.previewing=false; Teacher.iaErro=""; Teacher.iaConfigAberta=false; }
-function newLesson(){ Teacher.editingLesson={ id:null, titulo:"", texto:"", exercicios:[], turma:"", nivel:"", ano:"", materialUrls:[], materialNomes:[], materialTipos:[], materialTexto:"", historiaHabilitada:true, tipo:"padrao", textoGerado:"", tituloTexto:"", generoTextual:"", tema:"", _tamanho:"", _focos:[], _persistido:false, _materialPendentes:[] }; resetIaEstado(); Teacher.upload={ ativo:false, pct:0, nome:"", lendo:false }; Teacher.hist={ gerando:false, preview:null, erro:"" }; Teacher.interp={ gerando:false, erro:"" }; Teacher.tab="novo"; render(); }
+function newLesson(){ Teacher.editingLesson={ id:null, titulo:"", texto:"", exercicios:[], turma:"", nivel:"", ano:"", materialNomes:[], materialTipos:[], materialTexto:"", historiaHabilitada:true, tipo:"padrao", textoGerado:"", tituloTexto:"", generoTextual:"", tema:"", _tamanho:"", _focos:[], _persistido:false }; resetIaEstado(); Teacher.upload={ ativo:false, nome:"", lendo:false }; Teacher.hist={ gerando:false, preview:null, erro:"" }; Teacher.interp={ gerando:false, erro:"" }; Teacher.tab="novo"; render(); }
 function editLesson(id){
   const l=(DATA[Teacher.subj]||[]).find(x=>x.id===id);
   if(!l) return;
@@ -3188,11 +3182,10 @@ function editLesson(id){
   Teacher.editingLesson._persistido = true; // já existe no Firestore
   // garante os campos em lições antigas (compatibilidade)
   const L=Teacher.editingLesson;
-  L.materialUrls=L.materialUrls||[]; L.materialNomes=L.materialNomes||[]; L.materialTipos=L.materialTipos||[]; L.materialTexto=L.materialTexto||"";
+  L.materialNomes=L.materialNomes||[]; L.materialTipos=L.materialTipos||[]; L.materialTexto=L.materialTexto||"";
   if(L.historiaHabilitada===undefined) L.historiaHabilitada=true;
   if(!L.tipo) L.tipo="padrao"; if(!Array.isArray(L._focos)) L._focos=[]; if(L._tamanho===undefined) L._tamanho="";
-  L._materialPendentes=[]; // anexos enviados nesta sessão de edição ainda não salvos
-  resetIaEstado(); Teacher.upload={ ativo:false, pct:0, nome:"", lendo:false }; Teacher.hist={ gerando:false, preview:null, erro:"" }; Teacher.interp={ gerando:false, erro:"" };
+  resetIaEstado(); Teacher.upload={ ativo:false, nome:"", lendo:false }; Teacher.hist={ gerando:false, preview:null, erro:"" }; Teacher.interp={ gerando:false, erro:"" };
   // carrega a história já gerada (se houver) para mostrar o indicador/preview
   if(id) getHistoriaGerada(id).then(h=>{ if(h && Teacher.editingLesson && Teacher.editingLesson.id===id){ Teacher.hist.preview=h; if(Teacher.tab==="novo") render(); } });
   Teacher.tab="novo"; render();
@@ -3518,10 +3511,11 @@ function renderPreview(){
   </div>`;
 }
 
-/* ---- MATERIAL DE APOIO: upload de documentos + extração de texto ----
-   Documentos vão para o Firebase Storage em materiais/{professorId}/{licaoId}/{arquivo};
-   as URLs/nome/tipo são salvos na lição, e o texto extraído (TXT/PDF/DOCX/imagem via
-   visão) alimenta a IA (limitado a MATERIAL_TEXTO_MAX caracteres). */
+/* ---- MATERIAL DE APOIO: extração LOCAL de texto (sem Firebase Storage) ----
+   O professor importa documentos e o texto é extraído no próprio navegador:
+   TXT via FileReader, PDF via PDF.js, DOC/DOCX via mammoth.js e imagens (PNG/JPG)
+   via visão da OpenAI (base64). NÃO há upload: só o texto (limitado a
+   MATERIAL_TEXTO_MAX caracteres) é salvo na lição e usado para gerar exercícios/resumo. */
 const MATERIAL_MAX_BYTES = 10*1024*1024;      // 10 MB por arquivo
 const MATERIAL_MAX_ARQUIVOS = 3;              // no máximo 3 documentos por lição
 const MATERIAL_TEXTO_MAX = 8000;              // teto do texto extraído enviado à IA
@@ -3543,8 +3537,6 @@ function materialIcone(tipo, nome){
   if(ext==="txt") return "📄";
   return "📎";
 }
-// remove caracteres problemáticos do nome para o caminho no Storage
-function nomeArquivoSeguro(nome){ return String(nome||"arquivo").replace(/[^\w.\-]+/g,"_").slice(0,80); }
 
 // leitores de arquivo (Promise)
 function lerComoTexto(file){ return new Promise((res,rej)=>{ const r=new FileReader(); r.onload=()=>res(String(r.result||"")); r.onerror=()=>rej(r.error||new Error("read")); r.readAsText(file); }); }
@@ -3591,168 +3583,123 @@ async function extrairTextoArquivo(file){
 }
 
 // Envia o material para o Storage com barra de progresso; resolve com a URL de download.
-function uploadMaterialStorage(profId, licaoId, file){
-  return new Promise((resolve, reject)=>{
-    if(!storage){ reject(new Error("Storage indisponível")); return; }
-    const ref = storage.ref().child(`materiais/${profId}/${licaoId}/${nomeArquivoSeguro(file.name)}`);
-    const task = ref.put(file, { contentType: file.type || undefined });
-    Teacher.upload = { ativo:true, pct:0, nome:file.name, lendo:false };
-    render();
-    task.on("state_changed",
-      snap=>{ Teacher.upload.pct = snap.totalBytes ? Math.round(snap.bytesTransferred/snap.totalBytes*100) : 0; atualizarBarraUpload(); },
-      err=>{ reject(err); },
-      async ()=>{ try{ resolve(await task.snapshot.ref.getDownloadURL()); }catch(e){ reject(e); } }
-    );
-  });
-}
-// Atualiza só a barra no DOM (evita re-render a cada tick de progresso)
-function atualizarBarraUpload(){
-  const bar=document.getElementById("uploadBar"), pct=document.getElementById("uploadPct");
-  if(bar) bar.style.width = Teacher.upload.pct + "%";
-  if(pct) pct.textContent = Teacher.upload.pct + "%";
+// Recompõe o texto combinado dos documentos (cabeçalho [nome] + texto), limitado a MATERIAL_TEXTO_MAX.
+// Remove do texto combinado o bloco do documento de índice `idx` (usado ao remover um anexo).
+function removerBlocoMaterial(combinado, nomes, idx){
+  const marca = `[${nomes[idx]||""}]\n`;
+  const start = (combinado||"").indexOf(marca);
+  if(start<0) return combinado||""; // bloco não localizado — mantém o texto como está
+  let end = combinado.length;
+  for(let j=0;j<nomes.length;j++){
+    if(j===idx) continue;
+    const m2 = combinado.indexOf(`[${nomes[j]||""}]\n`, start+marca.length);
+    if(m2>=0 && m2<end) end = m2;
+  }
+  return (combinado.slice(0,start) + combinado.slice(end)).replace(/\n{3,}/g,"\n\n").replace(/^\s+|\s+$/g,"");
 }
 
-// Handler do seletor de arquivos: valida, extrai texto e faz upload de cada documento.
+// Handler do seletor de arquivos: valida e EXTRAI O TEXTO LOCALMENTE (sem upload).
+// TXT→FileReader, PDF→PDF.js, DOC/DOCX→mammoth, imagens (PNG/JPG)→visão da OpenAI (base64).
 async function onSelecionarMateriais(fileList){
   syncTextInputs();
   const L = Teacher.editingLesson;
   const arquivos = Array.prototype.slice.call(fileList||[]);
   if(!arquivos.length) return;
-  L.materialUrls=L.materialUrls||[]; L.materialNomes=L.materialNomes||[]; L.materialTipos=L.materialTipos||[];
-  if(L.materialUrls.length + arquivos.length > MATERIAL_MAX_ARQUIVOS){
+  L.materialNomes=L.materialNomes||[]; L.materialTipos=L.materialTipos||[]; L.materialTexto=L.materialTexto||"";
+  if(L.materialNomes.length + arquivos.length > MATERIAL_MAX_ARQUIVOS){
     toast(`Máximo de ${MATERIAL_MAX_ARQUIVOS} documentos por lição.`); return;
   }
+  // valida tamanho e tipo ANTES de ler
   for(const f of arquivos){
     if(f.size > MATERIAL_MAX_BYTES){ toast(`"${f.name}" tem mais de 10MB. Escolha um arquivo menor.`); return; }
-    if(!materialTipoOk(f)){ toast(`Tipo não aceito: "${f.name}". Use PDF, DOC, DOCX, TXT, PNG ou JPG.`); return; }
+    if(!materialTipoOk(f)){ toast(`Formato não suportado: "${f.name}". Use PDF, DOC, DOCX, TXT, PNG ou JPG.`); return; }
   }
-  // garante um id de lição para compor o caminho no Storage (a lição só é gravada ao Salvar)
-  if(!L.id) L.id = db.collection("licoes").doc().id;
-  const profId = (PROFESSOR && PROFESSOR.id) || "anon";
   let textoAcumulado = L.materialTexto || "";
-  let algumErro=false;   // arquivo do qual não deu para aproveitar nada (nem texto, nem upload)
-  let houveFallback=false; // ao menos 1 arquivo ficou só com o texto (upload indisponível/bloqueado por CORS)
+  let algumErro=false, lidos=0;
   for(const f of arquivos){
     try{
-      // 1) extrai o texto LOCALMENTE (PDF.js / mammoth / TXT; imagens via visão da OpenAI em base64).
-      //    Isso não depende do Storage — o texto extraído é o que alimenta a geração das atividades.
-      Teacher.upload={ ativo:true, pct:0, nome:f.name, lendo:true }; render();
-      const txt = await extrairTextoArquivo(f);
-      const temTexto = !!(txt && txt.trim());
-      if(temTexto && textoAcumulado.length < MATERIAL_TEXTO_MAX){
-        textoAcumulado += (textoAcumulado?"\n\n":"") + `[${f.name}]\n` + txt.trim();
+      // loading "📄 Lendo documento..."
+      Teacher.upload={ ativo:true, nome:f.name, lendo:true }; render();
+      let txt = (await extrairTextoArquivo(f) || "").trim();
+      if(!txt){
+        // .doc antigo, PDF sem texto selecionável, ou imagem sem chave de IA configurada
+        algumErro=true;
+        toast(`Não foi possível extrair texto de "${f.name}". Tente um PDF/DOCX/TXT com texto selecionável.`);
+        continue;
+      }
+      // acumula (com cabeçalho do arquivo), limitando o TOTAL a MATERIAL_TEXTO_MAX (primeiros 8000)
+      if(textoAcumulado.length < MATERIAL_TEXTO_MAX){
+        textoAcumulado += (textoAcumulado?"\n\n":"") + `[${f.name}]\n` + txt;
         if(textoAcumulado.length > MATERIAL_TEXTO_MAX) textoAcumulado = textoAcumulado.slice(0, MATERIAL_TEXTO_MAX);
       }
-      // 2) tenta subir o arquivo ao Storage (barra de progresso) para o aluno poder abri-lo.
-      //    Se o Storage estiver indisponível ou o upload for bloqueado (ex.: CORS não configurado no
-      //    GitHub Pages), NÃO abortamos: seguimos apenas com o texto extraído localmente.
-      let url=null;
-      if(storage){
-        try{
-          url = await uploadMaterialStorage(profId, L.id, f);
-        }catch(upErr){
-          houveFallback=true;
-          console.warn("Upload ao Storage falhou (CORS não configurado?) — usando só o texto extraído localmente:", f.name, upErr);
-        }
-      }else{
-        houveFallback=true;
-      }
-      if(url){
-        L.materialUrls.push(url); L.materialNomes.push(f.name); L.materialTipos.push(f.type||"");
-        // marca como pendente (ainda não salvo no Firestore) para limpeza se cancelar
-        L._materialPendentes = L._materialPendentes || []; L._materialPendentes.push(url);
-      }else if(!temTexto){
-        // não subiu ao Storage e também não foi possível extrair texto: nada aproveitável deste arquivo
-        algumErro=true;
-        toast(`Não foi possível ler "${f.name}". Tente um PDF/DOCX/TXT com texto selecionável.`);
-      }
+      L.materialNomes.push(f.name); L.materialTipos.push(f.type||"");
+      lidos++;
     }catch(e){
       algumErro=true;
-      console.warn("Falha no material", f.name, e);
-      toast(`Erro ao processar "${f.name}". Verifique o arquivo e tente novamente.`);
+      console.warn("Falha ao ler material", f.name, e);
+      toast(`Erro ao ler "${f.name}". Verifique o arquivo e tente novamente.`);
     }
   }
-  L.materialTexto = textoAcumulado;
-  Teacher.upload={ ativo:false, pct:0, nome:"", lendo:false };
+  L.materialTexto = textoAcumulado; // guardado apenas no estado local; vai ao Firestore só ao Salvar
+  Teacher.upload={ ativo:false, nome:"", lendo:false };
   render();
-  if(houveFallback && !algumErro){
-    toast("Arquivo lido localmente — o texto foi extraído com sucesso para geração das atividades. ✅");
-  }else if(!algumErro){
-    toast("Documento(s) anexado(s)! ✅ Salve a lição para confirmar.");
+  if(lidos && !algumErro){
+    toast(`✅ Documento lido com sucesso! ${textoAcumulado.length} caracteres extraídos.`);
   }
 }
 
-// Remove um material anexado (do Storage, best-effort, e da lição).
-async function removerMaterial(i){
+// Remove um documento importado: tira do estado local (nome/tipo) e recompõe o texto combinado.
+// A alteração só chega ao Firestore quando o professor Salvar a lição.
+function removerMaterial(i){
   const L=Teacher.editingLesson;
-  if(!L || !Array.isArray(L.materialUrls) || i<0 || i>=L.materialUrls.length) return;
+  if(!L || !Array.isArray(L.materialNomes) || i<0 || i>=L.materialNomes.length) return;
   const nome=L.materialNomes[i]||"este documento";
   if(!confirm(`Remover "${nome}" do material de apoio?`)) return;
-  const url=L.materialUrls[i];
-  // remove do Storage (best-effort — se falhar, seguimos removendo a referência)
-  try{ if(storage && url) await storage.refFromURL(url).delete(); }catch(e){ console.warn("Não foi possível apagar do Storage:", e); }
-  L.materialUrls.splice(i,1); L.materialNomes.splice(i,1); L.materialTipos.splice(i,1);
-  // já apagamos do Storage: tira da lista de pendentes para não tentar apagar de novo ao cancelar
-  if(Array.isArray(L._materialPendentes)){ const pi=L._materialPendentes.indexOf(url); if(pi>=0) L._materialPendentes.splice(pi,1); }
-  // se a lição já existe, reflete a remoção imediatamente no Firestore
-  if(L._persistido && L.id){
-    try{ await db.collection("licoes").doc(L.id).set({ materialUrls:L.materialUrls, materialNomes:L.materialNomes, materialTipos:L.materialTipos }, { merge:true }); }catch(e){}
-  }
+  L.materialTexto = removerBlocoMaterial(L.materialTexto||"", L.materialNomes, i);
+  L.materialNomes.splice(i,1); L.materialTipos.splice(i,1);
   render();
   toast("Documento removido.");
 }
 
-// Apaga do Storage os anexos enviados nesta edição que ainda NÃO foram salvos na lição
-// (best-effort, em segundo plano) — evita arquivos órfãos ao cancelar/trocar de aba.
-function limparMateriaisPendentes(L){
-  const pend = (L && Array.isArray(L._materialPendentes)) ? L._materialPendentes.slice() : [];
-  if(L) L._materialPendentes = [];
-  if(!storage || !pend.length) return;
-  pend.forEach(url=>{ try{ storage.refFromURL(url).delete().catch(function(){}); }catch(e){} });
-}
-
-// Cancela a edição da lição, descartando (e apagando do Storage) anexos não salvos.
+// Cancela a edição da lição e volta à lista (nenhum arquivo foi enviado — só estado local).
 function cancelarEdicaoLicao(){
-  const L=Teacher.editingLesson;
-  const pend = (L && Array.isArray(L._materialPendentes)) ? L._materialPendentes.length : 0;
-  if(pend && !confirm(`Cancelar a edição? ${pend} documento(s) anexado(s) mas ainda não salvos serão descartados.`)) return;
-  teacherTab("licoes"); // teacherTab faz a limpeza dos pendentes e volta à lista
+  teacherTab("licoes");
 }
 
-// Painel "Material de Apoio" no editor de lição.
+// Painel "Material de Apoio" no editor de lição (importação local — sem upload).
 function materialApoioPanel(L){
   const nomes=L.materialNomes||[], tipos=L.materialTipos||[];
   const cheio = nomes.length >= MATERIAL_MAX_ARQUIVOS;
+  const lendo = !!(Teacher.upload && Teacher.upload.ativo);
+  const textoTotal = (L.materialTexto||"").trim();
 
   const lista = nomes.length ? nomes.map((n,i)=>`
     <div class="t-lesson-row" style="align-items:center">
       <div style="width:28px;text-align:center;font-size:18px">${materialIcone(tipos[i], n)}</div>
       <div class="info" style="min-width:0"><div class="t" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(n)}</div></div>
-      <button class="btn red small" style="width:auto;padding:6px 10px" onclick="App.removerMaterial(${i})" ${Teacher.upload.ativo?'disabled':''}>Remover</button>
-    </div>`).join("") : `<p style="font-size:12px;color:#999;margin:4px 0">Nenhum documento anexado ainda.</p>`;
+      <button class="btn red small" style="width:auto;padding:6px 10px" onclick="App.removerMaterial(${i})" ${lendo?'disabled':''}>✕ Remover</button>
+    </div>`).join("") : `<p style="font-size:12px;color:#999;margin:4px 0">Nenhum documento importado ainda.</p>`;
 
-  // Aviso quando há texto extraído localmente sem arquivo no Storage (fallback de CORS):
-  // o documento não fica visível ao aluno, mas seu texto alimenta a IA.
-  const chars = (L.materialTexto||"").trim().length;
-  const notaTexto = (chars && !nomes.length) ? `<p style="font-size:12px;color:#27ae60;margin:4px 0">✅ Texto extraído localmente (${chars} caracteres) — será usado pela IA para gerar as atividades.</p>` : "";
+  // Resumo do texto extraído: total de caracteres + prévia (primeiros 200 caracteres).
+  const preview = textoTotal
+    ? `<div style="margin-top:8px;background:#f4fbf6;border:1px solid #cde9d5;border-radius:8px;padding:8px 10px">
+         <div style="font-size:12px;color:#27ae60;font-weight:700">✅ ${textoTotal.length} caracteres extraídos</div>
+         <div style="font-size:12px;color:#555;margin-top:4px;white-space:pre-wrap">${esc(textoTotal.slice(0,200))}${textoTotal.length>200?"…":""}</div>
+       </div>`
+    : "";
 
-  const progresso = Teacher.upload.ativo ? (
-    Teacher.upload.lendo
-      ? `<div class="ia-loading" style="color:#9b59b6;margin-top:8px"><span class="ia-spinner"></span> Lendo documento: ${esc(Teacher.upload.nome)}...</div>`
-      : `<div style="margin-top:8px">
-           <div style="font-size:12px;color:#777;margin-bottom:4px">Enviando "${esc(Teacher.upload.nome)}" <span id="uploadPct">${Teacher.upload.pct}%</span></div>
-           <div class="prog-bar-mini"><div id="uploadBar" style="width:${Teacher.upload.pct}%;background:#9b59b6"></div></div>
-         </div>`
-  ) : "";
+  const progresso = lendo
+    ? `<div class="ia-loading" style="color:#9b59b6;margin-top:8px"><span class="ia-spinner"></span> 📄 Lendo documento: ${esc(Teacher.upload.nome)}...</div>`
+    : "";
 
   return `<div class="ia-panel">
-    <div class="ia-head"><b>📎 Material de Apoio</b></div>
-    <p style="font-size:12px;color:#777;margin-bottom:8px">Anexe apostilas/documentos (PDF, DOC, DOCX, TXT, PNG, JPG — até 10MB, ${MATERIAL_MAX_ARQUIVOS} por lição). O texto é extraído e usado pela IA ao gerar exercícios e resumos.</p>
+    <div class="ia-head"><b>📄 Material de Apoio</b></div>
+    <p style="font-size:12px;color:#777;margin-bottom:8px">O texto do documento será usado pela IA para gerar exercícios mais precisos baseados no seu material. Aceita PDF, DOC, DOCX, TXT, PNG e JPG (até 10MB, ${MATERIAL_MAX_ARQUIVOS} por lição). O texto é extraído no seu navegador — nada é enviado para a nuvem além do texto.</p>
     <div id="materialLista">${lista}</div>
-    ${notaTexto}
+    ${preview}
     ${progresso}
-    <label class="btn blue" style="margin-top:8px;display:block;text-align:center;cursor:pointer;${(cheio||Teacher.upload.ativo)?'opacity:.5;pointer-events:none':''}">
-      📎 Anexar documento
+    <label class="btn blue" style="margin-top:8px;display:block;text-align:center;cursor:pointer;${(cheio||lendo)?'opacity:.5;pointer-events:none':''}">
+      📄 Importar documento
       <input type="file" accept=".pdf,.doc,.docx,.txt,.png,.jpg,.jpeg,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain,image/png,image/jpeg" multiple style="display:none" onchange="App.onSelecionarMateriais(this.files); this.value='';">
     </label>
     ${cheio?`<p style="font-size:12px;color:#c0392b;text-align:center;margin-top:6px">Limite de ${MATERIAL_MAX_ARQUIVOS} documentos atingido.</p>`:''}
@@ -4215,7 +4162,7 @@ async function saveLesson(){
 
   const disc = Teacher.subj;
   const turmaN=(L.turma||"").trim().toUpperCase(), anoN=(L.ano||"").trim(), nivelN=(L.nivel||"").trim();
-  const materialUrls=L.materialUrls||[], materialNomes=L.materialNomes||[], materialTipos=L.materialTipos||[], materialTexto=L.materialTexto||"";
+  const materialNomes=L.materialNomes||[], materialTipos=L.materialTipos||[], materialTexto=L.materialTexto||"";
   const historiaHabilitada = L.historiaHabilitada!==false;
   // interpretação: guarda o texto gerado e espelha em `conteudo` (compat. com o resto do app)
   const tipo = ehInterp ? "interpretacao_texto" : "padrao";
@@ -4235,8 +4182,7 @@ async function saveLesson(){
     tituloTexto: ehInterp ? (L.tituloTexto||"") : "",
     generoTextual: ehInterp ? (L.generoTextual||"") : "",
     tema: ehInterp ? (L.tema||"") : "",
-    // material de apoio anexado
-    materialUrls: materialUrls,
+    // material de apoio: só nome/tipo (para exibição) e o texto extraído localmente
     materialNomes: materialNomes,
     materialTipos: materialTipos,
     materialTexto: materialTexto,
@@ -4266,9 +4212,8 @@ async function saveLesson(){
     // atualiza o estado local (remove de onde estava e re-adiciona na disciplina atual)
     removeLicaoLocal(L.id);
     if(!DATA[disc]) DATA[disc]=[];
-    DATA[disc].push({ id:L.id, titulo:L.titulo, texto:conteudo, exercicios:L.exercicios, resumoIA:"", explicacoes:{}, turma:turmaN, ano:anoN, nivel:nivelN, materialUrls:materialUrls, materialNomes:materialNomes, materialTipos:materialTipos, materialTexto:materialTexto, historiaHabilitada:historiaHabilitada, tipo:tipo, textoGerado:payload.textoGerado, tituloTexto:payload.tituloTexto, generoTextual:payload.generoTextual, tema:payload.tema });
+    DATA[disc].push({ id:L.id, titulo:L.titulo, texto:conteudo, exercicios:L.exercicios, resumoIA:"", explicacoes:{}, turma:turmaN, ano:anoN, nivel:nivelN, materialNomes:materialNomes, materialTipos:materialTipos, materialTexto:materialTexto, historiaHabilitada:historiaHabilitada, tipo:tipo, textoGerado:payload.textoGerado, tituloTexto:payload.tituloTexto, generoTextual:payload.generoTextual, tema:payload.tema });
 
-    L._materialPendentes=[]; // anexos agora persistidos — não devem ser limpos
     Teacher.editingLesson=null; Teacher.tab="licoes";
     toast("Lição salva com sucesso! ✅");
     render();
