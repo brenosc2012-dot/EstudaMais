@@ -273,6 +273,12 @@ label{ display:block; font-weight:700; font-size:14px; margin-bottom:6px; color:
 .corretor-acoes .btn{ flex:1; min-width:140px; margin:0; }
 .corretor-demobadge{ background:#fff3e0; border:1px solid #ffcc80; color:#e65100; font-size:12px; font-weight:700;
   border-radius:10px; padding:8px 10px; margin-bottom:10px; text-align:center; }
+.gab-grade{ display:flex; flex-direction:column; gap:6px; margin:8px 0 2px; }
+.gab-row{ display:flex; align-items:center; gap:6px; }
+.gab-q{ font-weight:800; color:#555; min-width:34px; font-size:14px; }
+.gab-btn{ flex:1; border:2px solid var(--gray); background:#fff; color:#555; font-weight:800; font-family:inherit;
+  font-size:15px; padding:9px 0; border-radius:10px; cursor:pointer; -webkit-tap-highlight-color:transparent; }
+.gab-btn.sel{ border-color:#9b59b6; background:#9b59b6; color:#fff; box-shadow:0 2px 0 #7d3c98; }
 .t-lesson-row{
   display:flex; align-items:center; gap:10px; background:#fff;
   border:2px solid var(--gray); border-radius:12px; padding:12px; margin-bottom:10px;
@@ -3789,7 +3795,8 @@ const Teacher = { tab:"licoes", subj:"mat", editingLesson:null, gerando:false, r
   // geração de lição de interpretação de texto (Português)
   interp:{ gerando:false, erro:"" },
   // corretor de provas por câmera (OpenAI Vision)
-  corretor:{ view:"form", imagens:[], alunoId:"", subj:"mat", licaoId:"", valor:"10", gabarito:"",
+  corretor:{ view:"form", imagens:[], alunoId:"", subj:"mat", licaoId:"", valor:"10",
+    numQ:5, gab:["C","B","D","B","B"], // gabarito por questão (labels) — pré-preenchido com a prova demo de frações
     carregando:false, msgIdx:0, erro:"", resultado:null, ehDemo:false, meta:null,
     alunos:[], alunosCarregados:false, historico:[], histCarregado:false } };
 
@@ -5654,7 +5661,15 @@ function onSelecionarFotoProva(input){
 function removerFotoProva(i){ Teacher.corretor.imagens.splice(i,1); render(); }
 function syncCorretorInputs(){
   const v=document.getElementById("corValor"); if(v) Teacher.corretor.valor=v.value;
-  const g=document.getElementById("corGabarito"); if(g) Teacher.corretor.gabarito=g.value;
+}
+// Gabarito: seleção de label por questão + número de questões (grade de botões).
+function soLabel(x){ const m=String(x||"").toUpperCase().match(/[A-D]/); return m?m[0]:""; }
+function setGabaritoResp(i, label){ syncCorretorInputs(); Teacher.corretor.gab[i]=soLabel(label); render(); }
+function setNumQuestoes(n){
+  syncCorretorInputs();
+  n=Math.max(1, Math.min(20, parseInt(n,10)||5));
+  const C=Teacher.corretor; const g=C.gab.slice(0,n); while(g.length<n) g.push("");
+  C.numQ=n; C.gab=g; render();
 }
 function setCorretorCampo(campo, v){ syncCorretorInputs(); Teacher.corretor[campo]=v; if(campo==="subj") Teacher.corretor.licaoId=""; render(); }
 
@@ -5712,74 +5727,104 @@ function mensagemErroCorretor(e){
   if(/Failed to fetch|NetworkError|Load failed/i.test(m)) return "Falha ao contatar a IA. Verifique a conexão e a chave configurada.";
   return "A imagem está difícil de ler. Tente fotografar com mais luz e a câmera estável.";
 }
-async function corrigirProvaIA(meta){
-  const subjNome=(subjById(meta.subj)||{}).nome||"";
-  const licao = meta.licaoId ? (DATA[meta.subj]||[]).find(function(l){return l.id===meta.licaoId;}) : null;
-  const cab = `Valor total da prova: ${meta.valor} pontos. Disciplina: ${subjNome}.`;
-  const gabLabels = meta.gabLabels || [];
-  // Gabarito oficial digitado pelo professor (por label): elimina a inferência da IA.
-  const blocoGabaritoManual = gabLabels.length ? `
-GABARITO OFICIAL DESTA PROVA (use exatamente estas alternativas como corretas):
-${gabLabels.map(function(l,i){ return `Questão ${i+1}: alternativa ${l}`; }).join("\n")}
-Para cada questão: leia a imagem, encontre a alternativa cujo label é o indicado acima e use o TEXTO dela como resposta correta (preencha "respostaCorreta" com "label) texto"). Não invente outra resposta.
-` : "";
-  let prompt;
-  if(licao){
-    const pub=descreverPublicoLicao(licao);
-    const gab=(licao.exercicios||[]).map(function(ex,i){
-      const correta = ex.tipo==="fill" ? (ex.resposta||"") : ((ex.opcoes&&ex.opcoes[ex.correta])||"");
-      return `${i+1}. ${ex.enunciado} → Resposta correta: ${correta}`;
-    }).join("\n");
-    prompt =
-`Você é um professor corretor experiente do ${pub.ano} do ${nomeNivel(pub.nivelId)}.
-Analise a imagem desta prova/atividade respondida por um aluno. ${cab}
+// PASSO 1 (IA) — SÓ LEITURA: identifica qual alternativa está marcada em cada questão.
+// A IA NÃO corrige, NÃO avalia, NÃO calcula. A correção é 100% do JavaScript (abaixo).
+async function lerMarcacoesIA(meta){
+  const N=meta.gabLabels.length;
+  const prompt =
+`Analise esta prova respondida por um aluno. Para cada uma das ${N} questões, identifique
+APENAS qual alternativa está marcada (o círculo preenchido, pintado ou com X).
+NÃO corrija. NÃO avalie. NÃO calcule. NÃO tente resolver as questões. Apenas LEIA o que o aluno marcou.
+Para exibição, informe também o TEXTO da alternativa que o aluno marcou (textoMarcado) e o TEXTO da
+alternativa cujo rótulo consta no gabarito abaixo (textoCorreta) — apenas copiando o que está escrito na
+imagem, sem julgar se está certo.
+Gabarito (somente para localizar o texto da alternativa correta na imagem): ${meta.gabLabels.map(function(l,i){return "Q"+(i+1)+"="+l;}).join(", ")}.
 
-Gabarito de referência (o texto após "Resposta correta:" é a RESPOSTA CORRETA de cada questão):
-${gab}
-${blocoGabaritoManual}
-${CORRETOR_REGRAS_LEITURA}
-
-Atribua pontuação proporcional ao valor total (${meta.valor}).
-
-${CORRETOR_JSON_FORMATO}`;
-  } else {
-    prompt =
-`Você é um professor corretor experiente. Analise a imagem desta prova/atividade respondida por um aluno. ${cab}
-${blocoGabaritoManual || "Não há gabarito fornecido: INFIRA a resposta correta pelo contexto educacional (assunto/nível visível na prova; se houver gabarito na imagem, use-o), com muito cuidado — verifique de fato qual alternativa está correta."}
-${CORRETOR_REGRAS_LEITURA}
-
-Atribua pontuação proporcional ao valor total (${meta.valor}).
-
-${CORRETOR_JSON_FORMATO}`;
-  }
+Retorne APENAS um JSON válido (aspas duplas), sem texto ao redor:
+{"leituras":[{"questao":1,"marcado":"A","textoMarcado":"...","textoCorreta":"..."}]}
+Se o aluno não marcou nada em uma questão, use "marcado":"".`;
   const content=[{ type:"text", text:prompt }];
   Teacher.corretor.imagens.forEach(function(u){ content.push({ type:"image_url", image_url:{ url:u } }); });
   const txt = await chamarIAMensagens([{ role:"user", content:content }], 45000);
-  const r = parseJsonObjIA(txt);
-  if(!r || !Array.isArray(r.questoes) || !r.questoes.length) throw new Error("sem_questoes");
-  return normalizarCorrecao(r, meta.valor, gabLabels);
+  const o = parseJsonObjIA(txt);
+  let arr = (o && Array.isArray(o.leituras)) ? o.leituras : null;
+  if(!arr){ try{ const a=JSON.parse(String(txt).replace(/^```(?:json)?\s*/i,"").replace(/\s*```$/,"")); if(Array.isArray(a)) arr=a; }catch(_){} }
+  if(!arr || !arr.length) throw new Error("sem_questoes");
+  return arr;
+}
+// PASSO 2 (JavaScript) — CORREÇÃO DETERMINÍSTICA usando o gabarito do professor.
+function montarResultadoCorrecao(leituras, meta){
+  const gab=meta.gabLabels, N=gab.length, valor=meta.valor||10, pmax=valor/(N||1);
+  const byQ={}; (leituras||[]).forEach(function(l){ const n=Number(l.questao||l.numero); if(n) byQ[n]=l; });
+  let cor=0, inc=0, br=0;
+  const questoes = gab.map(function(gl, i){
+    const n=i+1, l=byQ[n]||{}, marcado=soLabel(l.marcado);
+    var status, pont;
+    if(!marcado){ status="em_branco"; pont=0; br++; }
+    else if(marcado===gl){ status="correta"; pont=pmax; cor++; }
+    else { status="incorreta"; pont=0; inc++; }
+    // console de consistência (item 5) — a decisão é por comparação de labels da MESMA prova
+    console.log("[Corretor] Q"+n+" | marcado:", marcado||"(vazio)", "| gabarito:", gl, "| status:", status);
+    const respAluno = marcado ? (marcado + (l.textoMarcado?(") "+l.textoMarcado):"")) : "";
+    const respCorreta = gl + (l.textoCorreta?(") "+l.textoCorreta):"");
+    return { numero:n, marcado:marcado, respostaAluno:respAluno, respostaCorreta:respCorreta,
+      status:status, pontuacao:pont, pontuacaoMaxima:pmax, observacao:"" };
+  });
+  const nota=Math.round((cor*pmax)*10)/10;
+  const pct=Math.round(valor? (nota/valor*100) : 0);
+  return { totalQuestoes:N, questoesCorretas:cor, questoesIncorretas:inc, questoesParciais:0,
+    notaFinal:nota, notaMaxima:valor, percentualAcerto:pct, conceito:conceitoDeNota(pct),
+    questoes:questoes, feedbackGeral:"", pontosForca:[], pontosMelhoria:[] };
+}
+// PASSO 3 (IA, opcional) — feedback só das questões ERRADAS (não recalcula certo/errado).
+async function gerarFeedbackCorrecao(res, meta){
+  const erradas=res.questoes.filter(function(q){return q.status==="incorreta";});
+  if(!erradas.length){ res.feedbackGeral = res.percentualAcerto>=70 ? "Ótimo desempenho! O aluno domina bem o conteúdo." : "Bom esforço! Vale revisar os pontos abaixo."; return res; }
+  if(!iaConfigurada()){ res.feedbackGeral = "O aluno acertou "+res.questoesCorretas+" de "+res.totalQuestoes+". Revise as questões marcadas em vermelho."; return res; }
+  const subjNome=(subjById(meta.subj)||{}).nome||"";
+  const lista=erradas.map(function(q){ return "Questão "+q.numero+": o aluno marcou \""+(q.respostaAluno||"(em branco)")+"\"; a resposta correta é \""+q.respostaCorreta+"\"."; }).join("\n");
+  const prompt=
+`Disciplina: ${subjNome}. As questões abaixo JÁ foram corrigidas (não recalcule certo/errado).
+Para cada questão errada, escreva UMA frase simples explicando por que a resposta correta está certa.
+${lista}
+
+Retorne APENAS JSON: {"porQuestao":{"3":"frase curta..."},"feedbackGeral":"2 frases","pontosForca":["..."],"pontosMelhoria":["..."]}`;
+  try{
+    const txt=await chamarIA(prompt, 25000);
+    const o=parseJsonObjIA(txt)||{};
+    if(o.porQuestao){ res.questoes.forEach(function(q){ const f=o.porQuestao[String(q.numero)]; if(f) q.observacao=f; }); }
+    res.feedbackGeral = o.feedbackGeral || res.feedbackGeral || "";
+    res.pontosForca = Array.isArray(o.pontosForca)?o.pontosForca:[];
+    res.pontosMelhoria = Array.isArray(o.pontosMelhoria)?o.pontosMelhoria:[];
+  }catch(_){ res.feedbackGeral = res.feedbackGeral || "Revise com o aluno as questões erradas."; }
+  return res;
 }
 async function corrigirProva(){
   syncCorretorInputs();
   const C=Teacher.corretor;
   if(!C.imagens.length){ toast("Adicione ao menos uma foto da prova."); return; }
   const temIA = iaConfigurada();
-  if(!temIA && !DEMO){ C.erro="Configure a chave da IA nas configurações do administrador para usar o corretor."; render(); return; }
-  const aluno=(C.alunos||[]).find(function(a){return a.id===C.alunoId;})||null;
-  C.meta={ alunoId:C.alunoId, alunoNome: aluno?aluno.nome:(DEMO?"Aluno(a) da Apresentação":"Aluno(a)"),
-    subj:C.subj, licaoId:C.licaoId, valor:parseFloat(C.valor)||10, gabLabels:parseGabarito(C.gabarito), dataStr:dataHojeBR() };
-  C.erro=""; C.carregando=true; C.view="loading"; C.msgIdx=0; render(); iniciarRotacaoCorretor();
-
-  // DEMO sem IA → resultado fictício após ~2.6s (mantém a animação de loading)
+  const gabLabels = (C.gab||[]).slice(0, C.numQ).map(soLabel);
+  const gabCompleto = gabLabels.length===C.numQ && gabLabels.every(function(x){return !!x;});
+  C.erro="";
+  // DEMO sem IA → resultado fictício (não exige gabarito; usa o gabarito embutido do exemplo)
   if(!temIA && DEMO){
-    setTimeout(function(){ pararRotacaoCorretor();
-      C.resultado=correcaoDemoResultado(); C.ehDemo=true; C.carregando=false; C.view="result"; render();
-    }, 2600);
+    C.meta={ alunoId:C.alunoId, alunoNome:"Aluno(a) da Apresentação", subj:C.subj, licaoId:C.licaoId, valor:parseFloat(C.valor)||10, gabLabels:gabLabels, dataStr:dataHojeBR() };
+    C.carregando=true; C.view="loading"; C.msgIdx=0; render(); iniciarRotacaoCorretor();
+    setTimeout(function(){ pararRotacaoCorretor(); C.resultado=correcaoDemoResultado(); C.ehDemo=true; C.carregando=false; C.view="result"; render(); }, 2600);
     return;
   }
+  if(!temIA){ C.erro="Configure a chave da IA nas configurações do administrador para usar o corretor."; render(); return; }
+  if(!gabCompleto){ C.erro="Informe o gabarito (a alternativa correta) de TODAS as questões antes de corrigir."; render(); return; }
+  const aluno=(C.alunos||[]).find(function(a){return a.id===C.alunoId;})||null;
+  C.meta={ alunoId:C.alunoId, alunoNome: aluno?aluno.nome:(DEMO?"Aluno(a) da Apresentação":"Aluno(a)"),
+    subj:C.subj, licaoId:C.licaoId, valor:parseFloat(C.valor)||10, gabLabels:gabLabels, dataStr:dataHojeBR() };
+  C.carregando=true; C.view="loading"; C.msgIdx=0; render(); iniciarRotacaoCorretor();
   try{
-    const r = await corrigirProvaIA(C.meta);
-    pararRotacaoCorretor(); C.resultado=r; C.ehDemo=false; C.carregando=false; C.view="result"; render();
+    const leituras = await lerMarcacoesIA(C.meta);   // IA só lê
+    let res = montarResultadoCorrecao(leituras, C.meta); // JS corrige (determinístico)
+    res = await gerarFeedbackCorrecao(res, C.meta);   // IA só explica os erros (opcional)
+    pararRotacaoCorretor(); C.resultado=res; C.ehDemo=false; C.carregando=false; C.view="result"; render();
   }catch(e){
     pararRotacaoCorretor(); C.carregando=false;
     if(DEMO){ C.resultado=correcaoDemoResultado(); C.ehDemo=true; C.view="result"; render(); return; } // demo nunca mostra erro de API
@@ -5954,15 +5999,35 @@ function teacherCorretorTab(){
   const podeIA = iaConfigurada();
   const aviso = (!podeIA && !DEMO) ? `<div class="ia-erro" style="margin-top:8px">⚙️ Configure a chave da IA (painel do Administrador) para usar o corretor.</div>`
     : (!podeIA && DEMO ? `<p style="font-size:12px;color:#e08e00;margin-top:6px">Sem chave da IA agora: será exibido um resultado de demonstração.</p>` : "");
+  // Grade do gabarito: uma linha por questão com botões A B C D.
+  const LETRAS4=["A","B","C","D"];
+  const gabGrade = Array.from({length:C.numQ}, function(_,i){
+    const sel=C.gab[i]||"";
+    const btns=LETRAS4.map(function(L){ return `<button class="gab-btn ${sel===L?'sel':''}" onclick="App.setGabaritoResp(${i},'${L}')">${L}</button>`; }).join("");
+    return `<div class="gab-row"><span class="gab-q">Q${i+1}</span>${btns}</div>`;
+  }).join("");
+  const gabLabels=(C.gab||[]).slice(0,C.numQ).map(soLabel);
+  const gabCompleto = gabLabels.length===C.numQ && gabLabels.every(function(x){return !!x;});
+  const podeCorrigir = C.imagens.length>0 && (gabCompleto || (DEMO && !podeIA));
   return `
     <h2 style="margin:6px 0 2px">📷 Corretor de Provas com IA</h2>
-    <p style="font-size:13px;color:#777;margin:0 0 12px">Fotografe a prova do aluno e a IA fará a correção automaticamente.</p>
+    <p style="font-size:13px;color:#777;margin:0 0 12px">Informe o gabarito, fotografe a prova e a IA lê as marcações — a correção é feita automaticamente.</p>
     ${dica}
+
+    <div class="sec-title" style="margin-top:6px">📋 Informe o gabarito antes de fotografar</div>
+    <p style="font-size:12px;color:#777;margin:-2px 0 8px">Toque na alternativa correta de cada questão. A correção compara a marcação do aluno com este gabarito (a IA não "resolve" a prova).</p>
+    <label>Número de questões</label>
+    <input type="number" min="1" max="20" value="${C.numQ}" onchange="App.setNumQuestoes(this.value)" style="max-width:120px">
+    <div class="gab-grade">${gabGrade}</div>
+    ${gabCompleto?'':`<p style="font-size:12px;color:#e07a00;margin:6px 0 0">Selecione a alternativa correta de todas as questões.</p>`}
+
+    <div class="sec-title">Fotografar a prova</div>
     <div class="corretor-capturas">
       <label class="corretor-btn"><input type="file" accept="image/*" capture="environment" onchange="App.onSelecionarFotoProva(this)" hidden>📷 Fotografar prova</label>
       <label class="corretor-btn galeria"><input type="file" accept="image/*" multiple onchange="App.onSelecionarFotoProva(this)" hidden>🖼️ Da galeria</label>
     </div>
     ${thumbs}
+
     <div class="sec-title">Configurações da correção</div>
     <label>Aluno</label>
     <select onchange="App.setCorretorCampo('alunoId', this.value)">${alunoOpts}</select>
@@ -5972,12 +6037,9 @@ function teacherCorretorTab(){
     <select onchange="App.setCorretorCampo('licaoId', this.value)">${licaoOpts}</select>
     <label>Valor total da prova</label>
     <input id="corValor" type="number" min="1" step="0.5" value="${esc(C.valor)}" placeholder="Ex.: 10">
-    <label>Gabarito oficial (opcional, recomendado)</label>
-    <input id="corGabarito" type="text" value="${esc(C.gabarito||'')}" placeholder="Ex.: C, B, D, B, B" autocomplete="off" style="text-transform:uppercase">
-    <p style="font-size:12px;color:#777;margin:4px 0 0">Digite a letra correta de cada questão, na ordem, separadas por vírgula. Isso é enviado como gabarito oficial e elimina erros de leitura da IA.</p>
     ${C.erro?`<div class="ia-erro" style="margin-top:8px">⚠️ ${esc(C.erro)}</div>`:""}
     ${aviso}
-    <button class="btn" style="margin-top:12px;background:#9b59b6;box-shadow:0 4px 0 #7d3c98" ${C.imagens.length?'':'disabled'} onclick="App.corrigirProva()">✨ Corrigir com IA</button>
+    <button class="btn" style="margin-top:12px;background:#9b59b6;box-shadow:0 4px 0 #7d3c98" ${podeCorrigir?'':'disabled'} onclick="App.corrigirProva()">✨ Corrigir com IA</button>
     ${corretorHistoricoHtml()}`;
 }
 
@@ -6031,6 +6093,7 @@ window.App = {
   gerarExerciciosIA, toggleIaConfig, setModoIA, regenerarConteudoIA,
   // corretor de provas por câmera
   onSelecionarFotoProva, removerFotoProva, setCorretorCampo, corrigirProva,
+  setGabaritoResp, setNumQuestoes,
   salvarCorrecao, gerarPdfCorrecao, compartilharCorrecao, corrigirOutra, abrirCorrecao, excluirCorrecao,
   // sistema
   retryBoot: function(){ boot(); },
