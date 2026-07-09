@@ -78,6 +78,13 @@ body{
 .demo-badge{ position:absolute; top:12px; right:12px; background:#ff8c00; color:#fff; font-weight:800; font-size:11px;
   letter-spacing:.5px; padding:5px 10px; border-radius:12px; box-shadow:0 3px 8px rgba(0,0,0,.25); }
 .pill-demo{ display:inline-block; background:#ff8c00; color:#fff; font-size:11px; font-weight:800; border-radius:10px; padding:2px 8px; }
+/* saudação animada do aluno demo (fade-in/out por 3s) */
+.demo-saud{ display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; gap:20px;
+  background:linear-gradient(160deg,#7b2ff7,#1cb0f6); color:#fff; animation:demoSaudFade 3s ease forwards; }
+.demo-saud-emoji{ font-size:76px; line-height:1; animation:bounce 1s ease-in-out infinite; }
+.demo-saud-txt{ font-size:30px; font-weight:800; line-height:1.25; margin:0; text-wrap:balance; text-shadow:0 2px 12px rgba(0,0,0,.22); }
+@keyframes demoSaudFade{ 0%{opacity:0;transform:scale(.96);} 12%{opacity:1;transform:scale(1);} 85%{opacity:1;transform:scale(1);} 100%{opacity:0;transform:scale(1.03);} }
+@media (prefers-reduced-motion:reduce){ .demo-saud{ animation:none; } .demo-saud-emoji{ animation:none; } }
 /* barra de rolagem visível e colorida (navegadores WebKit/Chromium) */
 .content::-webkit-scrollbar{ width:10px; }
 .content::-webkit-scrollbar-track{ background:#ececff; border-radius:10px; }
@@ -968,7 +975,10 @@ function definirAlunoLogado(a){ ALUNO = normalizarAluno(a); PROFILE = ALUNO; }
 
 // Persiste o progresso do aluno: cache local (offline) + write-through no Firestore.
 function saveProfile(){
-  if(DEMO) return; // modo demo: progresso só em memória, nunca no Firestore
+  if(DEMO){ // modo demo: progresso só no sessionStorage, nunca no Firestore
+    if(ALUNO){ try{ sessionStorage.setItem(DEMO_PROGRESS_KEY, JSON.stringify(ALUNO)); }catch(_){} }
+    return;
+  }
   if(!ALUNO) return;
   // espelho plano de licoesConcluidas (união das disciplinas) — atende o spec/consultas
   const flat=[];
@@ -1011,9 +1021,10 @@ function demoAlunoDoc(){
   g.disciplinas.mat.xp = 60; g.disciplinas.mat.nivel = 2;
   g.disciplinas.cie.xp = 40; g.disciplinas.cie.nivel = 1;
   g.disciplinas.por.xp = 50; g.disciplinas.por.nivel = 2;
+  // ano/turma são mantidos para o FILTRO de lições casar, mas ficam OCULTOS na UI do demo.
   return Object.assign(g, {
-    id:"demo_aluno", nome:"João Vitor", idade:10, ano:"5º ano", turma:"A", nivel:"fund1",
-    xpTotal:150, streak:3, ultimoDia:null,
+    id:"demo_aluno", nome:"Aluno(a) da Apresentação", idade:10, ano:"5º ano", turma:"A", nivel:"fund1",
+    xpTotal:150, streak:3, ultimoDia:new Date().toDateString(), // hoje → preserva a ofensiva de 3 dias
     medalhas:["first","streak3"], // 2 conquistas para exibição
     som:true
   });
@@ -1024,56 +1035,110 @@ function demoProfessorDoc(){
 }
 
 // Lições demo pré-cadastradas (locais). Todas 5º ano / Turma A, marcadas isDemo.
+// Cada lição traz `resumoDemo` (resumo pré-escrito, usado quando não há IA) e 5 exercícios
+// (2 fáceis / 2 intermediários / 1 difícil) com tipos variados (mc, vf, fill).
 function seedDemo(){
   const L = (o)=> Object.assign({ id:"demo_"+o.d+"_"+Math.random().toString(36).slice(2,8), ano:"5º ano", turma:"A", nivel:"fund1", isDemo:true }, o);
   return {
     mat:[ L({ d:"mat", titulo:"Frações no dia a dia", texto:
-"As frações aparecem o tempo todo no nosso dia! 🍕\n\nUma fração mostra partes de um inteiro. Em 1/2 (um meio), o número de baixo (denominador) diz em quantas partes iguais dividimos, e o de cima (numerador) diz quantas pegamos.\n\n• Metade de uma pizza = 1/2\n• Um quarto de um bolo = 1/4\n• Três pedaços de quatro = 3/4\n\nFrações iguais ao inteiro: 4/4 = 1.",
+"As frações aparecem o tempo todo no nosso dia! 🍕\n\nUma fração mostra partes de um inteiro. Em 1/2 (um meio), o número de baixo (denominador) diz em quantas partes iguais dividimos, e o de cima (numerador) diz quantas pegamos.\n\n• Metade de uma pizza = 1/2\n• Um quarto de um bolo = 1/4\n• Três pedaços de quatro = 3/4\n\nComparando frações de mesmo denominador, a maior é a de maior numerador: 3/4 é maior que 1/4. E 4/4 é o mesmo que 1 inteiro.",
+      resumoDemo:
+"As frações mostram PARTES de um inteiro! 🍕\n• O DENOMINADOR (número de baixo) diz em quantas partes iguais dividimos.\n• O NUMERADOR (número de cima) diz quantas partes pegamos.\n• Exemplos: 1/2 = metade da pizza, 1/4 = um quarto do bolo, 3/4 = três pedaços de quatro.\n• Comparando com o mesmo denominador, maior numerador = fração maior (3/4 > 1/4).\n• 4/4 é o mesmo que 1 inteiro!\n💡 Dica: pense sempre numa pizza — o número de baixo é o total de fatias, o de cima é quantas você comeu.",
       exercicios:[
         { id:uid(), tipo:"mc", nivel:"facil", enunciado:"Uma pizza tem 8 fatias e você comeu 3. Que fração comeu?", opcoes:["3/8","8/3","1/3","3/5"], correta:0 },
         { id:uid(), tipo:"vf", nivel:"facil", enunciado:"A fração 2/4 é igual a 1/2.", opcoes:["Verdadeiro","Falso"], correta:0 },
         { id:uid(), tipo:"fill", nivel:"intermediario", enunciado:"Na fração 5/6, o número 6 é o ____.", resposta:"denominador" },
-        { id:uid(), tipo:"mc", nivel:"intermediario", enunciado:"Qual fração representa 'três quartos'?", opcoes:["4/3","3/4","1/4","3/3"], correta:1 },
-        { id:uid(), tipo:"vf", nivel:"dificil", enunciado:"4/4 é o mesmo que 1 inteiro.", opcoes:["Verdadeiro","Falso"], correta:0 },
+        { id:uid(), tipo:"mc", nivel:"intermediario", enunciado:"Qual fração é MAIOR?", opcoes:["3/4","1/4","2/4","1/2"], correta:0 },
+        { id:uid(), tipo:"mc", nivel:"dificil", enunciado:"Um bolo foi dividido em 4 partes iguais e sobraram 3. Que fração do bolo sobrou?", opcoes:["3/4","1/4","4/3","2/4"], correta:0 },
       ] }) ],
-    por:[ L({ d:"por", titulo:"Interpretação: A Raposa e as Uvas", tipo:"interpretacao_texto",
-      tituloTexto:"A Raposa e as Uvas", generoTextual:"Fábula",
+    por:[ L({ d:"por", titulo:"A Raposa e as Uvas", tipo:"interpretacao_texto",
+      tituloTexto:"A Raposa e as Uvas", generoTextual:"Fábula de Esopo",
       textoGerado:
-"Numa tarde quente de verão, uma raposa faminta passeava por um pomar. De repente, avistou um cacho de uvas maduras e brilhantes, pendurado bem alto em uma parreira.\n\n— Que uvas deliciosas! — pensou ela, com água na boca.\n\nA raposa deu um salto para alcançá-las, mas não chegou nem perto. Tentou de novo, correndo e pulando com todas as forças. Nada. Por mais que se esforçasse, as uvas continuavam longe demais.\n\nCansada e ofegante, depois de muitas tentativas, a raposa desistiu. Virou o focinho para o alto e, indo embora, resmungou:\n\n— De qualquer forma, essas uvas devem estar verdes e azedas. Nem as queria mesmo!\n\nE assim seguiu seu caminho, fingindo que não se importava.",
+"Numa tarde quente de verão, uma raposa faminta passeava por um pomar. De repente, avistou um cacho de uvas maduras e brilhantes, pendurado bem alto em uma parreira.\n\n— Que uvas deliciosas! — pensou ela, com água na boca.\n\nA raposa deu um salto para alcançá-las, mas não chegou nem perto. Tentou de novo, correndo e pulando com todas as forças. Nada. Por mais que se esforçasse, as uvas continuavam longe demais.\n\nCansada e ofegante, depois de muitas tentativas, a raposa desistiu. Virou o focinho para o alto e, indo embora, resmungou:\n\n— De qualquer forma, essas uvas devem estar verdes e azedas. Nem as queria mesmo!\n\nE assim seguiu seu caminho, fingindo que não se importava. A moral desta fábula é: quem não consegue o que quer, muitas vezes despreza aquilo para não admitir a própria dificuldade.",
       texto:"Fábula 'A Raposa e as Uvas' com questões de interpretação.",
       exercicios:[
+        { id:uid(), tipo:"mc", nivel:"facil", enunciado:"Quem é a personagem principal da fábula?", opcoes:["A raposa","O leão","O coelho","O lobo"], correta:0 },
         { id:uid(), tipo:"mc", nivel:"facil", enunciado:"O que a raposa queria alcançar?", opcoes:["Um cacho de uvas","Um pedaço de queijo","Água do rio","Um coelho"], correta:0 },
-        { id:uid(), tipo:"mc", nivel:"facil", enunciado:"Por que a raposa não pegou as uvas?", opcoes:["Estavam muito altas","Estavam podres","Não tinha fome","Alguém pegou antes"], correta:0 },
-        { id:uid(), tipo:"vf", nivel:"intermediario", enunciado:"A raposa conseguiu as uvas na primeira tentativa.", opcoes:["Verdadeiro","Falso"], correta:1 },
-        { id:uid(), tipo:"mc", nivel:"intermediario", enunciado:"Ao desistir, a raposa disse que as uvas estavam...", opcoes:["Verdes e azedas","Doces demais","Estragadas","Pequenas"], correta:0 },
-        { id:uid(), tipo:"fill", nivel:"dificil", enunciado:"A expressão popular ligada a esta fábula é: '____ é pouco'. (dica: as uvas estavam...)", resposta:"quem desdenha" },
+        { id:uid(), tipo:"vf", nivel:"intermediario", enunciado:"A raposa conseguiu pegar as uvas depois de muito tentar.", opcoes:["Verdadeiro","Falso"], correta:1 },
+        { id:uid(), tipo:"fill", nivel:"intermediario", enunciado:"Ao desistir, a raposa disse que as uvas estavam verdes e ____.", resposta:"azedas" },
+        { id:uid(), tipo:"mc", nivel:"dificil", enunciado:"Qual é a MORAL desta história?", opcoes:["Quem despreza o que não consegue, esconde a própria dificuldade","Nunca coma uvas","Raposas não gostam de frutas","É proibido entrar em pomares"], correta:0 },
       ] }) ],
     cie:[ L({ d:"cie", titulo:"Sistema Solar", texto:
-"O Sistema Solar é formado pelo Sol e por tudo que gira ao seu redor. ☀️🪐\n\n• O SOL é uma estrela no centro; dá luz e calor.\n• São 8 PLANETAS: Mercúrio, Vênus, Terra, Marte, Júpiter, Saturno, Urano e Netuno.\n• A TERRA é o único planeta com vida conhecida.\n• Júpiter é o maior; Saturno é famoso pelos anéis.\n\nOs planetas fazem TRANSLAÇÃO (ao redor do Sol) e ROTAÇÃO (em torno de si).",
+"O Sistema Solar é formado pelo Sol e por tudo que gira ao seu redor. ☀️🪐\n\n• O SOL é uma estrela no centro; dá luz e calor.\n• São 8 PLANETAS, em ordem a partir do Sol: Mercúrio, Vênus, Terra, Marte, Júpiter, Saturno, Urano e Netuno.\n• MERCÚRIO é o mais próximo do Sol; NETUNO é o mais distante.\n• A TERRA é o único planeta com vida; a LUA é o satélite natural da Terra.\n• JÚPITER é o maior planeta; SATURNO é famoso pelos anéis.",
+      resumoDemo:
+"O Sistema Solar é o Sol e tudo que gira ao seu redor! ☀️🪐\n• O SOL é uma estrela gigante no centro, que dá luz e calor.\n• São 8 PLANETAS, nesta ordem a partir do Sol: Mercúrio, Vênus, Terra, Marte, Júpiter, Saturno, Urano e Netuno.\n• MERCÚRIO é o mais próximo do Sol; NETUNO é o mais distante.\n• A TERRA é o único com vida; a LUA é o satélite natural da Terra.\n• JÚPITER é o maior planeta; SATURNO tem lindos anéis.\n💡 Dica para lembrar a ordem: 'Minha Vó Traz Muitas Jóias Sábado Usando Nada'.",
       exercicios:[
         { id:uid(), tipo:"mc", nivel:"facil", enunciado:"Quantos planetas há no Sistema Solar?", opcoes:["7","8","9","10"], correta:1 },
         { id:uid(), tipo:"vf", nivel:"facil", enunciado:"O Sol é uma estrela.", opcoes:["Verdadeiro","Falso"], correta:0 },
-        { id:uid(), tipo:"fill", nivel:"intermediario", enunciado:"O movimento da Terra ao redor do Sol chama-se ____.", resposta:"translação" },
-        { id:uid(), tipo:"mc", nivel:"intermediario", enunciado:"Qual é o maior planeta?", opcoes:["Terra","Marte","Júpiter","Vênus"], correta:2 },
-        { id:uid(), tipo:"mc", nivel:"dificil", enunciado:"Qual planeta é famoso pelos seus anéis?", opcoes:["Saturno","Mercúrio","Netuno","Vênus"], correta:0 },
+        { id:uid(), tipo:"mc", nivel:"intermediario", enunciado:"Qual planeta é o MAIS PRÓXIMO do Sol?", opcoes:["Mercúrio","Terra","Netuno","Júpiter"], correta:0 },
+        { id:uid(), tipo:"fill", nivel:"intermediario", enunciado:"O maior planeta do Sistema Solar é ____.", resposta:"júpiter" },
+        { id:uid(), tipo:"mc", nivel:"dificil", enunciado:"Qual planeta vem logo DEPOIS da Terra, se afastando do Sol?", opcoes:["Marte","Vênus","Júpiter","Mercúrio"], correta:0 },
       ] }) ],
     ing:[ L({ d:"ing", titulo:"Animals in English", texto:
-"Vamos aprender os nomes dos animais em inglês! 🐶🐱\n\n• dog = cachorro\n• cat = gato\n• bird = pássaro\n• fish = peixe\n• horse = cavalo\n• cow = vaca\n\nFrase útil: 'I have a dog.' (Eu tenho um cachorro.)\n'My favorite animal is the cat.' (Meu animal favorito é o gato.)",
+"Vamos aprender 10 animais em inglês! 🐶🦁\n\n• dog = cachorro\n• cat = gato\n• bird = pássaro\n• fish = peixe\n• elephant = elefante\n• lion = leão\n• rabbit = coelho\n• horse = cavalo\n• monkey = macaco\n• snake = cobra\n\nFrases úteis:\n'This is a dog.' (Este é um cachorro.)\n'I like cats.' (Eu gosto de gatos.)",
+      resumoDemo:
+"Vamos aprender 10 animais em inglês! 🐶🦁\n• dog = cachorro, cat = gato, bird = pássaro, fish = peixe, elephant = elefante\n• lion = leão, rabbit = coelho, horse = cavalo, monkey = macaco, snake = cobra\n• Para apresentar: 'This is a dog.' (Este é um cachorro.)\n• Para dizer do que gosta: 'I like cats.' (Eu gosto de gatos.)\n💡 Dica: aponte para figuras de animais e diga o nome em inglês em voz alta — repetir ajuda a memorizar!",
       exercicios:[
-        { id:uid(), tipo:"mc", nivel:"facil", enunciado:"Como se diz 'cachorro' em inglês?", opcoes:["cat","dog","cow","bird"], correta:1 },
-        { id:uid(), tipo:"mc", nivel:"facil", enunciado:"O que significa 'fish'?", opcoes:["pássaro","peixe","cavalo","gato"], correta:1 },
-        { id:uid(), tipo:"fill", nivel:"intermediario", enunciado:"Complete: 'I have a ____.' (gato)", resposta:"cat" },
-        { id:uid(), tipo:"mc", nivel:"intermediario", enunciado:"Qual a tradução de 'horse'?", opcoes:["vaca","cavalo","pássaro","peixe"], correta:1 },
-        { id:uid(), tipo:"vf", nivel:"dificil", enunciado:"'bird' significa 'pássaro'.", opcoes:["Verdadeiro","Falso"], correta:0 },
+        { id:uid(), tipo:"mc", nivel:"facil", enunciado:"Como se diz 'elefante' em inglês?", opcoes:["elephant","lion","horse","monkey"], correta:0 },
+        { id:uid(), tipo:"vf", nivel:"facil", enunciado:"A palavra 'lion' significa 'leão'.", opcoes:["Verdadeiro","Falso"], correta:0 },
+        { id:uid(), tipo:"fill", nivel:"intermediario", enunciado:"Complete em inglês: 'This is a ____.' (macaco)", resposta:"monkey" },
+        { id:uid(), tipo:"mc", nivel:"intermediario", enunciado:"Which animal is small, has long ears and hops? (Que animal é esse?)", opcoes:["rabbit","fish","snake","cow"], correta:0 },
+        { id:uid(), tipo:"mc", nivel:"dificil", enunciado:"Qual frase está correta para 'Eu gosto de cobras'?", opcoes:["I like snakes","I like snake","Me like snakes","I likes snake"], correta:0 },
       ] }) ],
     his:[ L({ d:"his", titulo:"Independência do Brasil", texto:
-"A Independência do Brasil foi proclamada em 7 de setembro de 1822. 🇧🇷\n\n• Foi declarada por Dom Pedro I, às margens do rio Ipiranga, em São Paulo.\n• O famoso grito foi: 'Independência ou Morte!'.\n• Antes disso, o Brasil era uma colônia de Portugal.\n• Depois, o Brasil virou um Império, com Dom Pedro I como imperador.\n\nComemoramos essa data todo dia 7 de setembro.",
+"A Independência do Brasil foi proclamada em 7 de setembro de 1822. 🇧🇷\n\n• Antes disso, o Brasil era uma COLÔNIA de Portugal e obedecia às ordens de lá.\n• Foi declarada por DOM PEDRO I, às margens do rio Ipiranga, em São Paulo.\n• O famoso GRITO DO IPIRANGA foi: 'Independência ou Morte!'.\n• Depois, o Brasil virou um IMPÉRIO, com Dom Pedro I como primeiro imperador.\n\nComemoramos essa data todo dia 7 de setembro, com desfiles.",
+      resumoDemo:
+"A Independência do Brasil aconteceu em 7 de setembro de 1822! 🇧🇷\n• Antes, o Brasil era COLÔNIA de Portugal (obedecia às ordens de lá).\n• DOM PEDRO I proclamou a independência às margens do rio Ipiranga, em São Paulo.\n• O famoso GRITO DO IPIRANGA foi: 'Independência ou Morte!'.\n• Depois disso, o Brasil virou um IMPÉRIO e Dom Pedro I foi o primeiro imperador.\n💡 Dica: guarde a sequência — Brasil colônia ➜ Grito do Ipiranga (1822) ➜ Brasil Império.",
       exercicios:[
         { id:uid(), tipo:"mc", nivel:"facil", enunciado:"Em que data comemoramos a Independência do Brasil?", opcoes:["7 de setembro","15 de novembro","21 de abril","1 de maio"], correta:0 },
         { id:uid(), tipo:"mc", nivel:"facil", enunciado:"Quem proclamou a Independência?", opcoes:["Dom Pedro I","Getúlio Vargas","Tiradentes","Dom João VI"], correta:0 },
-        { id:uid(), tipo:"fill", nivel:"intermediario", enunciado:"O grito da Independência foi: 'Independência ou ____!'", resposta:"morte" },
         { id:uid(), tipo:"vf", nivel:"intermediario", enunciado:"Antes de 1822, o Brasil era colônia de Portugal.", opcoes:["Verdadeiro","Falso"], correta:0 },
-        { id:uid(), tipo:"mc", nivel:"dificil", enunciado:"Após a Independência, o Brasil tornou-se um...", opcoes:["Império","República","Reino de Portugal","Ducado"], correta:0 },
+        { id:uid(), tipo:"fill", nivel:"intermediario", enunciado:"O grito da Independência foi: 'Independência ou ____!'", resposta:"morte" },
+        { id:uid(), tipo:"mc", nivel:"dificil", enunciado:"O que aconteceu PRIMEIRO na história?", opcoes:["O Brasil era colônia de Portugal","O Grito do Ipiranga","O Brasil virou Império","A Proclamação da República"], correta:0 },
+      ] }) ],
+    geo:[ L({ d:"geo", titulo:"Regiões do Brasil", texto:
+"O Brasil é dividido em 5 grandes regiões. 🗺️\n\n• NORTE: a maior em território, com a Floresta Amazônica e clima quente e úmido.\n• NORDESTE: praias lindas, o sertão mais seco e uma cultura riquíssima (forró, festas juninas).\n• CENTRO-OESTE: onde fica o Pantanal e a capital do país, Brasília.\n• SUDESTE: a mais populosa e industrializada (São Paulo, Rio de Janeiro, Minas Gerais e Espírito Santo).\n• SUL: a região mais fria, com forte influência de imigrantes europeus.",
+      resumoDemo:
+"O Brasil é dividido em 5 REGIÕES! 🗺️\n• NORTE: a maior em território, com a Floresta Amazônica e clima quente e úmido.\n• NORDESTE: praias lindas, o sertão mais seco e cultura riquíssima (forró, festas juninas).\n• CENTRO-OESTE: onde ficam o Pantanal e a capital Brasília.\n• SUDESTE: a mais populosa e industrializada (São Paulo, Rio de Janeiro, Minas Gerais).\n• SUL: a região mais fria, com influência de imigrantes europeus.\n💡 Dica: são 5 regiões — Norte, Nordeste, Centro-Oeste, Sudeste e Sul. Imagine o mapa de cima (Norte) para baixo (Sul)!",
+      exercicios:[
+        { id:uid(), tipo:"mc", nivel:"facil", enunciado:"Em qual região fica a Floresta Amazônica?", opcoes:["Norte","Sul","Sudeste","Nordeste"], correta:0 },
+        { id:uid(), tipo:"vf", nivel:"facil", enunciado:"Brasília, a capital do Brasil, fica na região Centro-Oeste.", opcoes:["Verdadeiro","Falso"], correta:0 },
+        { id:uid(), tipo:"mc", nivel:"intermediario", enunciado:"Qual é a região MAIS POPULOSA do Brasil?", opcoes:["Sudeste","Norte","Centro-Oeste","Sul"], correta:0 },
+        { id:uid(), tipo:"mc", nivel:"intermediario", enunciado:"A região mais fria, com influência de imigrantes europeus, é a região:", opcoes:["Sul","Norte","Nordeste","Centro-Oeste"], correta:0 },
+        { id:uid(), tipo:"fill", nivel:"dificil", enunciado:"A região onde fica o sertão, com o clima mais seco, é o ____.", resposta:"nordeste" },
+      ] }) ],
+    art:[ L({ d:"art", titulo:"Cores e Emoções", texto:
+"As cores deixam tudo mais bonito e conversam com nossos sentimentos! 🎨\n\n• CORES PRIMÁRIAS: vermelho, azul e amarelo. Elas não nascem de misturas.\n• CORES SECUNDÁRIAS nascem misturando duas primárias: azul + amarelo = VERDE; vermelho + amarelo = LARANJA; azul + vermelho = ROXO.\n• As cores transmitem EMOÇÕES: o azul acalma, o amarelo alegra, o vermelho dá energia.\n• Artistas brasileiros famosos: TARSILA DO AMARAL (quadro 'Abaporu') e CÂNDIDO PORTINARI (quadro 'Os Retirantes').",
+      resumoDemo:
+"As cores deixam tudo mais bonito e falam com nossos sentimentos! 🎨\n• CORES PRIMÁRIAS: vermelho, azul e amarelo — não nascem de misturas.\n• CORES SECUNDÁRIAS: azul + amarelo = VERDE; vermelho + amarelo = LARANJA; azul + vermelho = ROXO.\n• As cores passam EMOÇÕES: o azul acalma, o amarelo alegra, o vermelho dá energia.\n• Artistas brasileiros: TARSILA DO AMARAL ('Abaporu') e CÂNDIDO PORTINARI ('Os Retirantes').\n💡 Dica: só existem 3 cores primárias — vermelho, azul e amarelo. Todas as outras vêm delas!",
+      exercicios:[
+        { id:uid(), tipo:"mc", nivel:"facil", enunciado:"Qual destas é uma cor PRIMÁRIA?", opcoes:["Azul","Verde","Laranja","Roxo"], correta:0 },
+        { id:uid(), tipo:"vf", nivel:"facil", enunciado:"Misturando azul e amarelo, obtemos o verde.", opcoes:["Verdadeiro","Falso"], correta:0 },
+        { id:uid(), tipo:"mc", nivel:"intermediario", enunciado:"Vermelho + amarelo formam qual cor?", opcoes:["Laranja","Roxo","Verde","Marrom"], correta:0 },
+        { id:uid(), tipo:"mc", nivel:"intermediario", enunciado:"Qual cor costuma transmitir a sensação de calma?", opcoes:["Azul","Vermelho","Amarelo","Laranja"], correta:0 },
+        { id:uid(), tipo:"mc", nivel:"dificil", enunciado:"Quem pintou o famoso quadro 'Abaporu'?", opcoes:["Tarsila do Amaral","Cândido Portinari","Leonardo da Vinci","Romero Britto"], correta:0 },
+      ] }) ],
+    fil:[ L({ d:"fil", titulo:"Valores e Convivência", texto:
+"Viver bem com os outros depende dos nossos VALORES. 🤝\n\n• RESPEITO: tratar todos com educação, mesmo quem é diferente de nós.\n• AMIZADE: ajudar, ouvir e cuidar dos amigos.\n• HONESTIDADE: falar a verdade e não pegar o que não é seu.\n• EMPATIA: se colocar no lugar do outro e entender como ele se sente.\n\nNa escola, isso aparece em coisas simples: dividir o material, esperar a vez de falar e ajudar quem está com dificuldade.",
+      resumoDemo:
+"Viver bem com os outros depende dos nossos VALORES! 🤝\n• RESPEITO: tratar todos com educação, mesmo quem é diferente de nós.\n• AMIZADE: ajudar, ouvir e cuidar dos amigos.\n• HONESTIDADE: falar a verdade e não pegar o que não é seu.\n• EMPATIA: se colocar no lugar do outro e entender como ele se sente.\n• Na escola: dividir o material, esperar a vez de falar e ajudar quem precisa.\n💡 Dica: antes de agir, pergunte a si mesmo: 'Eu gostaria que fizessem isso comigo?'.",
+      exercicios:[
+        { id:uid(), tipo:"mc", nivel:"facil", enunciado:"Qual atitude mostra RESPEITO na escola?", opcoes:["Esperar a vez de falar","Furar a fila","Rir do colega","Jogar lixo no chão"], correta:0 },
+        { id:uid(), tipo:"vf", nivel:"facil", enunciado:"Ser honesto é falar a verdade.", opcoes:["Verdadeiro","Falso"], correta:0 },
+        { id:uid(), tipo:"mc", nivel:"intermediario", enunciado:"Você achou um estojo no chão da sala. Qual é a atitude mais HONESTA?", opcoes:["Entregar à professora para achar o dono","Guardar para você","Esconder de todos","Jogar fora"], correta:0 },
+        { id:uid(), tipo:"fill", nivel:"intermediario", enunciado:"Colocar-se no lugar do outro e entender seus sentimentos é ter ____.", resposta:"empatia" },
+        { id:uid(), tipo:"mc", nivel:"dificil", enunciado:"Um colega novo está sozinho no recreio. A atitude mais EMPÁTICA é:", opcoes:["Convidar ele para brincar com você","Ignorar e continuar brincando","Rir da situação","Contar para os outros que ele está sozinho"], correta:0 },
+      ] }) ],
+    red:[ L({ d:"red", titulo:"Como escrever um parágrafo", texto:
+"Escrever um bom PARÁGRAFO é organizar as ideias! ✍️\n\n• Todo parágrafo tem uma IDEIA PRINCIPAL (o assunto), o DESENVOLVIMENTO (explicações e exemplos) e uma CONCLUSÃO (o fecho).\n• CONECTIVOS ligam as ideias: 'além disso' (soma), 'portanto' (conclusão), 'porém' e 'entretanto' (oposição).\n\nExemplo de parágrafo bem escrito:\n'Praticar esportes faz bem à saúde. Além disso, ajuda a fazer amigos. Portanto, todos deveriam se exercitar.'",
+      resumoDemo:
+"Escrever um bom PARÁGRAFO é organizar as ideias! ✍️\n• Todo parágrafo tem: IDEIA PRINCIPAL (o assunto) + DESENVOLVIMENTO (explicações e exemplos) + CONCLUSÃO (o fecho).\n• CONECTIVOS ligam as ideias: 'além disso' (soma), 'portanto' (conclusão), 'porém'/'entretanto' (oposição).\n• Exemplo: 'Praticar esportes faz bem à saúde. Além disso, ajuda a fazer amigos. Portanto, todos deveriam se exercitar.'\n💡 Dica: comece pela ideia principal, explique no meio e feche com a conclusão — como um sanduíche de ideias!",
+      exercicios:[
+        { id:uid(), tipo:"mc", nivel:"facil", enunciado:"Onde geralmente fica a IDEIA PRINCIPAL de um parágrafo?", opcoes:["No começo","Ela não existe","Sempre no fim","Fora do texto"], correta:0 },
+        { id:uid(), tipo:"vf", nivel:"facil", enunciado:"'Além disso' é um conectivo que SOMA ideias.", opcoes:["Verdadeiro","Falso"], correta:0 },
+        { id:uid(), tipo:"mc", nivel:"intermediario", enunciado:"'Estudei bastante, ____ tirei uma boa nota.' Qual conectivo cabe melhor?", opcoes:["portanto","porém","embora","apesar disso"], correta:0 },
+        { id:uid(), tipo:"fill", nivel:"intermediario", enunciado:"A parte final do parágrafo, que fecha a ideia, é a ____.", resposta:"conclusão" },
+        { id:uid(), tipo:"mc", nivel:"dificil", enunciado:"Qual conectivo indica OPOSIÇÃO (ideias contrárias)?", opcoes:["Porém","Além disso","Portanto","Também"], correta:0 },
       ] }) ],
   };
 }
@@ -1084,8 +1149,21 @@ function carregarDemoLicoes(){
   Object.keys(seed).forEach(sid=>{ DATA[sid]=(DATA[sid]||[]).concat(seed[sid]); });
 }
 
-// Entrar no app como aluno/professor demo (sem sessão real, sem escrita).
-function entrarDemoAluno(){ definirAlunoLogado(demoAlunoDoc()); SESSAO=null; State.tela="home"; render(); }
+// Progresso do aluno demo: salvo SOMENTE no sessionStorage (dura enquanto a aba viver).
+const DEMO_PROGRESS_KEY = "estudamais_demo_progresso";
+// Entrar no app como aluno/professor demo (sem sessão real, sem escrita no Firestore).
+function entrarDemoAluno(){
+  const base = demoAlunoDoc();
+  // restaura o progresso da sessão (se o aluno já jogou nesta aba), mantendo a identidade nova
+  try{
+    const raw = sessionStorage.getItem(DEMO_PROGRESS_KEY);
+    if(raw){ const p=JSON.parse(raw)||{};
+      ["xpTotal","streak","ultimoDia","medalhas","premiacoes","premiacoesInfo","disciplinas","licoesConcluidas","historiasCompletas","som"].forEach(k=>{ if(k in p) base[k]=p[k]; });
+    }
+  }catch(_){}
+  definirAlunoLogado(base);
+  SESSAO=null; State._demoSaudou=false; State.tela="home"; render();
+}
 function entrarDemoProfessor(){ PROFESSOR=demoProfessorDoc(); Teacher.tab="licoes"; SESSAO=null; State.tela="teacher"; render(); }
 
 // Sair do demo → recarrega o app SEM o parâmetro demo, indo para cadastro/login real.
@@ -1637,6 +1715,7 @@ function injetarBannerDemo(){
   if(!DEMO) return;
   const semBanner={ demoWelcome:1, landing:1, loginAluno:1, cadastroAluno:1, loginProf:1, cadastroProf:1, admin:1 };
   if(semBanner[State.tela]) return;
+  if(State.tela==="home" && !State._demoSaudou) return; // não sobrepor a saudação inicial
   const scr=app.querySelector(".screen.active"); if(!scr || scr.querySelector(".demo-banner")) return;
   const b=document.createElement("div");
   b.className="demo-banner";
@@ -1689,7 +1768,7 @@ function renderDemoWelcome(){
         <p style="text-align:center;color:#f0e9ff;font-size:14px;margin-bottom:18px">
           Você está no modo demonstração. Explore o app como aluno ou professor sem precisar de conta!</p>
         <button class="btn" style="background:#ffb703;box-shadow:0 4px 0 #e08e00;color:#5a3d00" onclick="App.entrarDemoAluno()">
-          👨‍🎓 Entrar como Aluno Demo<br><span style="font-size:12px;font-weight:600;opacity:.85">João Vitor, 5º ano</span></button>
+          👨‍🎓 Entrar como Aluno Demo<br><span style="font-size:12px;font-weight:600;opacity:.85">Aluno(a) da Apresentação</span></button>
         <button class="btn blue" style="margin-top:12px" onclick="App.entrarDemoProfessor()">
           👨‍🏫 Entrar como Professor Demo<br><span style="font-size:12px;font-weight:600;opacity:.85">Prof. Demo</span></button>
         <button class="btn" style="margin-top:20px;background:rgba(255,255,255,.18);box-shadow:none;color:#fff" onclick="App.demoLogin()">
@@ -1697,6 +1776,21 @@ function renderDemoWelcome(){
       </div>
     </div>
   </div>`;
+}
+
+// Saudação animada do aluno demo (3s) antes das disciplinas.
+function renderDemoSaudacao(){
+  clearTimeout(State._demoSaudTimer);
+  app.innerHTML = `<div class="screen active">
+    <div class="content demo-saud">
+      <div class="demo-saud-emoji">🚀</div>
+      <h1 class="demo-saud-txt">Olá, Aluno!<br>Pronto para aprender?</h1>
+    </div>
+  </div>`;
+  State._demoSaudTimer = setTimeout(function(){
+    State._demoSaudou = true;
+    if(DEMO && State.tela==="home") render();
+  }, 3000);
 }
 
 function renderLanding(){
@@ -1987,6 +2081,8 @@ function irTela(t){ State.authErro=""; State.authBusy=false; if(t==="admin") Sta
 
 // ----- HOME: seleção de disciplinas -----
 function renderHome(){
+  // modo demo: mostra a saudação animada por 3s antes das disciplinas (uma vez por entrada)
+  if(DEMO && !State._demoSaudou){ renderDemoSaudacao(); return; }
   atualizarStreak();
   const totalLicoes = SUBJECTS.reduce((a,s)=>a+licoesDoAluno(s.id).length,0);
   const concl = SUBJECTS.reduce((a,s)=>{
@@ -2015,7 +2111,7 @@ function renderHome(){
         ${mascot('bounce')}
         <div style="flex:1">
           <div class="greeting">Olá, ${esc(PROFILE.nome)}! 👋</div>
-          <div class="sub">${esc(PROFILE.ano||'')} • Turma ${esc(PROFILE.turma||'')} — pronto para aprender? 🚀</div>
+          <div class="sub">${DEMO ? 'Modo demonstração — pronto para aprender? 🚀' : (esc(PROFILE.ano||'')+' • Turma '+esc(PROFILE.turma||'')+' — pronto para aprender? 🚀')}</div>
         </div>
       </div>
       <div class="stat-row">
@@ -2179,8 +2275,10 @@ async function openLesson(lid){
     if(ativo()){ State.estudo={ status:"ok", texto:l.resumoIA }; render(); }
     return;
   }
-  // 3) sem chave neste aparelho → usa o conteúdo original do professor
-  if(!iaConfigurada()){ if(ativo()){ State.estudo={ status:"fallback", texto:l.texto }; render(); } return; }
+  // Modo demo: se não há IA, usa o resumo pré-cadastrado (nunca mostra erro de API)
+  const fallbackDemo = ()=> ({ status:"demo", texto:(l.resumoDemo || l.texto || "") });
+  // 3) sem chave neste aparelho → resumo pré-cadastrado (demo) ou conteúdo do professor
+  if(!iaConfigurada()){ if(ativo()){ State.estudo = DEMO ? fallbackDemo() : { status:"fallback", texto:l.texto }; render(); } return; }
 
   // 4) gera o resumo pela IA e salva no cache compartilhado (licoes_geradas)
   const pub = descreverPublico(ALUNO);
@@ -2199,7 +2297,8 @@ CONTEÚDO DA LIÇÃO: ${l.texto}${blocoMaterialAluno}`;
     salvarLicaoGerada(lid, { resumo:texto, exercicios:l.exercicios });
     if(ativo()){ State.estudo={ status:"ok", texto }; render(); }
   }catch(e){
-    if(ativo()){ State.estudo={ status:"fallback", texto:l.texto }; render(); }
+    // nunca exibe erro de API no demo — cai no resumo pré-cadastrado
+    if(ativo()){ State.estudo = DEMO ? fallbackDemo() : { status:"fallback", texto:l.texto }; render(); }
   }
 }
 
@@ -3593,7 +3692,7 @@ function renderProfile(){
     <div class="content">
       <div style="text-align:center;margin-bottom:10px">${mascot('')}
         <div style="margin-top:6px;font-weight:800;font-size:20px">${esc(PROFILE.nome)}</div>
-        <div style="color:#777;font-size:13px">${esc(PROFILE.idade||'')} anos • ${esc(PROFILE.ano||'')} • ${esc(nomeNivel(PROFILE.nivel))} • Turma ${esc(PROFILE.turma||'')}</div>
+        <div style="color:#777;font-size:13px">${DEMO ? '🎪 Perfil de demonstração' : (esc(PROFILE.idade||'')+' anos • '+esc(PROFILE.ano||'')+' • '+esc(nomeNivel(PROFILE.nivel))+' • Turma '+esc(PROFILE.turma||''))}</div>
       </div>
       <div class="stat-row" style="margin-bottom:16px">
         <div class="stat-pill" style="background:#fff3cd;color:#856404"><div class="v">🔥 ${PROFILE.streak}</div><div class="l">Ofensiva</div></div>
@@ -3605,6 +3704,7 @@ function renderProfile(){
       <div class="medal-grid">${medalhasGrid}</div>
       ${trofeusHtml}
 
+      ${DEMO ? '' : `
       <div class="sec-title">📚 Meus dados escolares</div>
       <p style="font-size:12px;color:#999;margin:-2px 0 8px">As lições que você vê dependem destes dados. Mantenha-os corretos!</p>
       <label>Nível de ensino</label>
@@ -3613,7 +3713,7 @@ function renderProfile(){
       <select id="pfAno"><option value="" ${!PROFILE.ano?'selected':''} disabled>Selecione o ano</option>${anoOptions(PROFILE.nivel, PROFILE.ano)}</select>
       <label>Turma</label>
       ${turmaSelectHtml('pfTurma', PROFILE.turma, true)}
-      <button class="btn blue small" style="width:100%" onclick="App.salvarDadosEscolares()">💾 Salvar dados escolares</button>
+      <button class="btn blue small" style="width:100%" onclick="App.salvarDadosEscolares()">💾 Salvar dados escolares</button>`}
 
       <div class="sec-title">Progresso por disciplina</div>
       ${rows}
