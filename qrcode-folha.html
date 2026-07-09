@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>EstudaMais — Folha de QR para recortar</title>
+<style>
+  :root{
+    --ink:#221a3a; --muted:#6b6488;
+    --brand-a:#7b2ff7; --brand-b:#3a8dde; --accent:#ff8c00;
+    --line:#eae6f5; --ground:#eef0f7; --cut:#b7b1cc;
+  }
+  *{ box-sizing:border-box; }
+  body{ margin:0; }
+  #app-root{
+    margin:0; min-height:100dvh;
+    font-family:"Segoe UI Rounded","SF Pro Rounded",system-ui,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+    color:var(--ink); background:var(--ground);
+    -webkit-font-smoothing:antialiased;
+  }
+  /* ---- barra de controles (só na tela) ---- */
+  .toolbar{
+    position:sticky; top:0; z-index:10;
+    display:flex; flex-wrap:wrap; align-items:center; gap:10px;
+    padding:14px 16px; background:#fff; border-bottom:1px solid var(--line);
+    box-shadow:0 2px 10px -6px rgba(46,20,90,.3);
+  }
+  .toolbar .lbl{ font-size:13px; font-weight:700; color:var(--muted); margin-right:2px; }
+  .seg{ display:inline-flex; background:#f1eefb; border-radius:12px; padding:4px; gap:4px; }
+  .seg button{
+    border:none; cursor:pointer; font-family:inherit; font-size:13px; font-weight:800;
+    color:var(--muted); background:transparent; padding:8px 14px; border-radius:9px;
+    -webkit-tap-highlight-color:transparent;
+  }
+  .seg button.on{ color:#fff; background:linear-gradient(100deg,var(--brand-a),var(--brand-b)); }
+  .btn-print{
+    margin-left:auto; border:none; cursor:pointer; font-family:inherit;
+    font-size:14px; font-weight:800; color:#fff;
+    background:linear-gradient(100deg,var(--brand-a),var(--brand-b));
+    padding:10px 18px; border-radius:12px; box-shadow:0 8px 20px -9px rgba(80,40,200,.8);
+  }
+  .btn-print:active{ transform:translateY(1px); }
+  .btn-print:focus-visible,.seg button:focus-visible{ outline:3px solid var(--accent); outline-offset:2px; }
+  .hint{ padding:10px 16px 0; font-size:12px; color:var(--muted); text-align:center; }
+
+  /* ---- palco + página A4 ---- */
+  .stage{ padding:18px; display:flex; justify-content:center; overflow:auto; }
+  .page{
+    background:#fff; width:210mm; min-height:297mm;
+    box-shadow:0 16px 50px -20px rgba(46,20,90,.5);
+    padding:10mm; display:grid; gap:0;
+  }
+  .page.flyers{ grid-template-columns:1fr 1fr; grid-template-rows:repeat(4,1fr); }
+  .page.a5{ grid-template-columns:1fr; grid-template-rows:1fr 1fr; }
+
+  /* ---- célula recortável ---- */
+  .cell{
+    position:relative; border:1px dashed var(--cut);
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    text-align:center; padding:6mm;
+  }
+  .cell::before{ content:"\2702"; position:absolute; top:2mm; left:2mm; font-size:11px; color:var(--cut); }
+
+  .brandrow{ display:flex; align-items:center; justify-content:center; gap:8px; }
+  .star{ flex:0 0 auto; }
+  .brand{
+    font-weight:800; letter-spacing:-.02em;
+    background:linear-gradient(100deg,var(--brand-a),var(--brand-b));
+    -webkit-background-clip:text; background-clip:text; color:transparent;
+  }
+  .chip{
+    display:inline-block; background:var(--accent); color:#fff;
+    font-weight:800; letter-spacing:.05em; text-transform:uppercase;
+    border-radius:999px;
+  }
+  .tagline{ color:var(--muted); margin:2px 0 0; }
+  .qrbox{ background:#fff; }
+  .qrbox svg{ display:block; width:100%; height:100%; }
+  .cta{ font-weight:700; margin:0; }
+  .cta .em{ color:var(--brand-a); }
+  .url{
+    font-weight:700; color:var(--brand-b); background:#f4f7fe; border:1px solid #e2ebfb;
+    border-radius:8px; word-break:break-all; font-variant-numeric:tabular-nums;
+  }
+  .note{ color:var(--muted); margin:0; }
+
+  /* ---- escala tipográfica: FLYERS (8 por folha) ---- */
+  .page.flyers .star{ width:20px; height:20px; }
+  .page.flyers .brand{ font-size:16px; }
+  .page.flyers .chip{ display:none; }
+  .page.flyers .tagline{ display:none; }
+  .page.flyers .qrbox{ width:38mm; height:38mm; margin:3mm 0 2.5mm; }
+  .page.flyers .cta{ font-size:11px; }
+  .page.flyers .url{ font-size:9.5px; padding:3px 7px; margin-top:3mm; }
+  .page.flyers .note{ font-size:9px; margin-top:2mm; }
+
+  /* ---- escala tipográfica: A5 (2 por folha) ---- */
+  .page.a5 .star{ width:34px; height:34px; }
+  .page.a5 .brand{ font-size:30px; }
+  .page.a5 .chip{ font-size:12px; padding:6px 14px; margin:12px 0 2px; }
+  .page.a5 .tagline{ font-size:14px; }
+  .page.a5 .qrbox{ width:64mm; height:64mm; margin:6mm 0 4mm; }
+  .page.a5 .cta{ font-size:18px; }
+  .page.a5 .url{ font-size:14px; padding:9px 15px; margin-top:2mm; }
+  .page.a5 .note{ font-size:12px; margin-top:6mm; }
+
+  /* ---- impressão ---- */
+  @media print{
+    @page{ size:A4 portrait; margin:0; }
+    #app-root{ background:#fff; }
+    .toolbar,.hint{ display:none !important; }
+    .stage{ padding:0; overflow:visible; }
+    .page{ box-shadow:none; width:210mm; min-height:297mm; }
+    .page,.cell,.brand,.chip,.url{ -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+    .cell{ break-inside:avoid; }
+  }
+</style>
+</head>
+<body>
+<div id="app-root">
+  <div class="toolbar">
+    <span class="lbl">Layout:</span>
+    <div class="seg" role="group" aria-label="Escolher layout">
+      <button id="btnFlyers" class="on" onclick="setMode('flyers')">✂️ Cartões (8/folha)</button>
+      <button id="btnA5" onclick="setMode('a5')">📄 A5 · meia-folha (2/folha)</button>
+    </div>
+    <button class="btn-print" onclick="window.print()">🖨️ Imprimir</button>
+  </div>
+  <p class="hint">Imprima em <b>A4</b>, sem escala (100%), margens "padrão" ou "nenhuma". Recorte pelas linhas tracejadas ✂.</p>
+  <div class="stage">
+    <div class="page flyers" id="page"><div class="sheet" style="display:contents" id="sheet"></div></div>
+  </div>
+</div>
+
+<script>
+  var QR_SVG = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 41 41" shape-rendering="crispEdges"><path fill="#ffffff" d="M0 0h41v41H0z"/><path stroke="#000000" d="M0 0.5h7m1 0h1m1 0h2m1 0h3m1 0h3m1 0h3m2 0h1m1 0h1m1 0h3m1 0h7M0 1.5h1m5 0h1m1 0h4m2 0h2m1 0h1m1 0h1m2 0h3m2 0h2m3 0h1m1 0h1m5 0h1M0 2.5h1m1 0h3m1 0h1m1 0h1m1 0h2m4 0h3m1 0h3m3 0h2m4 0h1m1 0h1m1 0h3m1 0h1M0 3.5h1m1 0h3m1 0h1m2 0h1m3 0h3m8 0h1m3 0h2m4 0h1m1 0h3m1 0h1M0 4.5h1m1 0h3m1 0h1m2 0h2m2 0h1m1 0h12m1 0h1m1 0h2m2 0h1m1 0h3m1 0h1M0 5.5h1m5 0h1m1 0h1m1 0h3m1 0h1m1 0h1m3 0h1m2 0h2m1 0h2m1 0h2m3 0h1m5 0h1M0 6.5h7m1 0h1m1 0h1m1 0h1m1 0h1m1 0h1m1 0h1m1 0h1m1 0h1m1 0h1m1 0h1m1 0h1m1 0h1m1 0h7M8 7.5h2m2 0h1m1 0h2m1 0h2m2 0h1m1 0h2m1 0h2m2 0h1m1 0h1M2 8.5h3m1 0h1m1 0h1m3 0h4m1 0h1m2 0h1m2 0h1m1 0h1m2 0h2m3 0h3m2 0h3M0 9.5h1m3 0h1m3 0h1m2 0h4m1 0h2m2 0h1m2 0h1m1 0h2m1 0h2m1 0h3m1 0h2m1 0h3M0 10.5h2m1 0h1m1 0h4m1 0h1m1 0h1m1 0h1m3 0h4m1 0h1m3 0h3m2 0h1m1 0h2M0 11.5h1m1 0h3m2 0h4m2 0h2m3 0h1m1 0h4m4 0h1m1 0h3m1 0h2m1 0h1m2 0h1M1 12.5h2m1 0h4m2 0h3m4 0h2m4 0h3m3 0h1m1 0h3m3 0h2m1 0h1M2 13.5h2m1 0h1m2 0h2m2 0h4m6 0h1m1 0h1m1 0h3m1 0h3m1 0h1m1 0h1m2 0h2M1 14.5h2m2 0h2m1 0h3m2 0h1m2 0h2m1 0h8m6 0h1m4 0h2M3 15.5h2m4 0h1m1 0h1m1 0h3m2 0h3m2 0h1m2 0h1m1 0h1m1 0h2m2 0h1m1 0h1m2 0h2M0 16.5h2m3 0h3m1 0h2m4 0h1m1 0h1m1 0h3m2 0h3m2 0h1m2 0h2m1 0h1m1 0h3M2 17.5h2m1 0h1m1 0h3m1 0h5m2 0h1m1 0h2m2 0h2m2 0h1m1 0h3m1 0h5m1 0h1M1 18.5h3m2 0h1m1 0h1m1 0h1m4 0h2m1 0h1m2 0h3m1 0h1m1 0h2m5 0h1m1 0h1m1 0h2M3 19.5h3m2 0h2m2 0h1m1 0h2m2 0h8m1 0h1m4 0h1m3 0h2m2 0h1M0 20.5h1m2 0h8m1 0h4m2 0h1m2 0h1m1 0h1m3 0h1m2 0h1m1 0h1m5 0h2M1 21.5h1m1 0h2m5 0h4m2 0h1m1 0h1m1 0h1m3 0h2m2 0h1m1 0h8m1 0h2M0 22.5h2m2 0h4m4 0h1m1 0h1m1 0h1m1 0h1m1 0h1m3 0h2m1 0h2m1 0h1m2 0h2M2 23.5h1m5 0h2m1 0h2m2 0h2m2 0h2m1 0h1m1 0h1m1 0h3m1 0h3m2 0h1m1 0h1m1 0h2M1 24.5h6m2 0h1m1 0h2m2 0h4m1 0h1m1 0h1m2 0h1m1 0h1m1 0h1m1 0h1m6 0h1M0 25.5h2m11 0h1m1 0h2m1 0h2m1 0h1m1 0h4m1 0h1m1 0h2m2 0h1m1 0h2m2 0h1M3 26.5h4m1 0h1m1 0h3m1 0h1m1 0h1m2 0h1m2 0h1m1 0h2m1 0h1m1 0h1m2 0h1m1 0h2m3 0h1M1 27.5h1m2 0h2m1 0h1m1 0h1m2 0h1m3 0h2m3 0h1m1 0h1m1 0h1m2 0h1m2 0h2m2 0h1m1 0h1m2 0h1M4 28.5h3m5 0h3m1 0h4m1 0h6m1 0h2m1 0h2m2 0h1m1 0h3M0 29.5h1m4 0h1m1 0h3m2 0h1m1 0h2m5 0h1m1 0h2m2 0h1m2 0h3m1 0h1m1 0h1m2 0h2M0 30.5h1m3 0h3m2 0h2m2 0h2m2 0h3m2 0h4m1 0h2m1 0h1m2 0h4M0 31.5h1m1 0h4m1 0h1m3 0h1m2 0h1m4 0h2m2 0h1m1 0h1m1 0h1m4 0h3m1 0h1M0 32.5h1m2 0h1m1 0h2m1 0h1m1 0h4m2 0h1m1 0h1m3 0h1m1 0h1m2 0h1m4 0h7M8 33.5h2m1 0h1m2 0h2m1 0h2m3 0h2m4 0h5m3 0h1m1 0h3M0 34.5h7m3 0h1m1 0h2m2 0h3m1 0h1m1 0h1m4 0h3m1 0h2m1 0h1m1 0h2M0 35.5h1m5 0h1m6 0h1m3 0h2m1 0h4m3 0h6m3 0h2m2 0h1M0 36.5h1m1 0h3m1 0h1m1 0h1m1 0h4m2 0h1m6 0h1m1 0h2m1 0h1m3 0h5m1 0h2M0 37.5h1m1 0h3m1 0h1m1 0h1m2 0h1m3 0h1m1 0h4m1 0h1m1 0h1m1 0h1m1 0h1m1 0h4m1 0h1m1 0h1m2 0h1M0 38.5h1m1 0h3m1 0h1m1 0h1m1 0h3m3 0h2m1 0h1m1 0h1m1 0h1m1 0h4m4 0h5m1 0h1M0 39.5h1m5 0h1m5 0h2m2 0h1m2 0h1m1 0h1m1 0h1m3 0h1m4 0h1m3 0h2m1 0h1M0 40.5h7m2 0h2m1 0h1m3 0h2m2 0h1m3 0h1m1 0h1m2 0h1m1 0h1m1 0h1m1 0h2m1 0h1"/></svg>';
+
+  var STAR = '<svg class="star" viewBox="0 0 120 120" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><polygon points="60,10 71.8,43.8 107.6,44.6 79,66.2 89.4,100.5 60,80 30.6,100.5 41,66.2 12.4,44.6 48.2,43.8" fill="#ffd23f" stroke="#f7a800" stroke-width="3" stroke-linejoin="round"/><circle cx="50" cy="55" r="5" fill="#3c3c3c"/><circle cx="70" cy="55" r="5" fill="#3c3c3c"/><path d="M51 63 Q60 72 69 63" stroke="#3c3c3c" stroke-width="3" fill="none" stroke-linecap="round"/></svg>';
+
+  var URL_TXT = 'brenosc2012-dot.github.io/EstudaMais?demo=true';
+
+  function cellHTML(){
+    return ''
+      + '<div class="brandrow">' + STAR + '<span class="brand">EstudaMais</span></div>'
+      + '<span class="chip">🎪 Modo Demonstração</span>'
+      + '<p class="tagline">Aventura de estudos do 1º ano ao Ensino Médio 🚀</p>'
+      + '<div class="qrbox" role="img" aria-label="QR Code do EstudaMais em modo demo">' + QR_SVG + '</div>'
+      + '<p class="cta">📷 Aponte a câmera <span class="em">e explore!</span></p>'
+      + '<span class="url">' + URL_TXT + '</span>'
+      + '<p class="note">Sem cadastro • seu progresso não é salvo</p>';
+  }
+
+  var MODES = { flyers:8, a5:2 };
+  function setMode(mode){
+    var n = MODES[mode] || 8;
+    var page = document.getElementById('page');
+    var sheet = document.getElementById('sheet');
+    page.className = 'page ' + mode;
+    var html = '';
+    for(var i=0;i<n;i++){ html += '<div class="cell">' + cellHTML() + '</div>'; }
+    sheet.innerHTML = html;
+    document.getElementById('btnFlyers').classList.toggle('on', mode==='flyers');
+    document.getElementById('btnA5').classList.toggle('on', mode==='a5');
+  }
+  window.setMode = setMode;
+  setMode('flyers');
+</script>
+</body>
+</html>
