@@ -382,6 +382,11 @@ label{ display:block; font-weight:700; font-size:14px; margin-bottom:6px; color:
 .vel-btn{ border:none; background:transparent; cursor:pointer; font-size:16px; line-height:1;
   width:34px; height:30px; border-radius:11px; -webkit-tap-highlight-color:transparent; }
 .vel-btn.ativo{ background:var(--blue); box-shadow:0 2px 0 #1591cc; }
+/* mini seletor de estilo de voz (só ícones) */
+.estilo-mini{ display:inline-flex; gap:3px; flex-wrap:wrap; justify-content:center; background:#f0f4f8; border-radius:14px; padding:3px; }
+.estilo-btn{ border:none; background:transparent; cursor:pointer; font-size:16px; line-height:1;
+  width:32px; height:30px; border-radius:10px; -webkit-tap-highlight-color:transparent; }
+.estilo-btn.ativo{ background:#fff; box-shadow:0 0 0 2px var(--blue) inset; }
 /* painel de configurações de áudio (perfil) */
 .audio-seg{ display:flex; gap:8px; flex-wrap:wrap; margin:6px 0 10px; }
 .audio-opt{ flex:1; min-width:96px; border:2px solid var(--gray); background:#fff; border-radius:14px;
@@ -1027,10 +1032,64 @@ function adaptarTextoFala(t){
   return s;
 }
 
-// Preferências de ÁUDIO do aluno (voz, velocidade, tom) — salvas no localStorage.
-// Aplicadas em TODAS as leituras (questões, resumo, explicação e leitura do texto).
+// Estilos de fala pré-configurados (personas). Cada um combina rate/pitch/volume base,
+// processamento do texto e frases próprias (intro/acerto/erro e, opcionalmente, antes da
+// questão). A velocidade manual do aluno MULTIPLICA o rate base (rate = base * vel).
+const ESTILOS_VOZ = {
+  professora: {
+    icon:"🎙️", nome:"Professora", rate:0.80, pitch:1.2, volume:1,
+    intro:"Olá! Vamos começar nossa aula.",
+    antesQuestao:"Muito bem! Agora veja esta questão:",
+    acerto:"Muito bem! Você acertou!", erro:"Quase lá! Veja a explicação.",
+    // pausas didáticas após pontos e vírgulas
+    processarTexto:(t)=> t.replace(/\.(?=\s|$)/g,". ").replace(/,(?=\s|$)/g,", ")
+  },
+  podcast: {
+    icon:"📻", nome:"Podcast", rate:0.95, pitch:1.0, volume:1,
+    intro:"Olá! Vamos aprender sobre {titulo}.",
+    acerto:"Isso aí! Resposta correta!", erro:"Não foi dessa vez. Mas vamos entender melhor.",
+    processarTexto:(t)=> t
+  },
+  audiolivro: {
+    icon:"📖", nome:"Audiolivro", rate:0.75, pitch:1.05, volume:1,
+    pausaEntreParagrafos:1000, intro:"",
+    acerto:"Correto.", erro:"Incorreto. A resposta certa era...",
+    processarTexto:(t)=> t
+  },
+  robo: {
+    icon:"🤖", nome:"Robô Divertido", rate:0.90, pitch:0.7, volume:1,
+    intro:"Bip bip. Iniciando modo de estudo.",
+    acerto:"Bip bip! Resposta correta detectada!", erro:"Bip. Resposta incorreta. Processando explicação.",
+    processarTexto:(t)=> t
+  },
+  rapido: {
+    icon:"⚡", nome:"Modo Rápido", rate:1.2, pitch:1.0, volume:1,
+    intro:"", acerto:"Correto!", erro:"Errado.",
+    processarTexto:(t)=> t
+  },
+  contadora: {
+    icon:"🧸", nome:"Contadora", rate:0.70, pitch:1.3, volume:1,
+    intro:"Era uma vez... uma lição muito especial!",
+    antesQuestao:"E agora, você consegue responder?",
+    acerto:"Uau! Que aluno incrível!", erro:"Ops! Mas não desanime, veja a explicação!",
+    processarTexto:(t)=> t
+  },
+  professora_ingles: {
+    icon:"🎓", nome:"Prof. de Inglês", rate:0.75, pitch:1.15, volume:1,
+    intro:"Hello! Let us start our English lesson!",
+    acerto:"Very good! Correct answer!", erro:"Not quite! Let me explain.",
+    repetirPalavrasIngles:true,
+    // repete (best-effort) palavras em inglês entre aspas/parênteses, para reforço de pronúncia
+    processarTexto:(t)=> String(t).replace(/["“”'']([A-Za-z][A-Za-z .,'’-]*?)["“”'']/g, (m,w)=>`${w.trim()}... ${w.trim()}`)
+  }
+};
+const ESTILO_PADRAO = "professora";
+const ESTILOS_ORDEM = ["professora","podcast","audiolivro","robo","rapido","contadora","professora_ingles"];
+
+// Preferências de ÁUDIO do aluno (estilo, velocidade e voz do dispositivo) — no localStorage.
+// Aplicadas em TODAS as leituras (questões, resumo, explicação, texto e feedback).
 const AUDIO_CFG_KEY = "audioConfig";
-const AUDIO_RATE_MIN = 0.5, AUDIO_RATE_MAX = 1.2;
+const VEL_MIN = 0.5, VEL_MAX = 1.5; // multiplicador manual da velocidade
 const AudioCfg = {
   _cache: null,
   get(){
@@ -1038,8 +1097,9 @@ const AudioCfg = {
     let c = {};
     try{ c = JSON.parse(localStorage.getItem(AUDIO_CFG_KEY) || "{}") || {}; }catch(e){}
     this._cache = {
-      rate:  (typeof c.rate==="number"  && c.rate>0)  ? c.rate  : 0.85,
-      pitch: (typeof c.pitch==="number" && c.pitch>0) ? c.pitch : 1.1,
+      estilo: ESTILOS_VOZ[c.estilo] ? c.estilo : ESTILO_PADRAO,
+      vel:    (typeof c.vel==="number" && c.vel>0) ? c.vel : 1.0, // multiplicador (velocidadeAudio)
+      estiloManual: !!c.estiloManual, // aluno escolheu o estilo à mão? (não auto-sugerir)
       vozIndex: (typeof c.vozIndex==="number") ? c.vozIndex : null,
       vozNome:  c.vozNome || null
     };
@@ -1047,12 +1107,48 @@ const AudioCfg = {
   },
   set(patch){
     const c = Object.assign(this.get(), patch||{});
-    if(typeof c.rate==="number") c.rate = Math.min(AUDIO_RATE_MAX, Math.max(AUDIO_RATE_MIN, c.rate));
+    if(typeof c.vel==="number") c.vel = Math.min(VEL_MAX, Math.max(VEL_MIN, c.vel));
+    if(!ESTILOS_VOZ[c.estilo]) c.estilo = ESTILO_PADRAO;
     this._cache = c;
     try{ localStorage.setItem(AUDIO_CFG_KEY, JSON.stringify(c)); }catch(e){}
     return c;
   }
 };
+// Estilo atualmente selecionado (objeto).
+function estiloAtual(){ return ESTILOS_VOZ[AudioCfg.get().estilo] || ESTILOS_VOZ[ESTILO_PADRAO]; }
+// Pausa entre parágrafos conforme o estilo (audiolivro = 1s; demais = 0.5s).
+function pausaParaEstilo(){ const e=estiloAtual(); return (typeof e.pausaEntreParagrafos==="number")?e.pausaEntreParagrafos:500; }
+// Processa o texto conforme o estilo (após a limpeza padrão de abreviações).
+function processarEstiloTexto(t){
+  const base = adaptarTextoFala(t);
+  try{ const e=estiloAtual(); return (typeof e.processarTexto==="function") ? e.processarTexto(base) : base; }
+  catch(_){ return base; }
+}
+// Substitui {titulo} pelo título da lição atual (usado no intro do estilo Podcast).
+function textoEstiloComTitulo(txt){
+  if(!txt || txt.indexOf("{titulo}")<0) return txt||"";
+  const l=(typeof getLesson==="function") ? getLesson() : null;
+  const titulo=(l && (l.tituloTexto||l.titulo)) || "esta lição";
+  return txt.replace(/\{titulo\}/g, titulo);
+}
+// Aplica estilo (rate = base*vel, pitch, volume) + voz do dispositivo à utterance.
+function aplicarEstiloVoz(u, opts){
+  opts=opts||{};
+  const est=estiloAtual(); const cfg=AudioCfg.get(); const voz=Fala.vozAtual();
+  if(voz){ u.voice=voz; u.lang=voz.lang||"pt-BR"; } else { u.lang="pt-BR"; }
+  let rate = (est.rate||1) * (cfg.vel||1);
+  if(opts.animado) rate *= 1.06;               // pequeno realce nos trechos "animados"
+  u.rate  = Math.min(2, Math.max(0.3, rate));
+  u.pitch = opts.animado ? Math.min(2, (est.pitch||1)+0.1) : (est.pitch||1);
+  u.volume = (typeof est.volume==="number") ? est.volume : 1;
+}
+// Sugere o estilo conforme a disciplina (só se o aluno ainda não escolheu manualmente).
+function sugerirEstiloPorDisciplina(subjId){
+  const cfg=AudioCfg.get();
+  if(cfg.estiloManual) return;
+  const alvo = ehLinguaEstrangeira(subjId) ? "professora_ingles" : ESTILO_PADRAO;
+  if(cfg.estilo!==alvo) AudioCfg.set({ estilo:alvo });
+}
 // Lista as vozes pt-BR disponíveis; se não houver nenhuma, devolve todas.
 function carregarVozes(){
   let vozes = [];
@@ -1102,16 +1198,8 @@ const Fala = {
     if(!this.voz) this.voz = this.escolherVoz();
     return this.voz;
   },
-  // aplica os parâmetros de voz do aluno (com leve variação p/ trechos "animados")
-  _config(u, animado){
-    const cfg = AudioCfg.get();
-    u.lang = "pt-BR";
-    const voz = this.vozAtual();
-    if(voz){ u.voice = voz; if(voz.lang) u.lang = voz.lang; }
-    u.rate  = animado ? Math.min(AUDIO_RATE_MAX, cfg.rate + 0.1) : cfg.rate;
-    u.pitch = animado ? Math.min(2, cfg.pitch + 0.15) : cfg.pitch;
-    u.volume = 1;
-  },
+  // aplica o estilo de voz + velocidade + voz do dispositivo (com realce p/ trechos "animados")
+  _config(u, animado){ aplicarEstiloVoz(u, { animado:!!animado }); },
   // Fala uma lista de segmentos: [{texto, pausa(ms), animado?}, ...]
   falarSequencia(segmentos){
     if(!this.ok()) return;
@@ -1124,7 +1212,7 @@ const Fala = {
   _proximo(){
     if(!this._fila.length){ this._tocando=false; this._protegerUmaVez=false; atualizarBotoesFala(); return; }
     const seg = this._fila.shift();
-    const texto = adaptarTextoFala(seg.texto);
+    const texto = processarEstiloTexto(seg.texto);
     if(!texto){ this._agendar(seg.pausa||0); return; }
     try{
       const u = new SpeechSynthesisUtterance(texto.slice(0,4000));
@@ -1176,12 +1264,15 @@ function botaoFala(handler, rotulo){
 // Monta os segmentos de leitura de uma questão, com pausas didáticas.
 function segmentosQuestao(ex){
   if(!ex) return [];
+  // frase de abertura da persona (ex.: Professora "Agora veja esta questão:")
+  const antes = estiloAtual().antesQuestao;
+  const abertura = antes ? [{ texto: antes, pausa: 400 }] : [];
   if(ex.tipo==="fill"){
     // lê o enunciado trocando a lacuna (___) por "lacuna"
     const enun = String(ex.enunciado||"").replace(/_{1,}/g, " lacuna ");
-    return [{ texto: enun, pausa: 0 }];
+    return abertura.concat([{ texto: enun, pausa: 0 }]);
   }
-  const segs = [{ texto: ex.enunciado||"", pausa: 1000 }]; // enunciado + pausa de 1s
+  const segs = abertura.concat([{ texto: ex.enunciado||"", pausa: 1000 }]); // (abertura) + enunciado + pausa 1s
   if(ex.tipo==="vf"){
     segs.push({ texto: "A afirmação é verdadeira ou falsa?", pausa: 0 });
     return segs;
@@ -1891,6 +1982,10 @@ async function openLesson(lid){
   const l=getLesson();
   if(!l){ goHome(); return; }
 
+  // sugere o estilo de voz conforme a disciplina (Inglês → Prof. de Inglês), a menos
+  // que o aluno já tenha escolhido um estilo manualmente
+  sugerirEstiloPorDisciplina(State.subj);
+
   // pré-gera as explicações de erro em segundo plano (só em aparelho com a chave),
   // para que qualquer dispositivo já encontre a explicação pronta no Firestore
   if(iaConfigurada()) pregerarExplicacoes(l);
@@ -2169,7 +2264,7 @@ function renderExercise(){
         ${ex.nivel?`<span class="pill-tag" style="background:${nivelDificuldadeCor(ex.nivel)}">${nivelDificuldadeLabel(ex.nivel)} • +${xpDaQuestao(ex)} XP</span>`:''}
         ${(getLesson()&&getLesson().tipo==="interpretacao_texto")?`<button class="btn blue small" style="width:auto;margin-left:auto;padding:6px 10px" onclick="App.abrirTextoInterp()">📖 Ver o texto</button>`:''}
       </div>
-      ${Fala.ok()?`<div style="display:flex;justify-content:flex-end;margin-bottom:6px">${velocidadeMiniHtml()}</div>`:''}
+      ${Fala.ok()?`<div style="display:flex;justify-content:flex-end;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:6px">${estiloMiniHtml()}${velocidadeMiniHtml()}</div>`:''}
       <div class="q-prompt">${esc(ex.enunciado)}</div>
       ${Fala.ok()?`<div style="text-align:center;margin:-4px 0 14px">${botaoFala('lerQuestao','Ouvir a pergunta')}</div>`:''}
       <div id="optWrap">${body}</div>
@@ -2224,17 +2319,18 @@ function checkAnswer(){
   });
   const xpQ = Math.round(xpDaQuestao(ex) * (Sess.xpMult||1)); // Modo História: +50%
   if(Sess.modo==="historia"){ responderHistoria(ok, ex, xpQ); return; }
+  const estilo = estiloAtual();
   if(ok){
     Sess.acertos++; Sess.xpGanho += xpQ; Sound.correct(); renderExercise();
-    Fala.ler("Muito bem! Você acertou!", true); // voz animada
+    Fala.ler(estilo.acerto || "Muito bem! Você acertou!", true); // frase da persona, voz animada
   } else {
     Sess.erros++; Sess.vidas--; Sound.wrong(); renderExercise();
     const wrap=document.getElementById("optWrap");
     if(wrap) wrap.classList.add("shake");
-    // feedback falado ao errar — protegido para não ser cortado pela tela de explicação
+    // feedback falado ao errar (frase da persona + resposta certa) — protegido p/ não ser cortado
     const respCorreta = ex.tipo==="fill" ? (ex.resposta||"") : (ex.opcoes? ex.opcoes[ex.correta] : "");
     Fala._protegerUmaVez = true;
-    Fala.ler("Ops! A resposta certa era "+respCorreta+". Tente na próxima!");
+    Fala.ler((estilo.erro || "Ops!") + " A resposta certa era: " + respCorreta + ".");
     // mostra o feedback vermelho por um instante e então gera a explicação por IA
     setTimeout(()=>gerarExplicacao(), 950);
   }
@@ -2964,25 +3060,40 @@ function paragrafosTexto(txt){ return String(txt||"").split(/\n+/).map(p=>p.trim
 // Genérico: funciona no resumo de estudo E no texto de interpretação (ctx define a tela,
 // as classes/ids dos parágrafos, a cor de destaque e o handler de "Ouvir").
 const LeitorTexto = {
-  paras:[], idx:0, ativo:false, pausado:false, _timer:null,
+  paras:[], idx:0, ativo:false, pausado:false, _timer:null, _introTxt:"",
   ctx:{ tela:"interpRead", parIdPrefix:"ipar-", parClass:"interp-par", cor:"#1cb0f6", iniciarHandler:"ouvirTextoInterp", rotulo:"Ouvir o texto" },
   configurar(ctx){ if(ctx) this.ctx=Object.assign({}, this.ctx, ctx); },
   iniciar(paras, ctx){
     this.parar(); this.configurar(ctx);
     if(!Fala.ok() || !paras.length) return;
-    this.paras=paras; this.idx=0; this.ativo=true; this.pausado=false;
+    this.paras=paras; this.ativo=true; this.pausado=false;
+    // intro do estilo (ex.: Podcast "Vamos aprender sobre {titulo}") antes do 1º parágrafo
+    this._introTxt = textoEstiloComTitulo(estiloAtual().intro||"");
+    this.idx = this._introTxt ? -1 : 0;
     atualizarControlesLeitor(); this._falar();
   },
   _falar(){
     if(!this.ativo || State.tela!==this.ctx.tela) { this.ativo=false; return; }
+    // parágrafo -1 = introdução falada do estilo (sem destaque)
+    if(this.idx===-1){
+      destacarParagrafo(-1);
+      const txt=this._introTxt; this._introTxt="";
+      if(!txt){ this.idx=0; return this._falar(); }
+      try{
+        const u=new SpeechSynthesisUtterance(processarEstiloTexto(txt).slice(0,4000));
+        aplicarEstiloVoz(u);
+        const seguir=()=>{ if(!this.ativo) return; this.idx=0; this._timer=setTimeout(()=>this._falar(), 300); };
+        u.onend=seguir; u.onerror=seguir; window.speechSynthesis.speak(u);
+      }catch(e){ this.idx=0; this._timer=setTimeout(()=>this._falar(), 300); }
+      return;
+    }
     if(this.idx>=this.paras.length){ this.ativo=false; this.pausado=false; destacarParagrafo(-1); atualizarControlesLeitor(); return; }
     destacarParagrafo(this.idx);
     try{
-      const u=new SpeechSynthesisUtterance(adaptarTextoFala(this.paras[this.idx]).slice(0,4000));
-      const cfg=AudioCfg.get(); const voz=Fala.vozAtual();
-      u.lang="pt-BR"; if(voz){ u.voice=voz; if(voz.lang)u.lang=voz.lang; }
-      u.rate=cfg.rate; u.pitch=cfg.pitch; u.volume=1; // parâmetros configuráveis pelo aluno
-      const seguir=()=>{ if(!this.ativo) return; this.idx++; this._timer=setTimeout(()=>this._falar(), 500); }; // pausa 0.5s
+      const u=new SpeechSynthesisUtterance(processarEstiloTexto(this.paras[this.idx]).slice(0,4000));
+      aplicarEstiloVoz(u);
+      const pausa=pausaParaEstilo(); // audiolivro = 1s entre parágrafos; demais = 0.5s
+      const seguir=()=>{ if(!this.ativo) return; this.idx++; this._timer=setTimeout(()=>this._falar(), pausa); };
       u.onend=seguir; u.onerror=seguir;
       window.speechSynthesis.speak(u);
     }catch(e){ this.idx++; this._timer=setTimeout(()=>this._falar(), 500); }
@@ -3008,7 +3119,9 @@ function destacarParagrafo(i){
 function atualizarProgressoLeitor(){
   const el=document.getElementById("leitorProgTxt"); if(!el) return;
   const L=LeitorTexto;
-  el.textContent = (L.ativo && L.idx < L.paras.length) ? `Lendo parágrafo ${L.idx+1} de ${L.paras.length}...` : "";
+  if(!L.ativo){ el.textContent=""; return; }
+  if(L.idx===-1){ el.textContent="Introdução..."; return; }
+  el.textContent = (L.idx < L.paras.length) ? `Lendo parágrafo ${L.idx+1} de ${L.paras.length}...` : "";
 }
 // (Re)desenha os botões Ouvir/Pausar/Continuar/Parar conforme o estado atual.
 function atualizarControlesLeitor(){
@@ -3027,7 +3140,7 @@ function barraLeitorHtml(){
   if(!Fala.ok()) return "";
   return `<div class="leitor-bar">
     <div id="leitorCtrl" class="leitor-ctrl"></div>
-    <div class="leitor-opts">${velocidadeMiniHtml()}${vozDropdownHtml()}</div>
+    <div class="leitor-opts">${estiloMiniHtml()}${velocidadeMiniHtml()}${vozDropdownHtml()}</div>
     <div id="leitorProgTxt" class="leitor-prog"></div>
     <div id="autoLerBox"></div>
   </div>`;
@@ -3147,28 +3260,33 @@ function fatoCuriosoGenero(g){
 
 // ----- PERFIL -----
 function openProfile(){ State.tela="profile"; render(); }
-// Painel "🔊 Configurações de Áudio" (perfil do aluno): velocidade, voz e tom.
+// Painel "🔊 Configurações de Áudio" (perfil do aluno): estilo, velocidade e voz.
 function audioConfigPanelHtml(){
   if(!Fala.ok()) return "";
   const cfg = AudioCfg.get();
-  const perto = (a,b)=> Math.abs(a-b) < 0.03;
-  // velocidade: presets + slider fino
+  // 1) estilo de voz (personas)
+  const estilosHtml = ESTILOS_ORDEM.map(k=>{
+    const e=ESTILOS_VOZ[k]; const sel=(cfg.estilo===k);
+    return `<div class="voz-row ${sel?'ativo':''}">
+      <span class="vnome">${e.icon} ${esc(e.nome)}</span>
+      ${sel?`<span style="color:#0a6aa1;font-weight:800;font-size:13px">✅ Selecionado</span>`
+           :`<button class="voz-pick" onclick="App.setEstiloVoz('${k}')">Usar</button>`}
+    </div>`;
+  }).join("");
+  // 2) velocidade (multiplicador) — sempre visível, independente do estilo
+  const perto=(a,b)=>Math.abs(a-b)<0.06;
   const presetsVel = [
-    { v:0.6,  ico:"🐢", nome:"Devagar", rec:"1º ao 3º ano" },
-    { v:0.85, ico:"🚶", nome:"Normal",  rec:"4º ao 6º ano" },
-    { v:1.1,  ico:"🏃", nome:"Rápido",  rec:"7º ao EM" }
-  ].map(p=>`<button class="audio-opt ${perto(cfg.rate,p.v)?'ativo':''}" onclick="App.setAudioRate(${p.v})">
+    { v:0.7, ico:"🐢", nome:"Devagar", rec:"1º ao 3º ano" },
+    { v:1.0, ico:"🚶", nome:"Normal",  rec:"4º ao 6º ano" },
+    { v:1.3, ico:"🏃", nome:"Rápido",  rec:"7º ao EM" }
+  ].map(p=>`<button class="audio-opt ${perto(cfg.vel,p.v)?'ativo':''}" data-vel="${p.v}" onclick="App.setVelocidade(${p.v})">
       ${p.ico} ${p.nome}<span class="sub">${p.rec}</span></button>`).join("");
   const slider = `<div style="margin:2px 0 12px">
-    <input type="range" min="${AUDIO_RATE_MIN}" max="${AUDIO_RATE_MAX}" step="0.05" value="${cfg.rate}"
-      style="width:100%" oninput="App.setAudioRateSlider(this.value)">
-    <div style="text-align:center;font-size:12px;color:#999">Ajuste fino: <b id="audioRateVal">${cfg.rate.toFixed(2)}</b>×</div>
+    <input type="range" min="${VEL_MIN}" max="${VEL_MAX}" step="0.05" value="${cfg.vel}"
+      style="width:100%" oninput="App.setVelocidadeSlider(this.value)">
+    <div style="text-align:center;font-size:12px;color:#999">Ajuste fino: <b id="audioVelVal">${cfg.vel.toFixed(2)}</b>×</div>
   </div>`;
-  // tom (pitch): 3 opções
-  const presetsTom = [
-    { v:0.9, nome:"Grave" }, { v:1.1, nome:"Normal" }, { v:1.3, nome:"Agudo" }
-  ].map(p=>`<button class="audio-opt ${perto(cfg.pitch,p.v)?'ativo':''}" onclick="App.setAudioPitch(${p.v})">${p.nome}</button>`).join("");
-  // vozes disponíveis
+  // 3) voz do dispositivo
   const vozes = carregarVozes();
   let vozHtml;
   if(!vozes.length){
@@ -3186,35 +3304,43 @@ function audioConfigPanelHtml(){
   return `
     <div class="sec-title">🔊 Configurações de Áudio</div>
     <p style="font-size:12px;color:#999;margin:-2px 0 8px">Personalize como o app lê os textos e as perguntas para você.</p>
-    <label>Velocidade de leitura</label>
+    <label>Estilo de voz</label>
+    <div style="margin-top:6px">${estilosHtml}</div>
+    <button class="btn blue small" style="width:100%;margin:4px 0 6px" onclick="App.testarEstilo()">🔊 Testar estilo selecionado</button>
+    <label>Velocidade de leitura <span style="font-weight:500;color:#999">(independente do estilo)</span></label>
     <div class="audio-seg">${presetsVel}</div>
     ${slider}
-    <label>Tom da voz</label>
-    <div class="audio-seg">${presetsTom}</div>
-    <label>Voz</label>
+    <label>Voz do dispositivo</label>
     <div style="margin-top:6px">${vozHtml}</div>`;
 }
-// Handlers das preferências de áudio
-function setAudioRate(v){ AudioCfg.set({ rate:+v }); render(); }
-function setAudioRateSlider(v){
-  AudioCfg.set({ rate:+v });
-  const el=document.getElementById("audioRateVal"); if(el) el.textContent=(+v).toFixed(2);
-  // reflete no destaque dos presets sem re-renderizar (mantém o foco no slider)
-  document.querySelectorAll(".audio-seg")[0] && document.querySelectorAll(".audio-seg")[0]
-    .querySelectorAll(".audio-opt").forEach(b=>{
-      const m=/setAudioRate\(([\d.]+)\)/.exec(b.getAttribute("onclick")||"");
-      if(m) b.classList.toggle("ativo", Math.abs((+m[1])-(+v))<0.03);
-    });
+// ----- Handlers das preferências de áudio -----
+// Estilo (persona). estiloManual=true → paramos de auto-sugerir por disciplina.
+function setEstiloVoz(k){ if(!ESTILOS_VOZ[k]) return; AudioCfg.set({ estilo:k, estiloManual:true }); render(); }
+function testarEstilo(){
+  if(!Fala.ok()) return;
+  const est=estiloAtual();
+  const intro=textoEstiloComTitulo(est.intro||"");
+  Fala.falarSequencia([
+    intro ? { texto:intro, pausa:250 } : null,
+    { texto:"Esta é a minha voz. Vamos aprender juntos!", pausa:0, animado:true }
+  ].filter(Boolean));
 }
-function setAudioPitch(v){ AudioCfg.set({ pitch:+v }); render(); }
+// Velocidade (multiplicador). Presets no perfil re-renderizam.
+function setVelocidade(v){ AudioCfg.set({ vel:+v }); render(); }
+function setVelocidadeSlider(v){
+  AudioCfg.set({ vel:+v });
+  const el=document.getElementById("audioVelVal"); if(el) el.textContent=(+v).toFixed(2);
+  const seg=document.querySelector(".audio-seg");
+  if(seg) seg.querySelectorAll(".audio-opt").forEach(b=>{ b.classList.toggle("ativo", Math.abs((+b.getAttribute("data-vel"))-(+v))<0.06); });
+}
 function indiceGlobalVoz(v){ try{ return (window.speechSynthesis.getVoices()||[]).indexOf(v); }catch(e){ return -1; } }
-// usado na lista de vozes do perfil (re-renderiza para atualizar o destaque)
+// lista de vozes do perfil (re-renderiza para atualizar o destaque)
 function setAudioVoz(i){
   const vs=carregarVozes(); const v=vs[+i]; if(!v) return;
   const gi=indiceGlobalVoz(v);
   Fala.voz=v; AudioCfg.set({ vozNome:v.name, vozIndex: gi>=0?gi:null }); render();
 }
-// usado no dropdown da barra de leitura (NÃO re-renderiza, para não reiniciar timers/leitura)
+// dropdown da barra de leitura (NÃO re-renderiza, para não reiniciar timers/leitura)
 function setAudioVozDropdown(i){
   const vs=carregarVozes(); const v=vs[+i]; if(!v) return;
   const gi=indiceGlobalVoz(v);
@@ -3222,30 +3348,43 @@ function setAudioVozDropdown(i){
 }
 function testarVoz(i){
   const vs=carregarVozes(); const v=vs[+i]; if(!v || !Fala.ok()) return;
-  const cfg=AudioCfg.get();
+  const est=estiloAtual(); const cfg=AudioCfg.get();
   try{
     window.speechSynthesis.cancel();
     const u=new SpeechSynthesisUtterance("Olá! Eu sou a sua voz de leitura. Vamos aprender juntos?");
-    u.voice=v; u.lang=v.lang||"pt-BR"; u.rate=cfg.rate; u.pitch=cfg.pitch; u.volume=1;
+    u.voice=v; u.lang=v.lang||"pt-BR";
+    u.rate=Math.min(2,Math.max(0.3,(est.rate||1)*(cfg.vel||1))); u.pitch=est.pitch||1; u.volume=(typeof est.volume==="number"?est.volume:1);
     window.speechSynthesis.speak(u);
   }catch(e){}
 }
-// controle rápido de velocidade [🐢][🚶][🏃] na tela de questões (sem sair do perfil)
+// controle rápido de velocidade [🐢][🚶][🏃] (multiplicador) na tela de questões/resumo
 function velocidadeMiniHtml(){
   if(!Fala.ok()) return "";
-  const r=AudioCfg.get().rate;
-  const b=(v,ico,lbl)=>`<button class="vel-btn ${Math.abs(r-v)<0.03?'ativo':''}" data-rate="${v}"
-    onclick="App.setAudioRateRapido(${v})" title="${lbl}" aria-label="Velocidade ${lbl}">${ico}</button>`;
-  return `<div class="vel-mini">${b(0.6,'🐢','devagar')}${b(0.85,'🚶','normal')}${b(1.1,'🏃','rápido')}</div>`;
+  const vel=AudioCfg.get().vel;
+  const b=(v,ico,lbl)=>`<button class="vel-btn ${Math.abs(vel-v)<0.06?'ativo':''}" data-vel="${v}"
+    onclick="App.setVelocidadeRapido(${v})" title="${lbl}" aria-label="Velocidade ${lbl}">${ico}</button>`;
+  return `<div class="vel-mini">${b(0.7,'🐢','devagar')}${b(1.0,'🚶','normal')}${b(1.3,'🏃','rápido')}</div>`;
 }
-function setAudioRateRapido(v){
-  AudioCfg.set({ rate:+v });
-  document.querySelectorAll(".vel-btn").forEach(b=>{
-    b.classList.toggle("ativo", Math.abs((+b.getAttribute("data-rate"))-(+v))<0.03);
-  });
-  // A leitura por parágrafo (resumo/interpretação) já pega a nova velocidade no próximo
-  // parágrafo. Na tela de questões, re-lê o enunciado imediatamente.
-  if(LeitorTexto.ativo) return;
+function setVelocidadeRapido(v){
+  AudioCfg.set({ vel:+v });
+  document.querySelectorAll(".vel-btn").forEach(b=>{ b.classList.toggle("ativo", Math.abs((+b.getAttribute("data-vel"))-(+v))<0.06); });
+  if(LeitorTexto.ativo) return; // próximo parágrafo já usa a nova velocidade
+  if(State.tela==="exercise" && Fala.falando()){ Fala.parar(); lerQuestao(); }
+}
+// mini seletor de estilo (ícones) inline na tela de questões e no resumo
+function estiloMiniHtml(){
+  if(!Fala.ok()) return "";
+  const at=AudioCfg.get().estilo;
+  const btns=ESTILOS_ORDEM.map(k=>{ const e=ESTILOS_VOZ[k];
+    return `<button class="estilo-btn ${k===at?'ativo':''}" data-estilo="${k}" title="${esc(e.nome)}" aria-label="Estilo ${esc(e.nome)}" onclick="App.setEstiloRapido('${k}')">${e.icon}</button>`;
+  }).join("");
+  return `<div class="estilo-mini">${btns}</div>`;
+}
+function setEstiloRapido(k){
+  if(!ESTILOS_VOZ[k]) return;
+  AudioCfg.set({ estilo:k, estiloManual:true });
+  document.querySelectorAll(".estilo-btn").forEach(b=>b.classList.toggle("ativo", b.getAttribute("data-estilo")===k));
+  if(LeitorTexto.ativo) return; // o próximo parágrafo já usa o novo estilo
   if(State.tela==="exercise" && Fala.falando()){ Fala.parar(); lerQuestao(); }
 }
 
@@ -4984,7 +5123,8 @@ window.App = {
   // leitura em voz alta (TTS)
   lerResumo, lerQuestao, lerExplicacao,
   // configurações de áudio (voz/velocidade/tom)
-  setAudioRate, setAudioRateSlider, setAudioPitch, setAudioVoz, setAudioVozDropdown, testarVoz, setAudioRateRapido,
+  setEstiloVoz, testarEstilo, setEstiloRapido, setVelocidade, setVelocidadeSlider, setVelocidadeRapido,
+  setAudioVoz, setAudioVozDropdown, testarVoz,
   // autenticação
   irTela, logout, toggleSenha,
   irCadastroAluno, submitLoginAluno, onNivelCadAluno, submitCadastroAluno,
