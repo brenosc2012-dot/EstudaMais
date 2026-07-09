@@ -367,6 +367,27 @@ label{ display:block; font-weight:700; font-size:14px; margin-bottom:6px; color:
 .fala-btn.falando .ico{ animation:pulseIco .8s ease-in-out infinite; }
 @keyframes pulseFala{ 0%,100%{ transform:scale(1); } 50%{ transform:scale(1.05); } }
 @keyframes pulseIco{ 0%,100%{ transform:scale(1); } 50%{ transform:scale(1.3); } }
+/* controle rápido de velocidade (canto da tela de questões) */
+.vel-mini{ display:inline-flex; gap:4px; background:#f0f4f8; border-radius:14px; padding:3px; }
+.vel-btn{ border:none; background:transparent; cursor:pointer; font-size:16px; line-height:1;
+  width:34px; height:30px; border-radius:11px; -webkit-tap-highlight-color:transparent; }
+.vel-btn.ativo{ background:var(--blue); box-shadow:0 2px 0 #1591cc; }
+/* painel de configurações de áudio (perfil) */
+.audio-seg{ display:flex; gap:8px; flex-wrap:wrap; margin:6px 0 10px; }
+.audio-opt{ flex:1; min-width:96px; border:2px solid var(--gray); background:#fff; border-radius:14px;
+  padding:8px 6px; cursor:pointer; font-family:inherit; font-size:13px; font-weight:700; color:#555;
+  -webkit-tap-highlight-color:transparent; }
+.audio-opt.ativo{ border-color:var(--blue); background:#eaf6ff; color:#0a6aa1; }
+.audio-opt .sub{ display:block; font-size:11px; font-weight:600; color:#999; margin-top:2px; }
+.voz-row{ display:flex; align-items:center; gap:8px; padding:8px 10px; border:2px solid var(--gray);
+  border-radius:14px; margin-bottom:8px; }
+.voz-row.ativo{ border-color:var(--blue); background:#eaf6ff; }
+.voz-row .vnome{ flex:1; font-weight:700; font-size:14px; color:#444; text-align:left; }
+.voz-pick{ border:none; background:transparent; cursor:pointer; font-size:14px; font-weight:800;
+  color:#0a6aa1; font-family:inherit; -webkit-tap-highlight-color:transparent; }
+.voz-test{ border:none; background:var(--blue); color:#fff; border-radius:12px; padding:6px 10px;
+  cursor:pointer; font-size:13px; font-weight:800; font-family:inherit; box-shadow:0 3px 0 #1591cc; }
+.voz-test:active{ transform:translateY(2px); box-shadow:0 1px 0 #1591cc; }
 </style>
 </head>
 <body>
@@ -996,6 +1017,47 @@ function adaptarTextoFala(t){
   return s;
 }
 
+// Preferências de ÁUDIO do aluno (voz, velocidade, tom) — salvas no localStorage.
+// Aplicadas em TODAS as leituras (questões, resumo, explicação e leitura do texto).
+const AUDIO_CFG_KEY = "audioConfig";
+const AUDIO_RATE_MIN = 0.5, AUDIO_RATE_MAX = 1.2;
+const AudioCfg = {
+  _cache: null,
+  get(){
+    if(this._cache) return this._cache;
+    let c = {};
+    try{ c = JSON.parse(localStorage.getItem(AUDIO_CFG_KEY) || "{}") || {}; }catch(e){}
+    this._cache = {
+      rate:  (typeof c.rate==="number"  && c.rate>0)  ? c.rate  : 0.85,
+      pitch: (typeof c.pitch==="number" && c.pitch>0) ? c.pitch : 1.1,
+      vozIndex: (typeof c.vozIndex==="number") ? c.vozIndex : null,
+      vozNome:  c.vozNome || null
+    };
+    return this._cache;
+  },
+  set(patch){
+    const c = Object.assign(this.get(), patch||{});
+    if(typeof c.rate==="number") c.rate = Math.min(AUDIO_RATE_MAX, Math.max(AUDIO_RATE_MIN, c.rate));
+    this._cache = c;
+    try{ localStorage.setItem(AUDIO_CFG_KEY, JSON.stringify(c)); }catch(e){}
+    return c;
+  }
+};
+// Lista as vozes pt-BR disponíveis; se não houver nenhuma, devolve todas.
+function carregarVozes(){
+  let vozes = [];
+  try{ vozes = window.speechSynthesis.getVoices() || []; }catch(e){}
+  const ptBR = vozes.filter(v => /^pt([-_]br)?/i.test(v.lang));
+  return ptBR.length ? ptBR : vozes;
+}
+// Nome amigável de uma voz (tira prefixos de fabricante e sufixos técnicos).
+function nomeAmigavelVoz(v){
+  let n = String((v&&v.name) || "Voz");
+  n = n.replace(/^(Microsoft|Google|Apple)\s+/i, "");
+  n = n.split(/\s[-–—]\s|\(/)[0].trim();
+  return n || String((v&&v.name) || "Voz");
+}
+
 // Módulo de LEITURA EM VOZ ALTA (TTS) — Web Speech API, sem arquivos, offline.
 // Fala uma SEQUÊNCIA de trechos com pausas controladas (encadeando utterances),
 // com voz infantil (lenta e um pouco mais aguda) e voz feminina pt-BR se houver.
@@ -1019,13 +1081,25 @@ const Fala = {
       return cand.find(v=>femininas.test(v.name)) || cand[0];
     }catch(e){ return null; }
   },
-  // aplica os parâmetros de voz infantil (com variação p/ trechos "animados")
-  _config(u, animado){
-    u.lang = "pt-BR";
+  // resolve a voz configurada pelo aluno (por nome, depois índice) ou escolhe uma pt-BR.
+  vozAtual(){
+    const cfg = AudioCfg.get();
+    try{
+      const vs = window.speechSynthesis.getVoices() || [];
+      if(cfg.vozNome){ const byName = vs.find(v=>v.name===cfg.vozNome); if(byName) return byName; }
+      if(cfg.vozIndex!=null && vs[cfg.vozIndex]) return vs[cfg.vozIndex];
+    }catch(e){}
     if(!this.voz) this.voz = this.escolherVoz();
-    if(this.voz) u.voice = this.voz;
-    u.rate = animado ? 0.9 : 0.75;   // 0.75 = mais lento e compreensível p/ 5–6 anos
-    u.pitch = animado ? 1.35 : 1.2;  // levemente agudo/amigável; mais animado no acerto
+    return this.voz;
+  },
+  // aplica os parâmetros de voz do aluno (com leve variação p/ trechos "animados")
+  _config(u, animado){
+    const cfg = AudioCfg.get();
+    u.lang = "pt-BR";
+    const voz = this.vozAtual();
+    if(voz){ u.voice = voz; if(voz.lang) u.lang = voz.lang; }
+    u.rate  = animado ? Math.min(AUDIO_RATE_MAX, cfg.rate + 0.1) : cfg.rate;
+    u.pitch = animado ? Math.min(2, cfg.pitch + 0.15) : cfg.pitch;
     u.volume = 1;
   },
   // Fala uma lista de segmentos: [{texto, pausa(ms), animado?}, ...]
@@ -1313,6 +1387,7 @@ function render(){
     case "interpRead": renderInterpRead(); break;
     case "modo":      renderModoSelect(); break;
     case "historiaLoading": renderHistoriaLoading(); break;
+    case "historiaErro": renderHistoriaErro(); break;
     case "historia":  renderHistoria(); break;
     case "historiaDone": renderHistoriaDone(); break;
     case "exercise":  renderExercise(); break;
@@ -2045,6 +2120,7 @@ function renderExercise(){
         ${ex.nivel?`<span class="pill-tag" style="background:${nivelDificuldadeCor(ex.nivel)}">${nivelDificuldadeLabel(ex.nivel)} • +${xpDaQuestao(ex)} XP</span>`:''}
         ${(getLesson()&&getLesson().tipo==="interpretacao_texto")?`<button class="btn blue small" style="width:auto;margin-left:auto;padding:6px 10px" onclick="App.abrirTextoInterp()">📖 Ver o texto</button>`:''}
       </div>
+      ${Fala.ok()?`<div style="display:flex;justify-content:flex-end;margin-bottom:6px">${velocidadeMiniHtml()}</div>`:''}
       <div class="q-prompt">${esc(ex.enunciado)}</div>
       ${Fala.ok()?`<div style="text-align:center;margin:-4px 0 14px">${botaoFala('lerQuestao','Ouvir a pergunta')}</div>`:''}
       <div id="optWrap">${body}</div>
@@ -2455,7 +2531,7 @@ async function iniciarModoHistoria(){ await prepararHistoria(); }
 
 // ----- Carrega/gera a história e inicia a aventura -----
 let histLoadTimer = null;
-const HIST_LOAD_MSGS = ["Construindo o cenário...","Apresentando os personagens...","Preparando os desafios...","Escrevendo a aventura..."];
+const HIST_LOAD_MSGS = ["✨ Criando o cenário da aventura...","🧙 Apresentando os personagens...","⚔️ Preparando os desafios...","📖 Finalizando sua história..."];
 async function prepararHistoria(){
   const l=getLesson();
   if(!l || !l.exercicios || !l.exercicios.length){ toast("Esta lição ainda não tem exercícios."); return; }
@@ -2471,16 +2547,31 @@ async function prepararHistoria(){
   }
   // 3) sem IA neste aparelho → não dá para gerar → cai no clássico
   if(!iaConfigurada()){ toast("Modo História indisponível (IA não configurada). Vamos no Modo Clássico! 📝"); iniciarModoClassico(); return; }
-  // 4) gera pela IA (timeout de 20s dentro de chamarIA); se falhar, oferece o clássico
+  // 4) gera pela IA (timeout de 60s dentro de gerarHistoriaIA); se falhar, oferece
+  //    "Tentar novamente" ou "Usar Modo Clássico" numa tela de erro (não decide sozinho).
   try{
     const h = await gerarHistoriaIA(l);
     historiaCache[lid]=h; salvarHistoriaGerada(lid, h);
     if(ativo()){ State._historia=h; iniciarHistoriaComStory(); }
   }catch(e){
     console.warn("Falha ao gerar história:", e);
-    if(ativo()){ toast("Não consegui criar a aventura agora. Vamos no Modo Clássico! 📝"); iniciarModoClassico(); }
+    if(ativo()){ clearInterval(histLoadTimer); State.tela="historiaErro"; render(); }
   }
 }
+// Tela de erro da geração de história: deixa o aluno tentar de novo ou seguir no clássico.
+function renderHistoriaErro(){
+  const s=subjById(State.subj)||{cor:"#9b59b6"};
+  app.innerHTML = `<div class="screen active">
+    <div class="content" style="display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;background:linear-gradient(#f3e9ff,#ffffff)">
+      <div style="font-size:64px">📖💤</div>
+      <h1 style="color:#9b59b6;font-size:22px;margin:10px 0">A aventura demorou a chegar</h1>
+      <p style="color:#777;font-size:14px;margin-bottom:20px;max-width:320px">Não consegui criar a história desta vez. Você pode tentar de novo ou estudar no Modo Clássico. 📝</p>
+      <button class="btn" style="max-width:320px;background:#9b59b6;box-shadow:0 4px 0 #7d3f98" onclick="App.tentarHistoriaNovamente()">🔄 Tentar novamente</button>
+      <button class="btn gray" style="max-width:320px;margin-top:12px" onclick="App.iniciarModoClassico()">📝 Usar Modo Clássico</button>
+    </div>
+  </div>`;
+}
+function tentarHistoriaNovamente(){ prepararHistoria(); }
 function iniciarHistoriaComStory(){
   clearInterval(histLoadTimer);
   const l=getLesson(); if(!l) return;
@@ -2505,7 +2596,7 @@ function iniciarRotacaoHistLoad(){
     State._histLoadMsg=(State._histLoadMsg||0)+1;
     const el=document.getElementById("histMsg");
     if(el) el.textContent = HIST_LOAD_MSGS[State._histLoadMsg%HIST_LOAD_MSGS.length];
-  }, 1800);
+  }, 3000);
 }
 
 // ----- Geração da história pela IA -----
@@ -2513,50 +2604,41 @@ async function gerarHistoriaIA(l){
   const pub = ALUNO ? descreverPublico(ALUNO)
     : (function(){ const p=descreverPublicoLicao(l); return { ano:p.ano, nivel:nomeNivel(p.nivelId), idade:p.idade, frase:p.frase }; })();
   const nQ = l.exercicios.length;
-  const questoes = l.exercicios.map((ex,i)=>{
-    if(ex.tipo==="fill") return `${i}. ${ex.enunciado} (Resposta correta: ${ex.resposta||""})`;
-    const opc=(ex.opcoes||[]).map((o,j)=>`${String.fromCharCode(65+j)}) ${o}`).join("  ");
-    const correta = ex.opcoes ? ex.opcoes[ex.correta] : "";
-    return `${i}. ${ex.enunciado} | Opções: ${opc} | Correta: ${correta}`;
-  }).join("\n");
+  // Geração em duas etapas: aqui geramos APENAS a narrativa (cenário + capítulos).
+  // Os exercícios já existentes da lição são combinados depois (normalizarHistoria →
+  // questao_index aponta para l.exercicios[i]), então NÃO pedimos exercícios à IA.
+  // Passamos só os temas curtos das questões como contexto para a narrativa engatar.
+  const temas = l.exercicios.map((ex,i)=>`${i}. ${String(ex.enunciado||"").slice(0,90)}`).join("\n");
   const prompt =
 `Você é um escritor criativo e professor do ${pub.ano} do ${pub.nivel}.
-Crie uma história interativa curta (aventura, mistério ou fantasia) para uma criança de ${pub.idade} anos, onde cada capítulo apresenta uma situação que só pode ser resolvida respondendo uma questão educacional.
+Crie a narrativa de uma história interativa curta (aventura, mistério ou fantasia) para
+uma criança de ${pub.idade} anos, com EXATAMENTE ${nQ} capítulos (um por desafio).
+NÃO crie exercícios ou perguntas — apenas a narrativa. Cada capítulo é uma cena curta
+que leva a um desafio; o desafio educacional será encaixado depois.
 
-A história deve:
-- Ter um protagonista com nome divertido que a criança controla
-- Ser ambientada em um cenário adequado à faixa etária (floresta mágica, espaço sideral, fundo do mar, castelo, cidade futurista, etc.)
-- Ter ${nQ} capítulos, um para cada questão
-- Cada capítulo deve apresentar um desafio narrativo que só é resolvido com a resposta correta da questão educacional
-- Se o aluno acertar: a história avança positivamente
-- Se o aluno errar: a história tem um contratempo mas continua
-- Ter um desfecho épico se o aluno acertar mais de 70% das questões
-- Ter um desfecho encorajador se acertar menos de 70%
+Regras:
+- Protagonista com nome divertido que a criança controla.
+- Cenário adequado à faixa etária (floresta mágica, espaço, fundo do mar, castelo, cidade futurista...).
+- Se acertar: a história avança positivamente. Se errar: um contratempo leve, sem punição severa.
+- IMPORTANTE: cada narrativa (intro/acerto/erro) deve ter NO MÁXIMO 100 palavras. Seja conciso.
 
-Use as seguintes questões educacionais como base para os desafios:
-${questoes}
+Temas dos ${nQ} desafios (use como inspiração da cena, na mesma ordem):
+${temas}
 
-Conteúdo da lição: ${l.texto||""}
-
-Retorne APENAS um JSON válido:
+Retorne APENAS um JSON compacto, sem quebras de linha desnecessárias:
 {
-  "titulo": "título da história",
-  "cenario": "descrição do cenário em 2 frases",
-  "protagonista": "nome do personagem",
-  "capitulos": [
-    {
-      "narrativa_intro": "texto da situação que leva à questão (2-3 frases)",
-      "questao_index": 0,
-      "narrativa_acerto": "o que acontece na história se acertar (1-2 frases)",
-      "narrativa_erro": "o que acontece na história se errar (1-2 frases, sem punição severa)"
-    }
-  ],
-  "desfecho_heroi": "texto final se acertar mais de 70% (3-4 frases épicas)",
-  "desfecho_aprendiz": "texto final encorajador se acertar menos de 70% (3-4 frases)"
+"titulo":"...",
+"cenario":"cenário em 1-2 frases",
+"protagonista":"nome",
+"capitulos":[{"narrativa_intro":"cena que leva ao desafio (2-3 frases)","narrativa_acerto":"se acertar (1-2 frases)","narrativa_erro":"se errar (1-2 frases)"}],
+"desfecho_heroi":"final épico se acertar +70% (2-3 frases)",
+"desfecho_aprendiz":"final encorajador se acertar -70% (2-3 frases)"
 }`;
-  const txt = await chamarIA(prompt, 20000);
+  const txt = await chamarIA(prompt, 60000);
   const h = parseHistoriaIA(txt);
   if(!h || !Array.isArray(h.capitulos) || !h.capitulos.length) throw new Error("A IA não retornou uma história válida.");
+  // Garante a ligação capítulo→questão pela ordem (a IA não precisa mais mandar questao_index).
+  h.capitulos.forEach((c,i)=>{ if(c && typeof c.questao_index!=="number") c.questao_index=i; });
   return h;
 }
 function parseHistoriaIA(texto){
@@ -2843,8 +2925,9 @@ const LeitorTexto = {
     destacarParagrafo(this.idx);
     try{
       const u=new SpeechSynthesisUtterance(adaptarTextoFala(this.paras[this.idx]).slice(0,4000));
-      u.lang="pt-BR"; if(!Fala.voz)Fala.voz=Fala.escolherVoz(); if(Fala.voz)u.voice=Fala.voz;
-      u.rate=0.8; u.pitch=1.1; u.volume=1; // parâmetros de leitura de texto
+      const cfg=AudioCfg.get(); const voz=Fala.vozAtual();
+      u.lang="pt-BR"; if(voz){ u.voice=voz; if(voz.lang)u.lang=voz.lang; }
+      u.rate=cfg.rate; u.pitch=cfg.pitch; u.volume=1; // parâmetros configuráveis pelo aluno
       const seguir=()=>{ if(!this.ativo) return; this.idx++; this._timer=setTimeout(()=>this._falar(), 500); }; // pausa 0.5s
       u.onend=seguir; u.onerror=seguir;
       window.speechSynthesis.speak(u);
@@ -2965,6 +3048,97 @@ function fatoCuriosoGenero(g){
 
 // ----- PERFIL -----
 function openProfile(){ State.tela="profile"; render(); }
+// Painel "🔊 Configurações de Áudio" (perfil do aluno): velocidade, voz e tom.
+function audioConfigPanelHtml(){
+  if(!Fala.ok()) return "";
+  const cfg = AudioCfg.get();
+  const perto = (a,b)=> Math.abs(a-b) < 0.03;
+  // velocidade: presets + slider fino
+  const presetsVel = [
+    { v:0.6,  ico:"🐢", nome:"Devagar", rec:"1º ao 3º ano" },
+    { v:0.85, ico:"🚶", nome:"Normal",  rec:"4º ao 6º ano" },
+    { v:1.1,  ico:"🏃", nome:"Rápido",  rec:"7º ao EM" }
+  ].map(p=>`<button class="audio-opt ${perto(cfg.rate,p.v)?'ativo':''}" onclick="App.setAudioRate(${p.v})">
+      ${p.ico} ${p.nome}<span class="sub">${p.rec}</span></button>`).join("");
+  const slider = `<div style="margin:2px 0 12px">
+    <input type="range" min="${AUDIO_RATE_MIN}" max="${AUDIO_RATE_MAX}" step="0.05" value="${cfg.rate}"
+      style="width:100%" oninput="App.setAudioRateSlider(this.value)">
+    <div style="text-align:center;font-size:12px;color:#999">Ajuste fino: <b id="audioRateVal">${cfg.rate.toFixed(2)}</b>×</div>
+  </div>`;
+  // tom (pitch): 3 opções
+  const presetsTom = [
+    { v:0.9, nome:"Grave" }, { v:1.1, nome:"Normal" }, { v:1.3, nome:"Agudo" }
+  ].map(p=>`<button class="audio-opt ${perto(cfg.pitch,p.v)?'ativo':''}" onclick="App.setAudioPitch(${p.v})">${p.nome}</button>`).join("");
+  // vozes disponíveis
+  const vozes = carregarVozes();
+  let vozHtml;
+  if(!vozes.length){
+    vozHtml = `<p style="font-size:12px;color:#999">Nenhuma voz detectada neste aparelho. O sistema usará a voz padrão do navegador.</p>`;
+  } else {
+    vozHtml = vozes.map((v,i)=>{
+      const sel = cfg.vozNome ? (v.name===cfg.vozNome) : false;
+      return `<div class="voz-row ${sel?'ativo':''}">
+        <span class="vnome">${sel?'✅ ':''}${esc(nomeAmigavelVoz(v))} <span style="font-weight:500;color:#aaa;font-size:11px">(${esc(v.lang||'')})</span></span>
+        ${sel?'':`<button class="voz-pick" onclick="App.setAudioVoz(${i})">Usar</button>`}
+        <button class="voz-test" onclick="App.testarVoz(${i})">🔊 Testar</button>
+      </div>`;
+    }).join("");
+  }
+  return `
+    <div class="sec-title">🔊 Configurações de Áudio</div>
+    <p style="font-size:12px;color:#999;margin:-2px 0 8px">Personalize como o app lê os textos e as perguntas para você.</p>
+    <label>Velocidade de leitura</label>
+    <div class="audio-seg">${presetsVel}</div>
+    ${slider}
+    <label>Tom da voz</label>
+    <div class="audio-seg">${presetsTom}</div>
+    <label>Voz</label>
+    <div style="margin-top:6px">${vozHtml}</div>`;
+}
+// Handlers das preferências de áudio
+function setAudioRate(v){ AudioCfg.set({ rate:+v }); render(); }
+function setAudioRateSlider(v){
+  AudioCfg.set({ rate:+v });
+  const el=document.getElementById("audioRateVal"); if(el) el.textContent=(+v).toFixed(2);
+  // reflete no destaque dos presets sem re-renderizar (mantém o foco no slider)
+  document.querySelectorAll(".audio-seg")[0] && document.querySelectorAll(".audio-seg")[0]
+    .querySelectorAll(".audio-opt").forEach(b=>{
+      const m=/setAudioRate\(([\d.]+)\)/.exec(b.getAttribute("onclick")||"");
+      if(m) b.classList.toggle("ativo", Math.abs((+m[1])-(+v))<0.03);
+    });
+}
+function setAudioPitch(v){ AudioCfg.set({ pitch:+v }); render(); }
+function setAudioVoz(i){
+  const vs=carregarVozes(); const v=vs[+i]; if(!v) return;
+  const gi=(function(){ try{ return (window.speechSynthesis.getVoices()||[]).indexOf(v); }catch(e){ return -1; } })();
+  Fala.voz=v; AudioCfg.set({ vozNome:v.name, vozIndex: gi>=0?gi:null }); render();
+}
+function testarVoz(i){
+  const vs=carregarVozes(); const v=vs[+i]; if(!v || !Fala.ok()) return;
+  const cfg=AudioCfg.get();
+  try{
+    window.speechSynthesis.cancel();
+    const u=new SpeechSynthesisUtterance("Olá! Eu sou a sua voz de leitura. Vamos aprender juntos?");
+    u.voice=v; u.lang=v.lang||"pt-BR"; u.rate=cfg.rate; u.pitch=cfg.pitch; u.volume=1;
+    window.speechSynthesis.speak(u);
+  }catch(e){}
+}
+// controle rápido de velocidade [🐢][🚶][🏃] na tela de questões (sem sair do perfil)
+function velocidadeMiniHtml(){
+  if(!Fala.ok()) return "";
+  const r=AudioCfg.get().rate;
+  const b=(v,ico,lbl)=>`<button class="vel-btn ${Math.abs(r-v)<0.03?'ativo':''}" data-rate="${v}"
+    onclick="App.setAudioRateRapido(${v})" title="${lbl}" aria-label="Velocidade ${lbl}">${ico}</button>`;
+  return `<div class="vel-mini">${b(0.6,'🐢','devagar')}${b(0.85,'🚶','normal')}${b(1.1,'🏃','rápido')}</div>`;
+}
+function setAudioRateRapido(v){
+  AudioCfg.set({ rate:+v });
+  document.querySelectorAll(".vel-btn").forEach(b=>{
+    b.classList.toggle("ativo", Math.abs((+b.getAttribute("data-rate"))-(+v))<0.03);
+  });
+  if(Fala.falando()){ Fala.parar(); lerQuestao(); } // re-lê já na nova velocidade
+}
+
 function renderProfile(){
   let rows = SUBJECTS.map(s=>{
     const d=PROFILE.disciplinas[s.id];
@@ -3026,6 +3200,8 @@ function renderProfile(){
 
       <div class="sec-title">Progresso por disciplina</div>
       ${rows}
+
+      ${audioConfigPanelHtml()}
 
       <button class="btn ${PROFILE.som?'blue':'gray'}" style="margin-top:14px" onclick="App.toggleSound()">${PROFILE.som?'🔊 Som: Ligado':'🔇 Som: Desligado'}</button>
       ${Fala.ok()?`<button class="btn ${autoLerLigado()?'blue':'gray'}" style="margin-top:10px" onclick="App.toggleAutoLer()">${autoLerLigado()?'🗣️ Ler perguntas sozinho: Ligado':'🤫 Ler perguntas sozinho: Desligado'}</button>`:''}
@@ -3893,6 +4069,39 @@ function mensagemErroIA(err){
 }
 
 // Monta o prompt e chama a IA para gerar exercícios (painel do professor)
+// Disciplinas de língua estrangeira: os exercícios devem ensinar o próprio idioma,
+// não apenas o tema em português. (Hoje só há Inglês, mas fica pronto p/ futuras línguas.)
+const LINGUAS_ESTRANGEIRAS = { ing: "inglesa" };
+function ehLinguaEstrangeira(subjId){ return Object.prototype.hasOwnProperty.call(LINGUAS_ESTRANGEIRAS, subjId); }
+// Bloco de instruções extra p/ o prompt quando a disciplina é uma língua estrangeira.
+function blocoLinguaEstrangeira(subjId, tema){
+  if(!ehLinguaEstrangeira(subjId)) return "";
+  const nomeDisc = (subjById(subjId)||{}).nome || "Inglês";
+  const t = (tema||"").trim();
+  return `
+
+DISCIPLINA: ${nomeDisc}
+Esta é uma aula de língua ${LINGUAS_ESTRANGEIRAS[subjId]}. Os exercícios DEVEM:
+- Ensinar o vocabulário do tema em inglês (palavras, expressões, frases)
+- Incluir exercícios de tradução (português → inglês e inglês → português)
+- Apresentar frases e diálogos em inglês relacionados ao tema
+- Ensinar pronúncia através de exemplos fonéticos simples
+- Usar o tema como contexto para ensinar estruturas da língua inglesa${t ? `
+- Para o tema "${t}": ensine o vocabulário específico do tema em inglês, com frases
+  e mini-diálogos usando esse vocabulário, adequados ao ano do aluno.` : ""}
+- Para 'Alimentos e receitas': ensinar os nomes dos alimentos em inglês, verbos de
+  culinária em inglês (to cook, to bake, to fry, to mix), frases como 'I like...',
+  'My favorite food is...', receitas simples em inglês com vocabulário adequado ao ano do aluno
+
+Distribua os 15 exercícios assim:
+- 5 fáceis: identificar/traduzir palavras isoladas em inglês
+- 5 intermediários: completar frases em inglês, escolher a tradução correta
+- 5 difíceis: interpretar pequenos textos em inglês, construir frases
+
+O enunciado dos exercícios pode ser em português, mas as opções e respostas devem
+misturar inglês e português conforme o objetivo.`;
+}
+
 async function gerarExerciciosIA(){
   syncTextInputs();
   const L=Teacher.editingLesson;
@@ -3907,6 +4116,7 @@ async function gerarExerciciosIA(){
   const blocoMaterial = material
     ? `\n\nMATERIAL DE APOIO ANEXADO (priorize este conteúdo):\n${material}`
     : "";
+  const blocoLingua = blocoLinguaEstrangeira(Teacher.subj, L.titulo);
   const prompt =
 `Você é um professor do ${pub.ano} do ${nomeNivel(pub.nivelId)} (Sistema Positivo).
 Com base no material abaixo, gere exatamente 15 exercícios divididos em:
@@ -3932,7 +4142,7 @@ Retorne APENAS um JSON válido, sem explicações, no formato:
   {"nivel": "intermediario", "tipo": "verdadeiro_falso", "enunciado": "...", "resposta_correta": "verdadeiro"},
   {"nivel": "dificil", "tipo": "completar_lacunas", "enunciado": "O ___ é usado quando...", "resposta_correta": "palavra correta"}
 ]
-O campo "nivel" deve ser exatamente "facil", "intermediario" ou "dificil".
+O campo "nivel" deve ser exatamente "facil", "intermediario" ou "dificil".${blocoLingua}
 
 CONTEÚDO DA LIÇÃO:
 ${conteudo}${blocoMaterial}`;
@@ -4653,7 +4863,7 @@ window.App = {
   goHome, openSubject, openLesson, startExercises, selectOpt, onFillInput,
   checkAnswer, nextExercise, continuarAposExplicacao, confirmQuit, openProfile, resetProgress, toggleSound,
   // modo história (aluno)
-  escolherModo, iniciarModoClassico, iniciarModoHistoria, continuarHistoria,
+  escolherModo, iniciarModoClassico, iniciarModoHistoria, continuarHistoria, tentarHistoriaNovamente,
   // interpretação de texto (aluno)
   ouvirTextoInterp, pausarTextoInterp, retomarTextoInterp, pararTextoInterp,
   sairInterpRead, iniciarQuestoesInterp, abrirTextoInterp, fecharTextoInterp,
@@ -4661,6 +4871,8 @@ window.App = {
   onPerfilNivel, salvarDadosEscolares,
   // leitura em voz alta (TTS)
   lerResumo, lerQuestao, lerExplicacao,
+  // configurações de áudio (voz/velocidade/tom)
+  setAudioRate, setAudioRateSlider, setAudioPitch, setAudioVoz, testarVoz, setAudioRateRapido,
   // autenticação
   irTela, logout, toggleSenha,
   irCadastroAluno, submitLoginAluno, onNivelCadAluno, submitCadastroAluno,
