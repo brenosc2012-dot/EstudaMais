@@ -1006,7 +1006,7 @@ function definirAlunoLogado(a){ ALUNO = normalizarAluno(a); PROFILE = ALUNO; }
 
 // Persiste o progresso do aluno: cache local (offline) + write-through no Firestore.
 function saveProfile(){
-  if(DEMO){ // modo demo: progresso só no sessionStorage, nunca no Firestore
+  if(ehModoDemo()){ // modo demo real: progresso só no sessionStorage, nunca no Firestore
     if(ALUNO){ try{ sessionStorage.setItem(DEMO_PROGRESS_KEY, JSON.stringify(ALUNO)); }catch(_){} }
     return;
   }
@@ -1023,7 +1023,12 @@ function saveProfile(){
 }
 
 // ----- Sessão local (quem está logado neste aparelho) -----
-function salvarSessao(){ try{ if(SESSAO) localStorage.setItem(SESSAO_KEY, JSON.stringify(SESSAO)); else localStorage.removeItem(SESSAO_KEY); }catch(e){} }
+function salvarSessao(){
+  // Ao estabelecer uma sessão REAL (login/cadastro), sai do modo demo por completo,
+  // para que a aba não fique "presa" no demo e bloqueie salvamentos reais no Firestore.
+  if(SESSAO){ sairModoDemoReal(); }
+  try{ if(SESSAO) localStorage.setItem(SESSAO_KEY, JSON.stringify(SESSAO)); else localStorage.removeItem(SESSAO_KEY); }catch(e){}
+}
 function carregarSessao(){ try{ const r=localStorage.getItem(SESSAO_KEY); if(r) SESSAO=JSON.parse(r); }catch(e){ SESSAO=null; } }
 function logout(){
   if(DEMO){ ALUNO=null; PROFESSOR=null; PROFILE={}; State.tela="demoWelcome"; render(); return; } // volta à seleção de perfil demo
@@ -1043,8 +1048,23 @@ function detectarDemo(){
   if(DEMO){ try{ sessionStorage.setItem("modoDemo","true"); }catch(_){} }
   return DEMO;
 }
-// Bloqueia (best-effort) escritas no Firestore quando em demo.
-function demoBloqueiaEscrita(){ return DEMO; }
+// Verdadeiro só quando é REALMENTE uma sessão demo — ou seja, o modo demo está ligado E
+// o usuário logado é um perfil demo (id com prefixo "demo_"), ou ninguém está logado ainda.
+// Isso evita que uma flag "modoDemo" esquecida na aba bloqueie o salvamento de um
+// professor/aluno REAL (que tem id do Firestore), causando "salvamento silencioso" local.
+function ehModoDemo(){
+  if(!DEMO) return false;
+  const profReal = !!(PROFESSOR && String(PROFESSOR.id||"").indexOf("demo_")!==0);
+  const aluReal  = !!(ALUNO && String(ALUNO.id||"").indexOf("demo_")!==0);
+  if(profReal || aluReal) return false; // há um usuário real logado → NÃO é demo
+  return true;
+}
+// Limpa completamente o modo demo ao estabelecer uma sessão real (login/cadastro).
+function sairModoDemoReal(){
+  DEMO=false;
+  try{ sessionStorage.removeItem("modoDemo"); sessionStorage.removeItem("demoDestino"); }catch(_){}
+  try{ sessionStorage.removeItem("estudamais_demo_progresso"); sessionStorage.removeItem("estudamais_demo_correcoes"); }catch(_){}
+}
 
 // Perfil fictício do ALUNO demo (João Vitor, 5º ano A). XP/streak/medalhas p/ mostrar gamificação.
 function demoAlunoDoc(){
@@ -3927,7 +3947,7 @@ function editLesson(id){
 }
 async function deleteLesson(id){
   if(!confirm("Excluir esta lição e todos os seus exercícios?")) return;
-  if(DEMO){ removeLicaoLocal(id); toast("Lição removida (modo demo)."); render(); return; }
+  if(ehModoDemo()){ removeLicaoLocal(id); toast("Lição removida (modo demo)."); render(); return; }
   toast("Excluindo...");
   try{
     await db.collection("licoes").doc(id).delete();
@@ -4958,17 +4978,29 @@ async function saveLesson(){
     materialTexto: materialTexto,
     historiaHabilitada: historiaHabilitada
   };
-  // MODO DEMO: "criar lição de teste" salva apenas localmente (nunca no Firestore).
-  if(DEMO){
+  // ----- Diagnóstico (abra o console para acompanhar o salvamento) -----
+  const flagDemo = (function(){ try{ return sessionStorage.getItem("modoDemo"); }catch(_){ return null; } })();
+  console.log("Iniciando salvamento da lição...");
+  console.log("Professor logado:", PROFESSOR ? PROFESSOR.id : "(nenhum)");
+  console.log("Modo demo ativo (flag):", flagDemo, "| DEMO:", DEMO, "| sessão demo real:", ehModoDemo());
+  console.log("Dados a salvar:", JSON.stringify({ disciplina:payload.disciplina, titulo:payload.titulo, tipo:payload.tipo, turma:payload.turma, ano:payload.ano, nivel:payload.nivel, nExercicios:(payload.exercicios||[]).length }));
+
+  // MODO DEMO REAL: "criar lição de teste" salva apenas localmente (nunca no Firestore).
+  // Só entra aqui se for MESMO uma sessão demo (perfil demo_*), nunca um professor real.
+  if(ehModoDemo()){
     const idLocal = L.id || ("demo_novo_"+Math.random().toString(36).slice(2,8));
     removeLicaoLocal(idLocal);
     if(!DATA[disc]) DATA[disc]=[];
     DATA[disc].push({ id:idLocal, titulo:L.titulo, texto:conteudo, exercicios:L.exercicios, resumoIA:"", explicacoes:{}, turma:turmaN, ano:anoN, nivel:nivelN, materialNomes:materialNomes, materialTipos:materialTipos, materialTexto:materialTexto, historiaHabilitada:historiaHabilitada, tipo:tipo, textoGerado:payload.textoGerado, tituloTexto:payload.tituloTexto, generoTextual:payload.generoTextual, tema:payload.tema, isDemo:true });
     Teacher.editingLesson=null; Teacher.tab="licoes";
+    console.log("Salvo apenas localmente (modo demo). id local:", idLocal);
     toast("Lição de teste criada (modo demo — não salva na nuvem). ✅");
     render();
     return;
   }
+  // isDemo NUNCA é enviado ao Firestore em salvamento real (só existe no ramo demo acima).
+  if(!db){ console.error("Erro ao salvar lição: Firestore (db) indisponível."); toast("❌ Erro ao salvar: sem conexão com o banco. Tente novamente."); return; }
+
   toast("Salvando...");
   try{
     // `L.id` pode já existir numa lição NOVA (id gerado ao anexar material) — por isso
@@ -4979,11 +5011,12 @@ async function saveLesson(){
         resumoIA: "",
         explicacoes: firebase.firestore.FieldValue.delete()
       }, { merge:true });
+      console.log("Lição atualizada no Firestore. ID:", L.id);
     } else { // nova (grava no id pré-gerado, se houver, senão cria um novo)
       payload.resumoIA = "";
       payload.criadoEm = firebase.firestore.FieldValue.serverTimestamp();
-      if(L.id){ await db.collection("licoes").doc(L.id).set(payload); }
-      else { const ref = await db.collection("licoes").add(payload); L.id = ref.id; }
+      if(L.id){ await db.collection("licoes").doc(L.id).set(payload); console.log("Lição salva no Firestore (id pré-gerado). ID:", L.id); }
+      else { const ref = await db.collection("licoes").add(payload); L.id = ref.id; console.log("Lição salva com ID:", ref.id); }
     }
     L._persistido = true;
     // limpa o cache (memória + nuvem) do conteúdo gerado — o material pode ter mudado
@@ -4996,10 +5029,11 @@ async function saveLesson(){
     DATA[disc].push({ id:L.id, titulo:L.titulo, texto:conteudo, exercicios:L.exercicios, resumoIA:"", explicacoes:{}, turma:turmaN, ano:anoN, nivel:nivelN, materialNomes:materialNomes, materialTipos:materialTipos, materialTexto:materialTexto, historiaHabilitada:historiaHabilitada, tipo:tipo, textoGerado:payload.textoGerado, tituloTexto:payload.tituloTexto, generoTextual:payload.generoTextual, tema:payload.tema });
 
     Teacher.editingLesson=null; Teacher.tab="licoes";
-    toast("Lição salva com sucesso! ✅");
+    toast("✅ Lição salva com sucesso!");
     render();
   }catch(e){
-    toast("Erro ao salvar. Verifique a conexão e tente novamente.");
+    console.error("Erro ao salvar lição:", e);
+    toast("❌ Erro ao salvar: " + ((e&&e.message)||"tente novamente") );
   }
 }
 

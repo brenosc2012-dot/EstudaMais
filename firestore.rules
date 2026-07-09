@@ -32,6 +32,9 @@ service cloud.firestore {
     match /premiacoes/{id}         { allow read, write: if true; }
     match /premiacoes_alunos/{id}  { allow read, write: if true; }
 
+    // Correções de provas (corretor por câmera / IA)
+    match /correcoes/{id}          { allow read, write: if true; }
+
     // Configuração do app (inclui a chave da OpenAI cadastrada no painel Admin)
     match /config/{id}          { allow read, write: if true; }
   }
