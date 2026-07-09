@@ -3789,7 +3789,7 @@ const Teacher = { tab:"licoes", subj:"mat", editingLesson:null, gerando:false, r
   // geração de lição de interpretação de texto (Português)
   interp:{ gerando:false, erro:"" },
   // corretor de provas por câmera (OpenAI Vision)
-  corretor:{ view:"form", imagens:[], alunoId:"", subj:"mat", licaoId:"", valor:"10",
+  corretor:{ view:"form", imagens:[], alunoId:"", subj:"mat", licaoId:"", valor:"10", gabarito:"",
     carregando:false, msgIdx:0, erro:"", resultado:null, ehDemo:false, meta:null,
     alunos:[], alunosCarregados:false, historico:[], histCarregado:false } };
 
@@ -5524,14 +5524,38 @@ REGRAS IMPORTANTES:
 const CORRETOR_JSON_FORMATO =
 `Retorne APENAS um JSON válido (aspas duplas), sem texto ao redor, no formato exato:
 {"totalQuestoes":0,"questoesCorretas":0,"questoesIncorretas":0,"questoesParciais":0,"notaFinal":0,"notaMaxima":0,"percentualAcerto":0,"conceito":"Excelente|Ótimo|Bom|Regular|Insuficiente","questoes":[{"numero":1,"respostaAluno":"B) O denominador","respostaCorreta":"O denominador","status":"correta|incorreta|parcial|em_branco","pontuacao":0,"pontuacaoMaxima":0,"observacao":"comentário do professor"}],"feedbackGeral":"análise em 2-3 frases","pontosMelhoria":["..."],"pontosForca":["..."]}`;
-// Remove o rótulo "B) " e normaliza o texto para comparar respostas por conteúdo.
-function limparRespTexto(s){ return norm(String(s||"").replace(/^\s*[A-Da-d]\s*[\)\.\-:]\s*/,"").trim()); }
+// Conteúdo textual de uma resposta, SEM o rótulo. Se sobrar só uma letra A-D (ou vazio),
+// significa que a IA mandou apenas o label — então NÃO há conteúdo comparável (retorna "").
+function conteudoResp(raw){
+  let t=String(raw||"").replace(/^\s*[A-Da-d]\s*[\)\.\-:]\s*/,"").trim();
+  if(/^[A-Da-d]$/.test(t)) t="";           // ex.: "D" isolado → não é conteúdo
+  return norm(t);
+}
+// Extrai só o rótulo (A/B/C/D) de "B) O denominador" ou de um "B" isolado.
+function labelDe(s){
+  s=String(s||"").trim();
+  const m=s.match(/^([A-Da-d])\s*[\)\.\-:]/); if(m) return m[1].toUpperCase();
+  if(/^[A-Da-d]$/.test(s)) return s.toUpperCase();
+  return "";
+}
 // Compara a resposta do aluno com a correta pelo CONTEÚDO (nunca pelo label A/B/C/D).
 function respostasBatem(alunoRaw, corretaRaw){
-  const a=limparRespTexto(alunoRaw), c=limparRespTexto(corretaRaw);
+  const a=conteudoResp(alunoRaw), c=conteudoResp(corretaRaw);
   if(!a || !c) return false;
   if(a===c) return true;
   return c.length>=2 && (a.indexOf(c)>=0 || c.indexOf(a)>=0);
+}
+// Converte "C, B, D, B, B" em ["C","B","D","B","B"].
+function parseGabarito(s){ return (String(s||"").toUpperCase().match(/[A-D]/g)) || []; }
+// Decide se a questão está correta. REGRA PRINCIPAL = conteúdo; label só como fallback
+// (quando a IA não devolveu texto comparável) usando o gabarito oficial por label.
+function avaliarQuestaoCorrecao(q, gabLabel){
+  const cA=conteudoResp(q.respostaAluno), cC=conteudoResp(q.respostaCorreta);
+  const lA=labelDe(q.respostaAluno), lC=gabLabel || labelDe(q.respostaCorreta);
+  console.log("[Corretor] Q"+(q.numero||"?")+" | conteúdo aluno:", JSON.stringify(cA), "| conteúdo correto:", JSON.stringify(cC), "| iguais:", (!!cA&&!!cC&&respostasBatem(q.respostaAluno,q.respostaCorreta)), "| label aluno:", lA, "| label gabarito:", lC);
+  if(cA && cC) return respostasBatem(q.respostaAluno, q.respostaCorreta); // 1) por CONTEÚDO
+  if(lA && lC) return lA===lC;                                           // 2) fallback por label (mesma prova)
+  return null; // indeterminado → mantém o que a IA disse
 }
 
 function dataHojeBR(){ try{ return new Date().toLocaleDateString("pt-BR"); }catch(_){ return ""; } }
@@ -5628,7 +5652,10 @@ function onSelecionarFotoProva(input){
   });
 }
 function removerFotoProva(i){ Teacher.corretor.imagens.splice(i,1); render(); }
-function syncCorretorInputs(){ const v=document.getElementById("corValor"); if(v) Teacher.corretor.valor=v.value; }
+function syncCorretorInputs(){
+  const v=document.getElementById("corValor"); if(v) Teacher.corretor.valor=v.value;
+  const g=document.getElementById("corGabarito"); if(g) Teacher.corretor.gabarito=g.value;
+}
 function setCorretorCampo(campo, v){ syncCorretorInputs(); Teacher.corretor[campo]=v; if(campo==="subj") Teacher.corretor.licaoId=""; render(); }
 
 // ---- loading rotativo ----
@@ -5642,8 +5669,9 @@ function iniciarRotacaoCorretor(){
 function pararRotacaoCorretor(){ clearInterval(corretorLoadTimer); }
 
 // ---- normalização/correção ----
-function normalizarCorrecao(r, valorTotal){
+function normalizarCorrecao(r, valorTotal, gabLabels){
   const qs=Array.isArray(r.questoes)?r.questoes:[];
+  gabLabels = Array.isArray(gabLabels)?gabLabels:[];
   let somaMax=0, soma=0, cor=0, inc=0, par=0, br=0;
   qs.forEach(function(q,i){
     q.numero = q.numero || (i+1);
@@ -5651,13 +5679,14 @@ function normalizarCorrecao(r, valorTotal){
     q.pontuacao = Number(q.pontuacao)||0;
     const st=String(q.status||"").toLowerCase();
     q.status = /branco/.test(st) ? "em_branco" : (/parcial/.test(st) ? "parcial" : (/incorret/.test(st) ? "incorreta" : (/corret/.test(st) ? "correta" : "incorreta")));
-    // REVALIDAÇÃO POR CONTEÚDO — corrige o bug de comparar por label (A/B/C/D).
-    // Se há um gabarito textual e uma resposta do aluno, decide certo/errado pelo TEXTO.
+    const gabLabel = gabLabels[(q.numero||i+1)-1] || "";
+    // Se veio gabarito oficial por label e a IA não trouxe o texto correto, completa-o.
+    if(gabLabel && !labelDe(q.respostaCorreta)) q.respostaCorreta = gabLabel+") "+String(q.respostaCorreta||"").replace(/^\s*[A-Da-d]\s*[\)\.\-:]\s*/,"").trim();
+    // REVALIDAÇÃO — conteúdo é a regra principal; label (gabarito oficial) é o fallback.
     // (Não mexe em respostas parciais nem em branco.)
-    if(q.status!=="em_branco" && q.status!=="parcial" && q.respostaCorreta && q.respostaAluno){
-      const acertou = respostasBatem(q.respostaAluno, q.respostaCorreta);
-      q.status = acertou ? "correta" : "incorreta";
-      q.pontuacao = acertou ? q.pontuacaoMaxima : 0;
+    if(q.status!=="em_branco" && q.status!=="parcial"){
+      const res = avaliarQuestaoCorrecao(q, gabLabel);
+      if(res!==null){ q.status = res ? "correta" : "incorreta"; q.pontuacao = res ? q.pontuacaoMaxima : 0; }
     } else if(q.status==="em_branco"){ q.pontuacao = 0; }
     somaMax+=q.pontuacaoMaxima; soma+=q.pontuacao;
     if(q.status==="correta")cor++; else if(q.status==="parcial")par++; else if(q.status==="em_branco")br++; else inc++;
@@ -5687,6 +5716,13 @@ async function corrigirProvaIA(meta){
   const subjNome=(subjById(meta.subj)||{}).nome||"";
   const licao = meta.licaoId ? (DATA[meta.subj]||[]).find(function(l){return l.id===meta.licaoId;}) : null;
   const cab = `Valor total da prova: ${meta.valor} pontos. Disciplina: ${subjNome}.`;
+  const gabLabels = meta.gabLabels || [];
+  // Gabarito oficial digitado pelo professor (por label): elimina a inferência da IA.
+  const blocoGabaritoManual = gabLabels.length ? `
+GABARITO OFICIAL DESTA PROVA (use exatamente estas alternativas como corretas):
+${gabLabels.map(function(l,i){ return `Questão ${i+1}: alternativa ${l}`; }).join("\n")}
+Para cada questão: leia a imagem, encontre a alternativa cujo label é o indicado acima e use o TEXTO dela como resposta correta (preencha "respostaCorreta" com "label) texto"). Não invente outra resposta.
+` : "";
   let prompt;
   if(licao){
     const pub=descreverPublicoLicao(licao);
@@ -5700,7 +5736,7 @@ Analise a imagem desta prova/atividade respondida por um aluno. ${cab}
 
 Gabarito de referência (o texto após "Resposta correta:" é a RESPOSTA CORRETA de cada questão):
 ${gab}
-
+${blocoGabaritoManual}
 ${CORRETOR_REGRAS_LEITURA}
 
 Atribua pontuação proporcional ao valor total (${meta.valor}).
@@ -5709,8 +5745,7 @@ ${CORRETOR_JSON_FORMATO}`;
   } else {
     prompt =
 `Você é um professor corretor experiente. Analise a imagem desta prova/atividade respondida por um aluno. ${cab}
-Identifique todas as questões e, para cada uma, INFIRA a resposta correta pelo contexto educacional (assunto/nível visível na prova; se houver gabarito na imagem, use-o). Depois compare com o que o aluno marcou/escreveu.
-
+${blocoGabaritoManual || "Não há gabarito fornecido: INFIRA a resposta correta pelo contexto educacional (assunto/nível visível na prova; se houver gabarito na imagem, use-o), com muito cuidado — verifique de fato qual alternativa está correta."}
 ${CORRETOR_REGRAS_LEITURA}
 
 Atribua pontuação proporcional ao valor total (${meta.valor}).
@@ -5722,7 +5757,7 @@ ${CORRETOR_JSON_FORMATO}`;
   const txt = await chamarIAMensagens([{ role:"user", content:content }], 45000);
   const r = parseJsonObjIA(txt);
   if(!r || !Array.isArray(r.questoes) || !r.questoes.length) throw new Error("sem_questoes");
-  return normalizarCorrecao(r, meta.valor);
+  return normalizarCorrecao(r, meta.valor, gabLabels);
 }
 async function corrigirProva(){
   syncCorretorInputs();
@@ -5732,7 +5767,7 @@ async function corrigirProva(){
   if(!temIA && !DEMO){ C.erro="Configure a chave da IA nas configurações do administrador para usar o corretor."; render(); return; }
   const aluno=(C.alunos||[]).find(function(a){return a.id===C.alunoId;})||null;
   C.meta={ alunoId:C.alunoId, alunoNome: aluno?aluno.nome:(DEMO?"Aluno(a) da Apresentação":"Aluno(a)"),
-    subj:C.subj, licaoId:C.licaoId, valor:parseFloat(C.valor)||10, dataStr:dataHojeBR() };
+    subj:C.subj, licaoId:C.licaoId, valor:parseFloat(C.valor)||10, gabLabels:parseGabarito(C.gabarito), dataStr:dataHojeBR() };
   C.erro=""; C.carregando=true; C.view="loading"; C.msgIdx=0; render(); iniciarRotacaoCorretor();
 
   // DEMO sem IA → resultado fictício após ~2.6s (mantém a animação de loading)
@@ -5937,6 +5972,9 @@ function teacherCorretorTab(){
     <select onchange="App.setCorretorCampo('licaoId', this.value)">${licaoOpts}</select>
     <label>Valor total da prova</label>
     <input id="corValor" type="number" min="1" step="0.5" value="${esc(C.valor)}" placeholder="Ex.: 10">
+    <label>Gabarito oficial (opcional, recomendado)</label>
+    <input id="corGabarito" type="text" value="${esc(C.gabarito||'')}" placeholder="Ex.: C, B, D, B, B" autocomplete="off" style="text-transform:uppercase">
+    <p style="font-size:12px;color:#777;margin:4px 0 0">Digite a letra correta de cada questão, na ordem, separadas por vírgula. Isso é enviado como gabarito oficial e elimina erros de leitura da IA.</p>
     ${C.erro?`<div class="ia-erro" style="margin-top:8px">⚠️ ${esc(C.erro)}</div>`:""}
     ${aviso}
     <button class="btn" style="margin-top:12px;background:#9b59b6;box-shadow:0 4px 0 #7d3c98" ${C.imagens.length?'':'disabled'} onclick="App.corrigirProva()">✨ Corrigir com IA</button>
