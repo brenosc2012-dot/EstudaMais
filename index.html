@@ -279,6 +279,10 @@ label{ display:block; font-weight:700; font-size:14px; margin-bottom:6px; color:
 .gab-btn{ flex:1; border:2px solid var(--gray); background:#fff; color:#555; font-weight:800; font-family:inherit;
   font-size:15px; padding:9px 0; border-radius:10px; cursor:pointer; -webkit-tap-highlight-color:transparent; }
 .gab-btn.sel{ border-color:#9b59b6; background:#9b59b6; color:#fff; box-shadow:0 2px 0 #7d3c98; }
+.corr-steps{ display:flex; gap:6px; margin:6px 0 12px; }
+.corr-step{ flex:1; text-align:center; font-size:11px; font-weight:800; color:#999; background:#f0eef6;
+  border-radius:8px; padding:6px 4px; }
+.corr-step.on{ color:#fff; background:#9b59b6; }
 .t-lesson-row{
   display:flex; align-items:center; gap:10px; background:#fff;
   border:2px solid var(--gray); border-radius:12px; padding:12px; margin-bottom:10px;
@@ -3815,8 +3819,9 @@ const Teacher = { tab:"licoes", subj:"mat", editingLesson:null, gerando:false, r
   // geração de lição de interpretação de texto (Português)
   interp:{ gerando:false, erro:"" },
   // corretor de provas por câmera (OpenAI Vision)
-  corretor:{ view:"form", imagens:[], alunoId:"", subj:"mat", licaoId:"", valor:"10",
+  corretor:{ view:"config", modo:"manual", imagens:[], alunoId:"", subj:"mat", licaoId:"", valor:"10",
     numQ:5, gab:["C","B","D","B","B"], // gabarito por questão (labels) — pré-preenchido com a prova demo de frações
+    respAluno:["","","","",""],        // respostas do aluno (digitadas pelo professor)
     carregando:false, msgIdx:0, erro:"", resultado:null, ehDemo:false, meta:null,
     alunos:[], alunosCarregados:false, historico:[], histCarregado:false } };
 
@@ -3851,8 +3856,9 @@ function teacherTab(t){
   Teacher.tab=t;
   if(t==="progresso" && !Teacher.prog.carregada && !Teacher.prog.carregando){ carregarRendimento(); return; }
   if(t==="premios" && !Teacher.prem.carregada && !Teacher.prem.carregando){ carregarPremiacoesProf(); return; }
-  if(t==="corretor"){ // carrega alunos e histórico de correções ao abrir
+  if(t==="corretor"){ // carrega alunos e histórico de correções ao abrir; começa na etapa 1
     Teacher.corretor.subj = Teacher.corretor.subj || Teacher.subj || "mat";
+    Teacher.corretor.view="config"; Teacher.corretor.erro="";
     carregarAlunosCorretor(); carregarHistoricoCorrecoes();
   }
   if(t==="conta"){ // carrega os valores atuais da conta para edição
@@ -5696,14 +5702,27 @@ function removerFotoProva(i){ Teacher.corretor.imagens.splice(i,1); render(); }
 function syncCorretorInputs(){
   const v=document.getElementById("corValor"); if(v) Teacher.corretor.valor=v.value;
 }
-// Gabarito: seleção de label por questão + número de questões (grade de botões).
+// Gabarito e respostas do aluno: seleção de label por questão (grades de botões).
 function soLabel(x){ const m=String(x||"").toUpperCase().match(/[A-D]/); return m?m[0]:""; }
 function setGabaritoResp(i, label){ syncCorretorInputs(); Teacher.corretor.gab[i]=soLabel(label); render(); }
+function setRespAluno(i, label){ syncCorretorInputs(); Teacher.corretor.respAluno[i]=soLabel(label); render(); }
 function setNumQuestoes(n){
   syncCorretorInputs();
   n=Math.max(1, Math.min(20, parseInt(n,10)||5));
-  const C=Teacher.corretor; const g=C.gab.slice(0,n); while(g.length<n) g.push("");
-  C.numQ=n; C.gab=g; render();
+  const C=Teacher.corretor;
+  const g=C.gab.slice(0,n); while(g.length<n) g.push("");
+  const r=(C.respAluno||[]).slice(0,n); while(r.length<n) r.push("");
+  C.numQ=n; C.gab=g; C.respAluno=r; render();
+}
+// Navegação entre as etapas do corretor (config → gabarito → respostas/foto → resultado).
+function irCorretor(v){ syncCorretorInputs(); Teacher.corretor.erro=""; Teacher.corretor.view=v; render(); }
+function setCorretorModo(m){ syncCorretorInputs(); Teacher.corretor.modo=m; Teacher.corretor.erro=""; Teacher.corretor.view="gabarito"; render(); }
+function corretorAvancarGabarito(){
+  syncCorretorInputs();
+  const C=Teacher.corretor;
+  const gabCompleto=(C.gab||[]).slice(0,C.numQ).map(soLabel).every(function(x){return !!x;});
+  if(!gabCompleto){ C.erro="Selecione a alternativa correta de TODAS as questões."; render(); return; }
+  C.erro=""; C.view = (C.modo==="auto") ? "autoFoto" : "respostas"; render();
 }
 function setCorretorCampo(campo, v){ syncCorretorInputs(); Teacher.corretor[campo]=v; if(campo==="subj") Teacher.corretor.licaoId=""; render(); }
 
@@ -5810,21 +5829,45 @@ function montarResultadoCorrecao(leituras, meta){
     notaFinal:nota, notaMaxima:valor, percentualAcerto:pct, conceito:conceitoDeNota(pct),
     questoes:questoes, feedbackGeral:"", pontosForca:[], pontosMelhoria:[] };
 }
-// PASSO 3 (IA, opcional) — feedback só das questões ERRADAS (não recalcula certo/errado).
+// CORREÇÃO 100% em JavaScript a partir do gabarito + respostas DIGITADAS pelo professor.
+// Não depende da leitura da foto → precisão total.
+function montarResultadoManual(meta){
+  const gab=meta.gabLabels, resp=meta.respAluno||[], N=gab.length, valor=meta.valor||10, pmax=valor/(N||1);
+  let cor=0, inc=0, br=0;
+  const questoes=gab.map(function(gl,i){
+    const marc=soLabel(resp[i]); var status,pont;
+    if(!marc){ status="em_branco"; pont=0; br++; }
+    else if(marc===gl){ status="correta"; pont=pmax; cor++; }
+    else { status="incorreta"; pont=0; inc++; }
+    console.log("[Corretor/manual] Q"+(i+1)+" | aluno:", marc||"(vazio)", "| gabarito:", gl, "| status:", status);
+    return { numero:i+1, marcado:marc, respostaAluno: marc||"", respostaCorreta: gl,
+      status:status, pontuacao:pont, pontuacaoMaxima:pmax, observacao:"" };
+  });
+  const nota=Math.round((cor*pmax)*10)/10, pct=Math.round(valor? (nota/valor*100) : 0);
+  return { totalQuestoes:N, questoesCorretas:cor, questoesIncorretas:inc, questoesParciais:0,
+    notaFinal:nota, notaMaxima:valor, percentualAcerto:pct, conceito:conceitoDeNota(pct),
+    questoes:questoes, feedbackGeral:"", pontosForca:[], pontosMelhoria:[] };
+}
+// PASSO FINAL (IA, opcional) — comentários só das questões ERRADAS (nunca recalcula certo/errado).
+// Se houver foto, a IA a usa APENAS para entender o enunciado e explicar melhor.
 async function gerarFeedbackCorrecao(res, meta){
   const erradas=res.questoes.filter(function(q){return q.status==="incorreta";});
   if(!erradas.length){ res.feedbackGeral = res.percentualAcerto>=70 ? "Ótimo desempenho! O aluno domina bem o conteúdo." : "Bom esforço! Vale revisar os pontos abaixo."; return res; }
-  if(!iaConfigurada()){ res.feedbackGeral = "O aluno acertou "+res.questoesCorretas+" de "+res.totalQuestoes+". Revise as questões marcadas em vermelho."; return res; }
+  if(!iaConfigurada()){ res.feedbackGeral = "O aluno acertou "+res.questoesCorretas+" de "+res.totalQuestoes+". Revise com ele as questões marcadas em vermelho."; return res; }
   const subjNome=(subjById(meta.subj)||{}).nome||"";
-  const lista=erradas.map(function(q){ return "Questão "+q.numero+": o aluno marcou \""+(q.respostaAluno||"(em branco)")+"\"; a resposta correta é \""+q.respostaCorreta+"\"."; }).join("\n");
+  const imgs=(Teacher.corretor.imagens||[]);
+  const lista=erradas.map(function(q){ return "Questão "+q.numero+": aluno marcou alternativa \""+(q.respostaAluno||"(em branco)")+"\"; alternativa correta é \""+q.respostaCorreta+"\"."; }).join("\n");
   const prompt=
-`Disciplina: ${subjNome}. As questões abaixo JÁ foram corrigidas (não recalcule certo/errado).
-Para cada questão errada, escreva UMA frase simples explicando por que a resposta correta está certa.
+`Disciplina: ${subjNome}. As questões abaixo JÁ foram corrigidas — NÃO recalcule certo/errado, apenas explique.
+${imgs.length?"Use a imagem da prova apenas para entender o enunciado de cada questão.":""}
+Para cada questão errada, escreva UMA frase simples e didática explicando por que a alternativa correta está certa.
 ${lista}
 
 Retorne APENAS JSON: {"porQuestao":{"3":"frase curta..."},"feedbackGeral":"2 frases","pontosForca":["..."],"pontosMelhoria":["..."]}`;
   try{
-    const txt=await chamarIA(prompt, 25000);
+    var txt;
+    if(imgs.length){ const content=[{type:"text",text:prompt}]; imgs.forEach(function(u){content.push({type:"image_url",image_url:{url:u}});}); txt=await chamarIAMensagens([{role:"user",content:content}], 30000); }
+    else { txt=await chamarIA(prompt, 25000); }
     const o=parseJsonObjIA(txt)||{};
     if(o.porQuestao){ res.questoes.forEach(function(q){ const f=o.porQuestao[String(q.numero)]; if(f) q.observacao=f; }); }
     res.feedbackGeral = o.feedbackGeral || res.feedbackGeral || "";
@@ -5833,36 +5876,56 @@ Retorne APENAS JSON: {"porQuestao":{"3":"frase curta..."},"feedbackGeral":"2 fra
   }catch(_){ res.feedbackGeral = res.feedbackGeral || "Revise com o aluno as questões erradas."; }
   return res;
 }
+function corretorMetaBase(){
+  const C=Teacher.corretor;
+  const aluno=(C.alunos||[]).find(function(a){return a.id===C.alunoId;})||null;
+  return { alunoId:C.alunoId, alunoNome: aluno?aluno.nome:(DEMO?"Aluno(a) da Apresentação":"Aluno(a)"),
+    subj:C.subj, licaoId:C.licaoId, valor:parseFloat(C.valor)||10,
+    gabLabels:(C.gab||[]).slice(0,C.numQ).map(soLabel), respAluno:(C.respAluno||[]).slice(0,C.numQ).map(soLabel), dataStr:dataHojeBR() };
+}
 async function corrigirProva(){
   syncCorretorInputs();
   const C=Teacher.corretor;
-  if(!C.imagens.length){ toast("Adicione ao menos uma foto da prova."); return; }
-  const temIA = iaConfigurada();
-  const gabLabels = (C.gab||[]).slice(0, C.numQ).map(soLabel);
-  const gabCompleto = gabLabels.length===C.numQ && gabLabels.every(function(x){return !!x;});
+  const gabLabels=(C.gab||[]).slice(0,C.numQ).map(soLabel);
+  const gabCompleto=gabLabels.length===C.numQ && gabLabels.every(function(x){return !!x;});
+  const temIA=iaConfigurada();
   C.erro="";
-  // DEMO sem IA → resultado fictício (não exige gabarito; usa o gabarito embutido do exemplo)
+
+  // ---------- MODO MANUAL (padrão) — correção 100% em JavaScript ----------
+  if(C.modo!=="auto"){
+    if(!gabCompleto){ C.erro="Informe o gabarito de todas as questões."; C.view="gabarito"; render(); return; }
+    C.meta=corretorMetaBase();
+    let res=montarResultadoManual(C.meta);   // JS corrige (preciso, sem IA)
+    C.resultado=res; C.ehDemo=false; C.carregando=false; C.view="result"; render();
+    // feedback da IA (opcional) só para erros — em segundo plano, não bloqueia o resultado
+    if(res.questoesIncorretas>0 && temIA){
+      C._fbLoading=true;
+      gerarFeedbackCorrecao(res, C.meta).then(function(){ C._fbLoading=false; if(Teacher.tab==="corretor" && C.view==="result") render(); });
+    } else if(res.questoesIncorretas>0){ gerarFeedbackCorrecao(res, C.meta); }
+    return;
+  }
+
+  // ---------- MODO AUTOMÁTICO (secundário) — IA lê a foto (pode errar) ----------
+  if(!C.imagens.length){ C.erro="Adicione a foto da prova para o modo automático."; render(); return; }
   if(!temIA && DEMO){
-    C.meta={ alunoId:C.alunoId, alunoNome:"Aluno(a) da Apresentação", subj:C.subj, licaoId:C.licaoId, valor:parseFloat(C.valor)||10, gabLabels:gabLabels, dataStr:dataHojeBR() };
+    C.meta=corretorMetaBase();
     C.carregando=true; C.view="loading"; C.msgIdx=0; render(); iniciarRotacaoCorretor();
     setTimeout(function(){ pararRotacaoCorretor(); C.resultado=correcaoDemoResultado(); C.ehDemo=true; C.carregando=false; C.view="result"; render(); }, 2600);
     return;
   }
-  if(!temIA){ C.erro="Configure a chave da IA nas configurações do administrador para usar o corretor."; render(); return; }
-  if(!gabCompleto){ C.erro="Informe o gabarito (a alternativa correta) de TODAS as questões antes de corrigir."; render(); return; }
-  const aluno=(C.alunos||[]).find(function(a){return a.id===C.alunoId;})||null;
-  C.meta={ alunoId:C.alunoId, alunoNome: aluno?aluno.nome:(DEMO?"Aluno(a) da Apresentação":"Aluno(a)"),
-    subj:C.subj, licaoId:C.licaoId, valor:parseFloat(C.valor)||10, gabLabels:gabLabels, dataStr:dataHojeBR() };
+  if(!temIA){ C.erro="Configure a chave da IA (painel do Administrador) para usar o modo automático."; render(); return; }
+  if(!gabCompleto){ C.erro="Informe o gabarito de todas as questões."; C.view="gabarito"; render(); return; }
+  C.meta=corretorMetaBase();
   C.carregando=true; C.view="loading"; C.msgIdx=0; render(); iniciarRotacaoCorretor();
   try{
-    const leituras = await lerMarcacoesIA(C.meta);   // IA só lê
-    let res = montarResultadoCorrecao(leituras, C.meta); // JS corrige (determinístico)
-    res = await gerarFeedbackCorrecao(res, C.meta);   // IA só explica os erros (opcional)
+    const leituras = await lerMarcacoesIA(C.meta);       // IA só lê as marcações
+    let res = montarResultadoCorrecao(leituras, C.meta); // JS corrige pelo gabarito
+    res = await gerarFeedbackCorrecao(res, C.meta);       // IA só explica os erros
     pararRotacaoCorretor(); C.resultado=res; C.ehDemo=false; C.carregando=false; C.view="result"; render();
   }catch(e){
     pararRotacaoCorretor(); C.carregando=false;
-    if(DEMO){ C.resultado=correcaoDemoResultado(); C.ehDemo=true; C.view="result"; render(); return; } // demo nunca mostra erro de API
-    C.view="form"; C.erro=mensagemErroCorretor(e); render();
+    if(DEMO){ C.resultado=correcaoDemoResultado(); C.ehDemo=true; C.view="result"; render(); return; }
+    C.view="autoFoto"; C.erro=mensagemErroCorretor(e); render();
   }
 }
 
@@ -5923,7 +5986,7 @@ function compartilharCorrecao(){
   if(navigator.share){ navigator.share({ title:"Resultado de "+(m.alunoNome||"aluno"), text:texto, url:location.href }).catch(function(){}); }
   else { try{ navigator.clipboard.writeText(texto); toast("Resultado copiado!"); }catch(_){ toast(texto); } }
 }
-function corrigirOutra(){ const C=Teacher.corretor; C.view="form"; C.imagens=[]; C.resultado=null; C.erro=""; C.ehDemo=false; C.meta=null; render(); }
+function corrigirOutra(){ const C=Teacher.corretor; C.view="config"; C.imagens=[]; C.resultado=null; C.erro=""; C.ehDemo=false; C.meta=null; C.respAluno=(C.respAluno||[]).map(function(){return "";}); render(); }
 function abrirCorrecao(id){
   const c=(Teacher.corretor.historico||[]).find(function(x){return x.id===id;}); if(!c) return;
   if(c.questoes && c.questoes.length){
@@ -6003,6 +6066,7 @@ function renderCorretorResultHtml(){
       Disciplina: <b>${s.icon} ${esc(s.nome||'—')}</b> • Data: ${esc(m.dataStr||'')}
     </div>
     ${tiles}
+    ${C._fbLoading?`<div class="ia-loading" style="color:#9b59b6;font-size:13px;margin:4px 0"><span class="ia-spinner" style="width:16px;height:16px;border-top-color:#9b59b6;vertical-align:middle"></span> Gerando comentários das questões erradas...</div>`:""}
     <div class="sec-title">Detalhamento por questão</div>
     ${questoes}
     ${r.feedbackGeral?`<div class="sec-title">Feedback geral</div><p style="font-size:14px;line-height:1.5;background:#fff;border:2px solid var(--gray);border-radius:12px;padding:12px;margin:0">${esc(r.feedbackGeral)}</p>`:""}
@@ -6016,65 +6080,120 @@ function renderCorretorResultHtml(){
       <button class="btn gray small" onclick="App.corrigirOutra()">🔄 Corrigir outra</button>
     </div>`;
 }
-function teacherCorretorTab(){
+// Grade reutilizável de botões A/B/C/D por questão (gabarito ou respostas do aluno).
+function corretorGradeHtml(values, handler){
+  const L4=["A","B","C","D"], N=Teacher.corretor.numQ;
+  return `<div class="gab-grade">`+Array.from({length:N},function(_,i){
+    const sel=values[i]||"";
+    const btns=L4.map(function(x){ return `<button class="gab-btn ${sel===x?'sel':''}" onclick="App.${handler}(${i},'${x}')">${x}</button>`; }).join("");
+    return `<div class="gab-row"><span class="gab-q">Q${i+1}</span>${btns}</div>`;
+  }).join("")+`</div>`;
+}
+function corretorStepper(ativo){
+  const passos=[["config","1 · Configurar"],["gabarito","2 · Gabarito"],[Teacher.corretor.modo==="auto"?"autoFoto":"respostas","3 · Respostas"]];
+  return `<div class="corr-steps">`+passos.map(function(p){ return `<span class="corr-step ${p[0]===ativo?'on':''}">${p[1]}</span>`; }).join("")+`</div>`;
+}
+function corretorErroHtml(){ return Teacher.corretor.erro?`<div class="ia-erro" style="margin-top:8px">⚠️ ${esc(Teacher.corretor.erro)}</div>`:""; }
+
+// ETAPA 1 — configurar a prova
+function corretorConfigHtml(){
   const C=Teacher.corretor;
-  if(C.view==="loading") return corretorLoadingHtml();
-  if(C.view==="result")  return renderCorretorResultHtml();
   const dica = DEMO ? `<div class="corretor-dica"><b>💡 Como funciona</b>
     <ol style="margin:6px 0 0 18px;padding:0;font-size:13px;line-height:1.55">
-      <li>Fotografe qualquer prova</li><li>A IA lê e corrige automaticamente</li>
-      <li>Receba nota, conceito e feedback</li><li>Exporte o resultado em PDF</li></ol></div>` : "";
-  const thumbs = C.imagens.length ? `<div class="corretor-thumbs">${C.imagens.map(function(u,i){return `<div class="corretor-thumb"><img src="${u}" alt="Foto ${i+1}"><button onclick="App.removerFotoProva(${i})" aria-label="Remover">✕</button></div>`;}).join("")}</div>
-    <p style="font-size:12px;color:#999;margin:4px 0 10px">${C.imagens.length}/3 foto(s). ${C.imagens.length<3?'Você pode adicionar mais (provas com várias páginas).':'Máximo de fotos atingido.'}</p>` : "";
+      <li>Informe o número de questões e o valor</li><li>Digite o gabarito e as respostas do aluno</li>
+      <li>A correção é automática e precisa</li><li>Exporte o resultado em PDF</li></ol></div>` : "";
   const alunoOpts = `<option value="">Selecionar aluno...</option>`+(C.alunos||[]).map(function(a){return `<option value="${esc(a.id)}" ${C.alunoId===a.id?'selected':''}>${esc(a.nome)}</option>`;}).join("");
   const discOpts = SUBJECTS.map(function(s){return `<option value="${s.id}" ${C.subj===s.id?'selected':''}>${s.icon} ${esc(s.nome)}</option>`;}).join("");
   const licoesDisc = (DATA[C.subj]||[]).filter(function(l){ return DEMO ? true : licaoNoEscopoProfessor(l, PROFESSOR); });
   const licaoOpts = `<option value="">(Opcional) Vincular a uma lição...</option>`+licoesDisc.map(function(l){return `<option value="${esc(l.id)}" ${C.licaoId===l.id?'selected':''}>${esc(l.titulo)}</option>`;}).join("");
-  const podeIA = iaConfigurada();
-  const aviso = (!podeIA && !DEMO) ? `<div class="ia-erro" style="margin-top:8px">⚙️ Configure a chave da IA (painel do Administrador) para usar o corretor.</div>`
-    : (!podeIA && DEMO ? `<p style="font-size:12px;color:#e08e00;margin-top:6px">Sem chave da IA agora: será exibido um resultado de demonstração.</p>` : "");
-  // Grade do gabarito: uma linha por questão com botões A B C D.
-  const LETRAS4=["A","B","C","D"];
-  const gabGrade = Array.from({length:C.numQ}, function(_,i){
-    const sel=C.gab[i]||"";
-    const btns=LETRAS4.map(function(L){ return `<button class="gab-btn ${sel===L?'sel':''}" onclick="App.setGabaritoResp(${i},'${L}')">${L}</button>`; }).join("");
-    return `<div class="gab-row"><span class="gab-q">Q${i+1}</span>${btns}</div>`;
-  }).join("");
-  const gabLabels=(C.gab||[]).slice(0,C.numQ).map(soLabel);
-  const gabCompleto = gabLabels.length===C.numQ && gabLabels.every(function(x){return !!x;});
-  const podeCorrigir = C.imagens.length>0 && (gabCompleto || (DEMO && !podeIA));
   return `
-    <h2 style="margin:6px 0 2px">📷 Corretor de Provas com IA</h2>
-    <p style="font-size:13px;color:#777;margin:0 0 12px">Informe o gabarito, fotografe a prova e a IA lê as marcações — a correção é feita automaticamente.</p>
+    <h2 style="margin:6px 0 2px">📷 Corretor de Provas</h2>
+    <p style="font-size:13px;color:#777;margin:0 0 10px">Correção precisa: você informa o gabarito e as respostas; o app corrige. A IA gera só os comentários dos erros.</p>
+    ${corretorStepper("config")}
     ${dica}
-
-    <div class="sec-title" style="margin-top:6px">📋 Informe o gabarito antes de fotografar</div>
-    <p style="font-size:12px;color:#777;margin:-2px 0 8px">Toque na alternativa correta de cada questão. A correção compara a marcação do aluno com este gabarito (a IA não "resolve" a prova).</p>
     <label>Número de questões</label>
     <input type="number" min="1" max="20" value="${C.numQ}" onchange="App.setNumQuestoes(this.value)" style="max-width:120px">
-    <div class="gab-grade">${gabGrade}</div>
-    ${gabCompleto?'':`<p style="font-size:12px;color:#e07a00;margin:6px 0 0">Selecione a alternativa correta de todas as questões.</p>`}
-
-    <div class="sec-title">Fotografar a prova</div>
-    <div class="corretor-capturas">
-      <label class="corretor-btn"><input type="file" accept="image/*" capture="environment" onchange="App.onSelecionarFotoProva(this)" hidden>📷 Fotografar prova</label>
-      <label class="corretor-btn galeria"><input type="file" accept="image/*" multiple onchange="App.onSelecionarFotoProva(this)" hidden>🖼️ Da galeria</label>
-    </div>
-    ${thumbs}
-
-    <div class="sec-title">Configurações da correção</div>
+    <label>Valor total da prova</label>
+    <input id="corValor" type="number" min="1" step="0.5" value="${esc(C.valor)}" placeholder="Ex.: 10">
     <label>Aluno</label>
     <select onchange="App.setCorretorCampo('alunoId', this.value)">${alunoOpts}</select>
     <label>Disciplina</label>
     <select onchange="App.setCorretorCampo('subj', this.value)">${discOpts}</select>
     <label>Lição (opcional)</label>
     <select onchange="App.setCorretorCampo('licaoId', this.value)">${licaoOpts}</select>
-    <label>Valor total da prova</label>
-    <input id="corValor" type="number" min="1" step="0.5" value="${esc(C.valor)}" placeholder="Ex.: 10">
-    ${C.erro?`<div class="ia-erro" style="margin-top:8px">⚠️ ${esc(C.erro)}</div>`:""}
-    ${aviso}
-    <button class="btn" style="margin-top:12px;background:#9b59b6;box-shadow:0 4px 0 #7d3c98" ${podeCorrigir?'':'disabled'} onclick="App.corrigirProva()">✨ Corrigir com IA</button>
+    ${corretorErroHtml()}
+    <button class="btn" style="margin-top:14px;background:#9b59b6;box-shadow:0 4px 0 #7d3c98" onclick="App.setCorretorModo('manual')">Próximo: informar gabarito →</button>
+    <button class="btn gray small" style="width:100%;margin-top:10px" onclick="App.setCorretorModo('auto')">⚠️ Usar modo automático (a IA lê a foto)</button>
+    <p style="font-size:11px;color:#999;margin:6px 0 0;text-align:center">No modo automático a IA tenta identificar as marcações — pode haver erros de leitura. Confira antes de salvar.</p>
     ${corretorHistoricoHtml()}`;
+}
+// ETAPA 2 — gabarito
+function corretorGabaritoHtml(){
+  const C=Teacher.corretor;
+  return `
+    <h2 style="margin:6px 0 2px">📋 Gabarito oficial</h2>
+    <p style="font-size:13px;color:#777;margin:0 0 8px">Toque na alternativa CORRETA de cada questão.</p>
+    ${corretorStepper("gabarito")}
+    ${corretorGradeHtml(C.gab, "setGabaritoResp")}
+    ${corretorErroHtml()}
+    <div style="display:flex;gap:8px;margin-top:14px">
+      <button class="btn gray" style="flex:1" onclick="App.irCorretor('config')">← Voltar</button>
+      <button class="btn" style="flex:2;background:#9b59b6;box-shadow:0 4px 0 #7d3c98" onclick="App.corretorAvancarGabarito()">${C.modo==="auto"?"Próximo: foto →":"Próximo: respostas →"}</button>
+    </div>`;
+}
+// ETAPA 3 (manual) — respostas do aluno
+function corretorRespostasHtml(){
+  const C=Teacher.corretor;
+  const thumbs = C.imagens.length ? `<div class="corretor-thumbs">${C.imagens.map(function(u,i){return `<div class="corretor-thumb"><img src="${u}" alt="Foto ${i+1}"><button onclick="App.removerFotoProva(${i})" aria-label="Remover">✕</button></div>`;}).join("")}</div>` : "";
+  return `
+    <h2 style="margin:6px 0 2px">✍️ Respostas do aluno</h2>
+    <p style="font-size:13px;color:#777;margin:0 0 8px">Marque a alternativa que o aluno escolheu em cada questão. Deixe em branco se não respondeu.</p>
+    ${corretorStepper("respostas")}
+    ${corretorGradeHtml(C.respAluno, "setRespAluno")}
+    <div class="sec-title" style="margin-top:14px">📷 Foto da prova (opcional)</div>
+    <p style="font-size:12px;color:#777;margin:-2px 0 8px">Só para consulta e para a IA comentar os erros — não é usada na correção.</p>
+    <div class="corretor-capturas">
+      <label class="corretor-btn"><input type="file" accept="image/*" capture="environment" onchange="App.onSelecionarFotoProva(this)" hidden>📷 Tirar foto</label>
+      <label class="corretor-btn galeria"><input type="file" accept="image/*" multiple onchange="App.onSelecionarFotoProva(this)" hidden>🖼️ Da galeria</label>
+    </div>
+    ${thumbs}
+    ${corretorErroHtml()}
+    <div style="display:flex;gap:8px;margin-top:14px">
+      <button class="btn gray" style="flex:1" onclick="App.irCorretor('gabarito')">← Voltar</button>
+      <button class="btn" style="flex:2;background:#9b59b6;box-shadow:0 4px 0 #7d3c98" onclick="App.corrigirProva()">✅ Corrigir</button>
+    </div>`;
+}
+// ETAPA 3 (automático) — foto obrigatória, a IA lê
+function corretorAutoFotoHtml(){
+  const C=Teacher.corretor; const podeIA=iaConfigurada();
+  const thumbs = C.imagens.length ? `<div class="corretor-thumbs">${C.imagens.map(function(u,i){return `<div class="corretor-thumb"><img src="${u}" alt="Foto ${i+1}"><button onclick="App.removerFotoProva(${i})" aria-label="Remover">✕</button></div>`;}).join("")}</div>
+    <p style="font-size:12px;color:#999;margin:4px 0 10px">${C.imagens.length}/3 foto(s).</p>` : "";
+  const aviso = (!podeIA && DEMO) ? `<p style="font-size:12px;color:#e08e00;margin-top:6px">Sem chave da IA agora: será exibido um resultado de demonstração.</p>`
+    : (!podeIA ? `<div class="ia-erro" style="margin-top:8px">⚙️ Configure a chave da IA (painel do Administrador) para o modo automático.</div>` : "");
+  return `
+    <h2 style="margin:6px 0 2px">📷 Modo automático</h2>
+    <div class="corretor-demobadge" style="background:#fff3e0;border-color:#ffcc80;color:#e65100">⚠️ A IA tentará identificar as marcações. Confira o resultado antes de salvar — pode haver erros de leitura.</div>
+    ${corretorStepper("autoFoto")}
+    <div class="corretor-capturas">
+      <label class="corretor-btn"><input type="file" accept="image/*" capture="environment" onchange="App.onSelecionarFotoProva(this)" hidden>📷 Fotografar prova</label>
+      <label class="corretor-btn galeria"><input type="file" accept="image/*" multiple onchange="App.onSelecionarFotoProva(this)" hidden>🖼️ Da galeria</label>
+    </div>
+    ${thumbs}
+    ${aviso}
+    ${corretorErroHtml()}
+    <div style="display:flex;gap:8px;margin-top:14px">
+      <button class="btn gray" style="flex:1" onclick="App.irCorretor('gabarito')">← Voltar</button>
+      <button class="btn" style="flex:2;background:#9b59b6;box-shadow:0 4px 0 #7d3c98" ${C.imagens.length?'':'disabled'} onclick="App.corrigirProva()">✨ Corrigir com IA</button>
+    </div>`;
+}
+function teacherCorretorTab(){
+  const C=Teacher.corretor;
+  if(C.view==="loading")   return corretorLoadingHtml();
+  if(C.view==="result")    return renderCorretorResultHtml();
+  if(C.view==="gabarito")  return corretorGabaritoHtml();
+  if(C.view==="respostas") return corretorRespostasHtml();
+  if(C.view==="autoFoto")  return corretorAutoFotoHtml();
+  return corretorConfigHtml();
 }
 
 /* ============================================================
@@ -6127,7 +6246,7 @@ window.App = {
   gerarExerciciosIA, toggleIaConfig, setModoIA, regenerarConteudoIA,
   // corretor de provas por câmera
   onSelecionarFotoProva, removerFotoProva, setCorretorCampo, corrigirProva,
-  setGabaritoResp, setNumQuestoes,
+  setGabaritoResp, setNumQuestoes, setRespAluno, setCorretorModo, corretorAvancarGabarito, irCorretor,
   salvarCorrecao, gerarPdfCorrecao, compartilharCorrecao, corrigirOutra, abrirCorrecao, excluirCorrecao,
   // sistema
   retryBoot: function(){ boot(); },
