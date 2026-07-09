@@ -310,8 +310,18 @@ label{ display:block; font-weight:700; font-size:14px; margin-bottom:6px; color:
 .interp-textarea{ width:100%; min-height:180px; font-size:15px; line-height:1.6; padding:12px; border:2px solid var(--gray);
   border-radius:12px; font-family:inherit; resize:vertical; }
 .interp-texto{ font-size:16px; line-height:1.6; color:#333; }
-.interp-par{ margin:10px 0; padding:6px 8px; border-radius:8px; transition:background .2s; }
-.interp-par.lendo{ background:#fff3c4; box-shadow:0 0 0 2px #ffe699; }
+.interp-par{ margin:10px 0; padding:6px 8px; border-radius:8px; border-left:4px solid transparent; transition:background .2s, border-color .2s; }
+/* parágrafo em leitura: cor/borda vêm inline (cor da disciplina); aqui só a elevação */
+.interp-par.lendo, .leitor-par.lendo{ box-shadow:0 1px 5px rgba(0,0,0,.10); }
+.leitor-par{ margin:8px 0; padding:8px 10px; border-radius:10px; border-left:4px solid transparent;
+  transition:background .2s, border-color .2s; line-height:1.6; }
+/* barra de controles de áudio (resumo e interpretação) */
+.leitor-bar{ background:#fff; border:2px solid var(--gray); border-radius:14px; padding:10px 12px; margin-bottom:12px; text-align:center; }
+.leitor-ctrl{ display:flex; justify-content:center; align-items:center; flex-wrap:wrap; gap:6px; }
+.leitor-opts{ display:flex; align-items:center; justify-content:center; gap:12px; flex-wrap:wrap; margin-top:8px; }
+.leitor-voz{ font-size:13px; font-weight:700; color:#555; display:inline-flex; align-items:center; gap:6px; }
+.leitor-voz select{ font-family:inherit; font-size:13px; padding:4px 6px; border-radius:8px; border:2px solid var(--gray); max-width:150px; }
+.leitor-prog{ font-size:12px; color:#0a6aa1; font-weight:700; margin-top:6px; min-height:14px; }
 .interp-mark{ background:#fff3c4; border-radius:3px; padding:0 2px; }
 .interp-modal{ position:fixed; inset:0; background:rgba(0,0,0,.5); z-index:60; display:flex; align-items:center; justify-content:center; padding:16px; }
 .interp-modal-box{ background:#fff; border-radius:18px; max-width:440px; width:100%; max-height:82vh; display:flex; flex-direction:column; overflow:hidden; }
@@ -1398,6 +1408,7 @@ function render(){
     default: renderLanding();
   }
   atualizarBotoesFala(); // reflete o estado atual da leitura nos botões recém-criados
+  atualizarControlesLeitor(); // idem para a barra de leitura por parágrafo (resumo/interpretação)
 }
 
 function goHome(){ clearInterval(estudoTimer); State.tela="home"; render(); }
@@ -1970,11 +1981,13 @@ function renderStudy(){
     return;
   }
 
-  const corpo = formatResumo(est.texto);
+  // prepara o leitor para esta tela (idle mostra "Ouvir o resumo" e usa a cor da disciplina)
+  LeitorTexto.configurar({ tela:"study", parIdPrefix:"spar-", parClass:"leitor-par", cor:s.cor, iniciarHandler:"ouvirResumo", rotulo:"Ouvir o resumo" });
+  const corpo = formatResumoLeitor(est.texto);
   const btnLabel = l.exercicios.length ? 'Já estudei, quero responder!' : 'Sem exercícios — voltar';
   app.innerHTML = `<div class="screen active">
     <div class="topbar" style="background:${s.cor};color:#fff">
-      <button class="back-btn" style="color:#fff" onclick="App.openSubject('${s.id}')">←</button>
+      <button class="back-btn" style="color:#fff" onclick="App.sairEstudo('${s.id}')">←</button>
       <h2>${s.icon} ${esc(l.titulo)}</h2>
     </div>
     <div class="read-track"><div class="read-fill" id="estudoProg" style="background:${s.cor}"></div></div>
@@ -1982,7 +1995,7 @@ function renderStudy(){
       <div style="text-align:center;margin-bottom:6px">${mascot('')}</div>
       <h1 style="text-align:center;font-size:22px;color:${s.cor};margin-bottom:6px">Vamos estudar antes de responder! 📚</h1>
       ${est.status==="fallback" ? `<p style="text-align:center;font-size:12px;color:#999;margin-bottom:8px">(Resumo automático indisponível — veja o conteúdo da lição abaixo.)</p>`:''}
-      <div style="text-align:center;margin-bottom:10px">${botaoFala('lerResumo','Ouvir o resumo')}</div>
+      ${barraLeitorHtml()}
       <div class="resumo-box">${corpo}</div>
       ${materialApoioAluno(l)}
     </div>
@@ -1993,6 +2006,18 @@ function renderStudy(){
     </div>
   </div>`;
   setupEstudoScreen(btnLabel, s.cor);
+}
+// Como formatResumo, mas cada parágrafo/tópico vira um bloco com id (spar-i) para leitura+destaque.
+// Os índices batem com paragrafosTexto(), usado pela leitura em voz alta.
+function formatResumoLeitor(txt){
+  const paras=paragrafosTexto(txt);
+  if(!paras.length) return formatResumo(txt);
+  return paras.map((p,i)=>{
+    const m=p.match(/^[-•*]\s+(.*)$/);
+    const inner = m ? `<span class="rt-ic">⭐</span><span>${esc(m[1])}</span>` : `<span>${esc(p)}</span>`;
+    const extra = m ? ' resumo-topico' : '';
+    return `<div class="leitor-par${extra}" id="spar-${i}">${inner}</div>`;
+  }).join("");
 }
 
 // barra de progresso de leitura + contagem regressiva de 10s do botão
@@ -2014,7 +2039,31 @@ function setupEstudoScreen(btnLabel, cor){
       if(btn){ btn.disabled=false; btn.innerHTML="✅ "+btnLabel; }
     } else if(cnt){ cnt.textContent=restante; }
   },1000);
+  // Auto-leitura opcional do resumo (uma vez por visita à lição)
+  const l=getLesson();
+  if(l && autoLerLigado() && Fala.ok() && !LeitorTexto.ativo && State._autoResumoLid!==l.id){
+    State._autoResumoLid=l.id;
+    agendarAutoLeituraResumo();
+  }
 }
+// Contagem regressiva "Iniciando leitura em 2... 1..." antes de ler o resumo sozinho.
+let autoLeituraTimer=null;
+function agendarAutoLeituraResumo(){
+  clearInterval(autoLeituraTimer);
+  const box=document.getElementById("autoLerBox"); if(!box) return;
+  let restante=2;
+  const pintar=()=>{ box.innerHTML=`<div style="margin-top:8px"><span style="color:#0a6aa1;font-weight:700">⏳ Iniciando leitura em ${restante}...</span>
+    <button class="btn gray small" style="width:auto;padding:4px 10px;margin-left:8px" onclick="App.cancelarAutoLeituraResumo()">Cancelar auto-leitura</button></div>`; };
+  pintar();
+  autoLeituraTimer=setInterval(()=>{
+    restante--;
+    if(restante<=0){ clearInterval(autoLeituraTimer); if(box) box.innerHTML=""; ouvirResumo(); }
+    else pintar();
+  },1000);
+}
+function cancelarAutoLeituraResumo(){ clearInterval(autoLeituraTimer); const box=document.getElementById("autoLerBox"); if(box) box.innerHTML=""; }
+// Sai da tela de estudo parando qualquer leitura/auto-leitura em andamento.
+function sairEstudo(subjId){ LeitorTexto.parar(); clearInterval(autoLeituraTimer); openSubject(subjId||State.subj); }
 
 // transforma o texto do resumo em HTML, destacando tópicos com ⭐
 function formatResumo(txt){
@@ -2497,7 +2546,7 @@ function limparHistoriaGerada(licaoId){
 
 // ----- Seleção de modo (Clássico x História) -----
 function escolherModo(){
-  clearInterval(estudoTimer);
+  clearInterval(estudoTimer); clearInterval(autoLeituraTimer); LeitorTexto.parar();
   const l=getLesson();
   if(!l || !l.exercicios || l.exercicios.length===0){ openSubject(State.subj); return; }
   State.tela="modo"; render();
@@ -2912,15 +2961,20 @@ function gameOverHistoria(){
 function paragrafosTexto(txt){ return String(txt||"").split(/\n+/).map(p=>p.trim()).filter(Boolean); }
 
 // Leitor de texto por parágrafo com destaque, controles e pausa de 0.5s entre trechos.
+// Genérico: funciona no resumo de estudo E no texto de interpretação (ctx define a tela,
+// as classes/ids dos parágrafos, a cor de destaque e o handler de "Ouvir").
 const LeitorTexto = {
   paras:[], idx:0, ativo:false, pausado:false, _timer:null,
-  iniciar(paras){
-    this.parar(); if(!Fala.ok() || !paras.length) return;
+  ctx:{ tela:"interpRead", parIdPrefix:"ipar-", parClass:"interp-par", cor:"#1cb0f6", iniciarHandler:"ouvirTextoInterp", rotulo:"Ouvir o texto" },
+  configurar(ctx){ if(ctx) this.ctx=Object.assign({}, this.ctx, ctx); },
+  iniciar(paras, ctx){
+    this.parar(); this.configurar(ctx);
+    if(!Fala.ok() || !paras.length) return;
     this.paras=paras; this.idx=0; this.ativo=true; this.pausado=false;
     atualizarControlesLeitor(); this._falar();
   },
   _falar(){
-    if(!this.ativo || State.tela!=="interpRead") { this.ativo=false; return; }
+    if(!this.ativo || State.tela!==this.ctx.tela) { this.ativo=false; return; }
     if(this.idx>=this.paras.length){ this.ativo=false; this.pausado=false; destacarParagrafo(-1); atualizarControlesLeitor(); return; }
     destacarParagrafo(this.idx);
     try{
@@ -2937,24 +2991,67 @@ const LeitorTexto = {
   retomar(){ if(this.ativo && this.pausado){ try{window.speechSynthesis.resume();}catch(e){} this.pausado=false; atualizarControlesLeitor(); } },
   parar(){ this.ativo=false; this.pausado=false; clearTimeout(this._timer); try{ if(Fala.ok()) window.speechSynthesis.cancel(); }catch(e){} destacarParagrafo(-1); atualizarControlesLeitor(); }
 };
+// Destaca o parágrafo i (cor da disciplina 20% + borda esquerda) e faz scroll até ele.
 function destacarParagrafo(i){
-  try{ document.querySelectorAll(".interp-par").forEach((el,j)=>{ el.classList.toggle("lendo", j===i); });
-    if(i>=0){ const el=document.getElementById("ipar-"+i); if(el && el.scrollIntoView) el.scrollIntoView({block:"center", behavior:"smooth"}); }
+  const ctx=LeitorTexto.ctx||{}; const cor=ctx.cor||"#1cb0f6";
+  try{
+    document.querySelectorAll("."+(ctx.parClass||"interp-par")).forEach((el,j)=>{
+      const on=(j===i); el.classList.toggle("lendo", on);
+      if(on){ el.style.background=cor+"33"; el.style.borderLeftColor=cor; }
+      else { el.style.background=""; el.style.borderLeftColor=""; }
+    });
+    if(i>=0){ const el=document.getElementById((ctx.parIdPrefix||"ipar-")+i); if(el && el.scrollIntoView) el.scrollIntoView({block:"center", behavior:"smooth"}); }
   }catch(e){}
+  atualizarProgressoLeitor();
 }
+// Indicador "Lendo parágrafo X de N..."
+function atualizarProgressoLeitor(){
+  const el=document.getElementById("leitorProgTxt"); if(!el) return;
+  const L=LeitorTexto;
+  el.textContent = (L.ativo && L.idx < L.paras.length) ? `Lendo parágrafo ${L.idx+1} de ${L.paras.length}...` : "";
+}
+// (Re)desenha os botões Ouvir/Pausar/Continuar/Parar conforme o estado atual.
 function atualizarControlesLeitor(){
   const box=document.getElementById("leitorCtrl"); if(!box) return;
-  const L=LeitorTexto;
-  if(!L.ativo){ box.innerHTML=`<button class="btn blue small" style="width:auto" onclick="App.ouvirTextoInterp()">🔊 Ouvir o texto</button>`; return; }
+  const L=LeitorTexto; const ctx=L.ctx||{};
+  const h=ctx.iniciarHandler||"ouvirTextoInterp"; const r=esc(ctx.rotulo||"Ouvir");
+  if(!L.ativo){ box.innerHTML=`<button class="btn blue small" style="width:auto" onclick="App.${h}()">🔊 ${r}</button>`; atualizarProgressoLeitor(); return; }
   box.innerHTML =
-    (L.pausado ? `<button class="btn blue small" style="width:auto" onclick="App.retomarTextoInterp()">▶️ Continuar</button>`
-               : `<button class="btn gray small" style="width:auto" onclick="App.pausarTextoInterp()">⏸️ Pausar</button>`)
-    + `<button class="btn red small" style="width:auto;margin-left:8px" onclick="App.pararTextoInterp()">⏹️ Parar</button>`;
+    (L.pausado ? `<button class="btn blue small" style="width:auto" onclick="App.retomarLeitor()">▶️ Continuar</button>`
+               : `<button class="btn gray small" style="width:auto" onclick="App.pausarLeitor()">⏸️ Pausar</button>`)
+    + `<button class="btn red small" style="width:auto;margin-left:8px" onclick="App.pararLeitor()">⏹️ Parar</button>`;
+  atualizarProgressoLeitor();
 }
-function ouvirTextoInterp(){ const l=getLesson(); if(!l) return; LeitorTexto.iniciar(paragrafosTexto(l.textoGerado)); }
+// Barra de controles reutilizável: Ouvir/Pausar/Parar + velocidade rápida + voz + progresso.
+function barraLeitorHtml(){
+  if(!Fala.ok()) return "";
+  return `<div class="leitor-bar">
+    <div id="leitorCtrl" class="leitor-ctrl"></div>
+    <div class="leitor-opts">${velocidadeMiniHtml()}${vozDropdownHtml()}</div>
+    <div id="leitorProgTxt" class="leitor-prog"></div>
+    <div id="autoLerBox"></div>
+  </div>`;
+}
+// Dropdown de seleção rápida de voz (usa as mesmas prefs do localStorage).
+function vozDropdownHtml(){
+  const vozes=carregarVozes(); if(!vozes.length) return "";
+  const cfg=AudioCfg.get();
+  const opts=vozes.map((v,i)=>`<option value="${i}" ${cfg.vozNome===v.name?'selected':''}>${esc(nomeAmigavelVoz(v))}</option>`).join("");
+  return `<label class="leitor-voz">🎙️ Voz: <select onchange="App.setAudioVozDropdown(this.value)">${opts}</select></label>`;
+}
+// handlers genéricos (funcionam em qualquer tela de leitura)
+function pausarLeitor(){ LeitorTexto.pausar(); }
+function retomarLeitor(){ LeitorTexto.retomar(); }
+function pararLeitor(){ LeitorTexto.parar(); }
+// interpretação de texto
+function ouvirTextoInterp(){ const l=getLesson(); const s=subjById(State.subj); if(!l) return;
+  LeitorTexto.iniciar(paragrafosTexto(l.textoGerado), { tela:"interpRead", parIdPrefix:"ipar-", parClass:"interp-par", cor:(s&&s.cor)||"#1cb0f6", iniciarHandler:"ouvirTextoInterp", rotulo:"Ouvir o texto" }); }
 function pausarTextoInterp(){ LeitorTexto.pausar(); }
 function retomarTextoInterp(){ LeitorTexto.retomar(); }
 function pararTextoInterp(){ LeitorTexto.parar(); }
+// resumo de estudo
+function ouvirResumo(){ const est=State.estudo||{}; const s=subjById(State.subj);
+  LeitorTexto.iniciar(paragrafosTexto(est.texto), { tela:"study", parIdPrefix:"spar-", parClass:"leitor-par", cor:(s&&s.cor)||"#1cb0f6", iniciarHandler:"ouvirResumo", rotulo:"Ouvir o resumo" }); }
 
 // Etapa 1 — tela de leitura do texto
 function renderInterpRead(){
@@ -2964,6 +3061,8 @@ function renderInterpRead(){
   const paras = paragrafosTexto(l.textoGerado);
   const corpo = paras.map((p,i)=>`<p class="interp-par" id="ipar-${i}">${esc(p)}</p>`).join("") || `<p class="interp-par">${esc(l.textoGerado||'(texto indisponível)')}</p>`;
   const genero = l.generoTextual ? `<span class="pill-tag" style="background:#1cb0f6">📖 ${esc(l.generoTextual)}</span>` : "";
+  // prepara o leitor para esta tela (idle "Ouvir o texto", destaque na cor da disciplina)
+  LeitorTexto.configurar({ tela:"interpRead", parIdPrefix:"ipar-", parClass:"interp-par", cor:s.cor, iniciarHandler:"ouvirTextoInterp", rotulo:"Ouvir o texto" });
   app.innerHTML = `<div class="screen active">
     <div class="topbar" style="background:${s.cor};color:#fff">
       <button class="back-btn" style="color:#fff" onclick="App.sairInterpRead()">←</button>
@@ -2973,7 +3072,7 @@ function renderInterpRead(){
     <div class="content" id="interpContent" style="background:#f7fbff">
       <div style="text-align:center;margin-bottom:6px">${genero}</div>
       <h1 style="text-align:center;font-size:22px;color:${s.cor};margin:6px 0 2px">📖 ${esc(titulo)}</h1>
-      <div id="leitorCtrl" style="text-align:center;margin:10px 0">${Fala.ok()?`<button class="btn blue small" style="width:auto" onclick="App.ouvirTextoInterp()">🔊 Ouvir o texto</button>`:''}</div>
+      ${barraLeitorHtml()}
       <div class="interp-texto">${corpo}</div>
     </div>
     <div style="padding:16px;border-top:2px solid var(--gray);background:#fff">
@@ -3108,10 +3207,18 @@ function setAudioRateSlider(v){
     });
 }
 function setAudioPitch(v){ AudioCfg.set({ pitch:+v }); render(); }
+function indiceGlobalVoz(v){ try{ return (window.speechSynthesis.getVoices()||[]).indexOf(v); }catch(e){ return -1; } }
+// usado na lista de vozes do perfil (re-renderiza para atualizar o destaque)
 function setAudioVoz(i){
   const vs=carregarVozes(); const v=vs[+i]; if(!v) return;
-  const gi=(function(){ try{ return (window.speechSynthesis.getVoices()||[]).indexOf(v); }catch(e){ return -1; } })();
+  const gi=indiceGlobalVoz(v);
   Fala.voz=v; AudioCfg.set({ vozNome:v.name, vozIndex: gi>=0?gi:null }); render();
+}
+// usado no dropdown da barra de leitura (NÃO re-renderiza, para não reiniciar timers/leitura)
+function setAudioVozDropdown(i){
+  const vs=carregarVozes(); const v=vs[+i]; if(!v) return;
+  const gi=indiceGlobalVoz(v);
+  Fala.voz=v; AudioCfg.set({ vozNome:v.name, vozIndex: gi>=0?gi:null });
 }
 function testarVoz(i){
   const vs=carregarVozes(); const v=vs[+i]; if(!v || !Fala.ok()) return;
@@ -3136,7 +3243,10 @@ function setAudioRateRapido(v){
   document.querySelectorAll(".vel-btn").forEach(b=>{
     b.classList.toggle("ativo", Math.abs((+b.getAttribute("data-rate"))-(+v))<0.03);
   });
-  if(Fala.falando()){ Fala.parar(); lerQuestao(); } // re-lê já na nova velocidade
+  // A leitura por parágrafo (resumo/interpretação) já pega a nova velocidade no próximo
+  // parágrafo. Na tela de questões, re-lê o enunciado imediatamente.
+  if(LeitorTexto.ativo) return;
+  if(State.tela==="exercise" && Fala.falando()){ Fala.parar(); lerQuestao(); }
 }
 
 function renderProfile(){
@@ -4867,12 +4977,14 @@ window.App = {
   // interpretação de texto (aluno)
   ouvirTextoInterp, pausarTextoInterp, retomarTextoInterp, pararTextoInterp,
   sairInterpRead, iniciarQuestoesInterp, abrirTextoInterp, fecharTextoInterp,
+  // leitura por parágrafo (resumo de estudo) + controles genéricos + auto-leitura
+  ouvirResumo, pausarLeitor, retomarLeitor, pararLeitor, sairEstudo, cancelarAutoLeituraResumo,
   toggleAutoLer,
   onPerfilNivel, salvarDadosEscolares,
   // leitura em voz alta (TTS)
   lerResumo, lerQuestao, lerExplicacao,
   // configurações de áudio (voz/velocidade/tom)
-  setAudioRate, setAudioRateSlider, setAudioPitch, setAudioVoz, testarVoz, setAudioRateRapido,
+  setAudioRate, setAudioRateSlider, setAudioPitch, setAudioVoz, setAudioVozDropdown, testarVoz, setAudioRateRapido,
   // autenticação
   irTela, logout, toggleSenha,
   irCadastroAluno, submitLoginAluno, onNivelCadAluno, submitCadastroAluno,
