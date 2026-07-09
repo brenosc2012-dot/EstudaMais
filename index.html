@@ -5506,9 +5506,33 @@ async function salvarConta(){
    ============================================================ */
 const CORRETOR_LOAD_MSGS = ["📷 Analisando a imagem...","🔍 Identificando as questões...","✏️ Lendo as respostas do aluno...","📊 Calculando a pontuação...","✨ Gerando o relatório..."];
 let corretorLoadTimer = null;
+// Instruções de leitura/comparação por CONTEÚDO (evita o bug de comparar só o label A/B/C/D).
+const CORRETOR_REGRAS_LEITURA =
+`Para cada questão, identifique:
+- O número da questão
+- O label marcado pelo aluno (A, B, C ou D)
+- O TEXTO COMPLETO da alternativa marcada pelo aluno
+- Compare o TEXTO da alternativa marcada com o texto da resposta correta do gabarito
+- NÃO compare apenas os labels (A/B/C/D) — a ordem das alternativas na imagem pode ser
+  diferente da ordem do gabarito. Compare sempre o CONTEÚDO (o texto) das respostas.
+
+REGRAS IMPORTANTES:
+- "respostaAluno" DEVE conter o label E o texto da alternativa marcada. Ex.: "B) O denominador".
+- "respostaCorreta" DEVE conter o TEXTO da resposta correta (sem o label). Ex.: "O denominador".
+- "status" = "correta" quando o TEXTO marcado pelo aluno é igual (em conteúdo) ao texto correto,
+  mesmo que os labels sejam diferentes. Se o aluno não marcou nada, use "em_branco".`;
 const CORRETOR_JSON_FORMATO =
 `Retorne APENAS um JSON válido (aspas duplas), sem texto ao redor, no formato exato:
-{"totalQuestoes":0,"questoesCorretas":0,"questoesIncorretas":0,"questoesParciais":0,"notaFinal":0,"notaMaxima":0,"percentualAcerto":0,"conceito":"Excelente|Ótimo|Bom|Regular|Insuficiente","questoes":[{"numero":1,"respostaAluno":"texto identificado na imagem","respostaCorreta":"texto do gabarito","status":"correta|incorreta|parcial|em_branco","pontuacao":0,"pontuacaoMaxima":0,"observacao":"comentário do professor"}],"feedbackGeral":"análise em 2-3 frases","pontosMelhoria":["..."],"pontosForca":["..."]}`;
+{"totalQuestoes":0,"questoesCorretas":0,"questoesIncorretas":0,"questoesParciais":0,"notaFinal":0,"notaMaxima":0,"percentualAcerto":0,"conceito":"Excelente|Ótimo|Bom|Regular|Insuficiente","questoes":[{"numero":1,"respostaAluno":"B) O denominador","respostaCorreta":"O denominador","status":"correta|incorreta|parcial|em_branco","pontuacao":0,"pontuacaoMaxima":0,"observacao":"comentário do professor"}],"feedbackGeral":"análise em 2-3 frases","pontosMelhoria":["..."],"pontosForca":["..."]}`;
+// Remove o rótulo "B) " e normaliza o texto para comparar respostas por conteúdo.
+function limparRespTexto(s){ return norm(String(s||"").replace(/^\s*[A-Da-d]\s*[\)\.\-:]\s*/,"").trim()); }
+// Compara a resposta do aluno com a correta pelo CONTEÚDO (nunca pelo label A/B/C/D).
+function respostasBatem(alunoRaw, corretaRaw){
+  const a=limparRespTexto(alunoRaw), c=limparRespTexto(corretaRaw);
+  if(!a || !c) return false;
+  if(a===c) return true;
+  return c.length>=2 && (a.indexOf(c)>=0 || c.indexOf(a)>=0);
+}
 
 function dataHojeBR(){ try{ return new Date().toLocaleDateString("pt-BR"); }catch(_){ return ""; } }
 function conceitoDeNota(pct){ if(pct>=90)return "Excelente"; if(pct>=75)return "Ótimo"; if(pct>=60)return "Bom"; if(pct>=40)return "Regular"; return "Insuficiente"; }
@@ -5627,19 +5651,27 @@ function normalizarCorrecao(r, valorTotal){
     q.pontuacao = Number(q.pontuacao)||0;
     const st=String(q.status||"").toLowerCase();
     q.status = /branco/.test(st) ? "em_branco" : (/parcial/.test(st) ? "parcial" : (/incorret/.test(st) ? "incorreta" : (/corret/.test(st) ? "correta" : "incorreta")));
+    // REVALIDAÇÃO POR CONTEÚDO — corrige o bug de comparar por label (A/B/C/D).
+    // Se há um gabarito textual e uma resposta do aluno, decide certo/errado pelo TEXTO.
+    // (Não mexe em respostas parciais nem em branco.)
+    if(q.status!=="em_branco" && q.status!=="parcial" && q.respostaCorreta && q.respostaAluno){
+      const acertou = respostasBatem(q.respostaAluno, q.respostaCorreta);
+      q.status = acertou ? "correta" : "incorreta";
+      q.pontuacao = acertou ? q.pontuacaoMaxima : 0;
+    } else if(q.status==="em_branco"){ q.pontuacao = 0; }
     somaMax+=q.pontuacaoMaxima; soma+=q.pontuacao;
     if(q.status==="correta")cor++; else if(q.status==="parcial")par++; else if(q.status==="em_branco")br++; else inc++;
   });
+  // Nota e contagens vêm SEMPRE das questões já revalidadas por conteúdo (não dos totais da IA,
+  // que poderiam refletir a comparação errada por label).
   const notaMax = Number(r.notaMaxima)||valorTotal||10;
-  let nota = (typeof r.notaFinal==="number") ? r.notaFinal : (somaMax? (soma/somaMax*notaMax) : 0);
+  let nota = somaMax ? (soma/somaMax*notaMax) : 0;
   nota = Math.round(nota*10)/10;
-  const pct = (typeof r.percentualAcerto==="number") ? Math.round(r.percentualAcerto) : Math.round(notaMax? (nota/notaMax*100) : 0);
+  const pct = Math.round(notaMax? (nota/notaMax*100) : 0);
   return Object.assign({}, r, {
-    totalQuestoes: r.totalQuestoes||qs.length,
-    questoesCorretas:(typeof r.questoesCorretas==="number"?r.questoesCorretas:cor),
-    questoesIncorretas:(typeof r.questoesIncorretas==="number"?r.questoesIncorretas:inc),
-    questoesParciais:(typeof r.questoesParciais==="number"?r.questoesParciais:par),
-    notaFinal:nota, notaMaxima:notaMax, percentualAcerto:pct, conceito:r.conceito||conceitoDeNota(pct),
+    totalQuestoes: qs.length || r.totalQuestoes || 0,
+    questoesCorretas:cor, questoesIncorretas:inc, questoesParciais:par,
+    notaFinal:nota, notaMaxima:notaMax, percentualAcerto:pct, conceito:conceitoDeNota(pct),
     questoes:qs, feedbackGeral:r.feedbackGeral||"",
     pontosMelhoria:Array.isArray(r.pontosMelhoria)?r.pontosMelhoria:[], pontosForca:Array.isArray(r.pontosForca)?r.pontosForca:[]
   });
@@ -5666,16 +5698,22 @@ async function corrigirProvaIA(meta){
 `Você é um professor corretor experiente do ${pub.ano} do ${nomeNivel(pub.nivelId)}.
 Analise a imagem desta prova/atividade respondida por um aluno. ${cab}
 
-Gabarito de referência (exercícios da lição '${licao.titulo}'):
+Gabarito de referência (o texto após "Resposta correta:" é a RESPOSTA CORRETA de cada questão):
 ${gab}
 
-Para cada questão identificada na imagem: 1) identifique o número; 2) leia a resposta do aluno; 3) compare com o gabarito; 4) classifique como CORRETA, INCORRETA, PARCIALMENTE CORRETA ou EM BRANCO; 5) atribua pontuação proporcional ao valor total (${meta.valor}).
+${CORRETOR_REGRAS_LEITURA}
+
+Atribua pontuação proporcional ao valor total (${meta.valor}).
 
 ${CORRETOR_JSON_FORMATO}`;
   } else {
     prompt =
 `Você é um professor corretor experiente. Analise a imagem desta prova/atividade respondida por um aluno. ${cab}
-Identifique todas as questões, leia as respostas do aluno e corrija com base no contexto educacional visível na prova. Identifique o assunto, o nível de dificuldade aparente e, se houver gabarito visível, use-o. Infira as respostas corretas pelo conteúdo educacional.
+Identifique todas as questões e, para cada uma, INFIRA a resposta correta pelo contexto educacional (assunto/nível visível na prova; se houver gabarito na imagem, use-o). Depois compare com o que o aluno marcou/escreveu.
+
+${CORRETOR_REGRAS_LEITURA}
+
+Atribua pontuação proporcional ao valor total (${meta.valor}).
 
 ${CORRETOR_JSON_FORMATO}`;
   }
@@ -5834,8 +5872,8 @@ function renderCorretorResultHtml(){
         <b>Questão ${q.numero}</b>
         <span style="background:${si.bg};color:${si.cor};font-weight:800;font-size:11px;padding:3px 8px;border-radius:10px">${si.ic} ${si.txt}</span>
       </div>
-      <div style="font-size:13px;margin-top:4px">Resposta do aluno: <b>${esc(q.respostaAluno||'—')}</b></div>
-      ${(q.status!=="correta" && q.respostaCorreta)?`<div style="font-size:13px;color:#2e7d32">Resposta correta: <b>${esc(q.respostaCorreta)}</b></div>`:""}
+      <div style="font-size:13px;margin-top:4px">Aluno marcou: <b>${esc(q.respostaAluno||'— (em branco)')}</b></div>
+      ${q.respostaCorreta?`<div style="font-size:13px;color:#2e7d32">Resposta correta: <b>${esc(q.respostaCorreta)}</b> ${q.status==="correta"?"✅":"❌"}</div>`:""}
       <div style="font-size:12px;color:#777;margin-top:2px">Pontuação: ${q.pontuacao}/${q.pontuacaoMaxima}</div>
       ${q.observacao?`<div style="font-size:12px;color:#555;margin-top:4px;font-style:italic">💬 ${esc(q.observacao)}</div>`:""}
     </div>`;
