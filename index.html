@@ -283,6 +283,12 @@ label{ display:block; font-weight:700; font-size:14px; margin-bottom:6px; color:
 .corr-step{ flex:1; text-align:center; font-size:11px; font-weight:800; color:#999; background:#f0eef6;
   border-radius:8px; padding:6px 4px; }
 .corr-step.on{ color:#fff; background:#9b59b6; }
+.corretor-dicas{ background:#eefaf0; border:1px solid #bfe6c9; border-radius:12px; padding:10px 12px; margin-bottom:10px; font-size:12.5px; line-height:1.6; color:#2e5d3a; }
+.corretor-dicas b{ color:#1b7f3b; display:block; margin-bottom:2px; }
+.conf-tag{ margin-left:auto; font-size:11px; font-weight:800; white-space:nowrap; }
+.conf-tag.ok{ color:#2e7d32; } .conf-tag.med{ color:#e08e00; } .conf-tag.low{ color:#c62828; }
+.gab-row.conf-alerta{ background:#fff8e1; border-radius:8px; padding:4px 6px; }
+.conf-obs{ font-size:11px; color:#777; margin:-2px 0 6px 40px; }
 .t-lesson-row{
   display:flex; align-items:center; gap:10px; background:#fff;
   border:2px solid var(--gray); border-radius:12px; padding:12px; margin-bottom:10px;
@@ -3822,6 +3828,7 @@ const Teacher = { tab:"licoes", subj:"mat", editingLesson:null, gerando:false, r
   corretor:{ view:"config", modo:"manual", imagens:[], alunoId:"", subj:"mat", licaoId:"", valor:"10",
     numQ:5, gab:["C","B","D","B","B"], // gabarito por questão (labels) — pré-preenchido com a prova demo de frações
     respAluno:["","","","",""],        // respostas do aluno (digitadas pelo professor)
+    leituras:[], preThreshold:140,     // modo automático: leitura da IA + confiança; limiar de binarização
     carregando:false, msgIdx:0, erro:"", resultado:null, ehDemo:false, meta:null,
     alunos:[], alunosCarregados:false, historico:[], histCarregado:false } };
 
@@ -5716,7 +5723,7 @@ function setNumQuestoes(n){
 }
 // Navegação entre as etapas do corretor (config → gabarito → respostas/foto → resultado).
 function irCorretor(v){ syncCorretorInputs(); Teacher.corretor.erro=""; Teacher.corretor.view=v; render(); }
-function setCorretorModo(m){ syncCorretorInputs(); Teacher.corretor.modo=m; Teacher.corretor.erro=""; Teacher.corretor.view="gabarito"; render(); }
+function setCorretorModo(m){ syncCorretorInputs(); Teacher.corretor.modo=m; Teacher.corretor.erro=""; Teacher.corretor.preThreshold=140; Teacher.corretor.leituras=[]; Teacher.corretor.view="gabarito"; render(); }
 function corretorAvancarGabarito(){
   syncCorretorInputs();
   const C=Teacher.corretor;
@@ -5780,30 +5787,78 @@ function mensagemErroCorretor(e){
   if(/Failed to fetch|NetworkError|Load failed/i.test(m)) return "Falha ao contatar a IA. Verifique a conexão e a chave configurada.";
   return "A imagem está difícil de ler. Tente fotografar com mais luz e a câmera estável.";
 }
-// PASSO 1 (IA) — SÓ LEITURA: identifica qual alternativa está marcada em cada questão.
-// A IA NÃO corrige, NÃO avalia, NÃO calcula. A correção é 100% do JavaScript (abaixo).
-async function lerMarcacoesIA(meta){
+// Pré-processa a imagem (escala de cinza + contraste + binarização) para destacar as
+// marcações antes de enviar à IA. threshold menor = binarização mais agressiva.
+function preprocessarDataUrl(dataUrl, threshold){
+  return new Promise(function(resolve){
+    try{
+      const img=new Image();
+      img.onload=function(){
+        const maxSize=1600; let w=img.width, h=img.height;
+        if(w>maxSize||h>maxSize){ if(w>h){ h=Math.round(h*maxSize/w); w=maxSize; } else { w=Math.round(w*maxSize/h); h=maxSize; } }
+        try{
+          const cv=document.createElement("canvas"); cv.width=w; cv.height=h;
+          const ctx=cv.getContext("2d"); ctx.drawImage(img,0,0,w,h);
+          const id=ctx.getImageData(0,0,w,h), d=id.data;
+          // Fórmula clássica de contraste: 'contraste' no intervalo -255..255 (aqui +50 → fator ~1.48,
+          // realça mantendo marcas ESCURAS escuras). Depois binariza no limiar (threshold).
+          const contraste=50, fator=(259*(contraste+255))/(255*(259-contraste)), th=threshold||140;
+          for(let i=0;i<d.length;i+=4){
+            const g=0.299*d[i]+0.587*d[i+1]+0.114*d[i+2];
+            const nv=Math.min(255, Math.max(0, fator*(g-128)+128));
+            const vf = nv<th ? 0 : 255;
+            d[i]=d[i+1]=d[i+2]=vf; d[i+3]=255;
+          }
+          ctx.putImageData(id,0,0);
+          resolve(cv.toDataURL("image/jpeg", 0.95));
+        }catch(_){ resolve(dataUrl); } // getImageData pode falhar (canvas "tainted") → usa original
+      };
+      img.onerror=function(){ resolve(dataUrl); };
+      img.src=dataUrl;
+    }catch(_){ resolve(dataUrl); }
+  });
+}
+// PASSO 1 (IA) — SÓ LEITURA ÓPTICA: identifica qual alternativa está marcada em cada questão,
+// com nível de CONFIANÇA e observação. A IA NÃO corrige — a correção é 100% do JavaScript.
+async function lerMarcacoesIA(meta, threshold){
   const N=meta.gabLabels.length;
   const prompt =
-`Analise esta prova respondida por um aluno. Para cada uma das ${N} questões, identifique
-APENAS qual alternativa está marcada (o círculo preenchido, pintado ou com X).
-NÃO corrija. NÃO avalie. NÃO calcule. NÃO tente resolver as questões. Apenas LEIA o que o aluno marcou.
-Para exibição, informe também o TEXTO da alternativa que o aluno marcou (textoMarcado) e o TEXTO da
-alternativa cujo rótulo consta no gabarito abaixo (textoCorreta) — apenas copiando o que está escrito na
-imagem, sem julgar se está certo.
-Gabarito (somente para localizar o texto da alternativa correta na imagem): ${meta.gabLabels.map(function(l,i){return "Q"+(i+1)+"="+l;}).join(", ")}.
+`Você é um sistema especializado em leitura óptica de provas escolares.
+Analise a imagem desta prova de múltipla escolha com MÁXIMA ATENÇÃO.
 
-Retorne APENAS um JSON válido (aspas duplas), sem texto ao redor:
-{"leituras":[{"questao":1,"marcado":"A","textoMarcado":"...","textoCorreta":"..."}]}
-Se o aluno não marcou nada em uma questão, use "marcado":"".`;
-  const content=[{ type:"text", text:prompt }];
-  Teacher.corretor.imagens.forEach(function(u){ content.push({ type:"image_url", image_url:{ url:u } }); });
+INSTRUÇÕES CRÍTICAS:
+- Examine cada questão individualmente, de cima para baixo (são ${N} questões).
+- Para cada questão, localize os círculos das alternativas A, B, C e D.
+- Identifique qual círculo está PREENCHIDO, MARCADO com X ou HACHURADO.
+- Um círculo marcado aparece: completamente escuro, com X dentro, com traço dentro,
+  ou visivelmente diferente dos outros círculos vazios.
+- Círculos VAZIOS aparecem apenas como contorno, sem preenchimento.
+- NÃO confunda a posição — A é sempre a 1ª alternativa, B a 2ª, C a 3ª e D a 4ª de cada questão.
+- Se houver dúvida entre duas alternativas, escolha a mais escura e marque confianca "baixa".
+
+Para cada questão retorne no JSON:
+{"questao": número, "alternativa_marcada": "A"|"B"|"C"|"D"|"nenhuma"|"ilegivel",
+ "confianca": "alta"|"media"|"baixa", "observacao": "o que você viu (ex.: círculo D completamente preenchido)"}
+
+Analise questão por questão, não pule nenhuma. Retorne APENAS o JSON:
+{"leituras":[ ... ${N} objetos ... ]}`;
+  // pré-processa cada imagem (contraste/binarização) e envia em alta resolução (detail high)
+  const imgs = await Promise.all((Teacher.corretor.imagens||[]).map(function(u){ return preprocessarDataUrl(u, threshold||140); }));
+  const content=[];
+  imgs.forEach(function(u){ content.push({ type:"image_url", image_url:{ url:u, detail:"high" } }); });
+  content.push({ type:"text", text:prompt });
   const txt = await chamarIAMensagens([{ role:"user", content:content }], 45000);
   const o = parseJsonObjIA(txt);
   let arr = (o && Array.isArray(o.leituras)) ? o.leituras : null;
   if(!arr){ try{ const a=JSON.parse(String(txt).replace(/^```(?:json)?\s*/i,"").replace(/\s*```$/,"")); if(Array.isArray(a)) arr=a; }catch(_){} }
   if(!arr || !arr.length) throw new Error("sem_questoes");
-  return arr;
+  // normaliza: alternativa_marcada → label (ou "" quando nenhuma/ilegível) + confiança/observação
+  return arr.map(function(l,i){
+    const alt=String(l.alternativa_marcada!=null?l.alternativa_marcada:(l.marcado||"")).toUpperCase();
+    const marc = /nenhum|ilegiv|vazio|branco/i.test(alt) ? "" : soLabel(alt);
+    let conf=String(l.confianca||"media").toLowerCase(); if(!/alta|media|média|baixa/.test(conf)) conf="media"; conf=conf.replace("média","media");
+    return { questao:Number(l.questao||l.numero||(i+1)), marcado:marc, confianca:conf, observacao:String(l.observacao||"") };
+  });
 }
 // PASSO 2 (JavaScript) — CORREÇÃO DETERMINÍSTICA usando o gabarito do professor.
 function montarResultadoCorrecao(leituras, meta){
@@ -5916,16 +5971,40 @@ async function corrigirProva(){
   if(!temIA){ C.erro="Configure a chave da IA (painel do Administrador) para usar o modo automático."; render(); return; }
   if(!gabCompleto){ C.erro="Informe o gabarito de todas as questões."; C.view="gabarito"; render(); return; }
   C.meta=corretorMetaBase();
-  C.carregando=true; C.view="loading"; C.msgIdx=0; render(); iniciarRotacaoCorretor();
+  await lerMarcacoesEConfirmar(C.preThreshold||140); // IA lê → tela de confirmação (professor revisa)
+}
+// IA lê as marcações e leva à tela de confirmação (não calcula a nota ainda).
+async function lerMarcacoesEConfirmar(threshold){
+  const C=Teacher.corretor;
+  C.carregando=true; C.view="loading"; C.msgIdx=0; C.erro=""; render(); iniciarRotacaoCorretor();
   try{
-    const leituras = await lerMarcacoesIA(C.meta);       // IA só lê as marcações
-    let res = montarResultadoCorrecao(leituras, C.meta); // JS corrige pelo gabarito
-    res = await gerarFeedbackCorrecao(res, C.meta);       // IA só explica os erros
-    pararRotacaoCorretor(); C.resultado=res; C.ehDemo=false; C.carregando=false; C.view="result"; render();
+    const leituras = await lerMarcacoesIA(C.meta, threshold);
+    pararRotacaoCorretor();
+    // pré-preenche as respostas do aluno com a leitura da IA (o professor confirma/edita)
+    C.respAluno = C.meta.gabLabels.map(function(_,i){ const l=leituras.find(function(x){return x.questao===(i+1);})||{}; return l.marcado||""; });
+    C.leituras  = C.meta.gabLabels.map(function(_,i){ return leituras.find(function(x){return x.questao===(i+1);}) || { questao:i+1, marcado:"", confianca:"baixa", observacao:"" }; });
+    C.carregando=false; C.view="confirmar"; render();
   }catch(e){
     pararRotacaoCorretor(); C.carregando=false;
     if(DEMO){ C.resultado=correcaoDemoResultado(); C.ehDemo=true; C.view="result"; render(); return; }
     C.view="autoFoto"; C.erro=mensagemErroCorretor(e); render();
+  }
+}
+// Reprocessa a foto com binarização mais agressiva (threshold 120) e relê.
+async function tentarNovamenteContraste(){
+  Teacher.corretor.preThreshold=120;
+  await lerMarcacoesEConfirmar(120);
+}
+// Professor confirmou (ou corrigiu) as marcações lidas → correção determinística em JS.
+function confirmarLeituraCorretor(){
+  syncCorretorInputs();
+  const C=Teacher.corretor;
+  C.meta=corretorMetaBase(); // inclui respAluno já revisado pelo professor
+  let res=montarResultadoManual(C.meta);
+  C.resultado=res; C.ehDemo=false; C.view="result"; render();
+  if(res.questoesIncorretas>0 && iaConfigurada()){
+    C._fbLoading=true;
+    gerarFeedbackCorrecao(res, C.meta).then(function(){ C._fbLoading=false; if(Teacher.tab==="corretor" && C.view==="result") render(); });
   }
 }
 
@@ -5986,7 +6065,7 @@ function compartilharCorrecao(){
   if(navigator.share){ navigator.share({ title:"Resultado de "+(m.alunoNome||"aluno"), text:texto, url:location.href }).catch(function(){}); }
   else { try{ navigator.clipboard.writeText(texto); toast("Resultado copiado!"); }catch(_){ toast(texto); } }
 }
-function corrigirOutra(){ const C=Teacher.corretor; C.view="config"; C.imagens=[]; C.resultado=null; C.erro=""; C.ehDemo=false; C.meta=null; C.respAluno=(C.respAluno||[]).map(function(){return "";}); render(); }
+function corrigirOutra(){ const C=Teacher.corretor; C.view="config"; C.imagens=[]; C.resultado=null; C.erro=""; C.ehDemo=false; C.meta=null; C.leituras=[]; C.preThreshold=140; C.respAluno=(C.respAluno||[]).map(function(){return "";}); render(); }
 function abrirCorrecao(id){
   const c=(Teacher.corretor.historico||[]).find(function(x){return x.id===id;}); if(!c) return;
   if(c.questoes && c.questoes.length){
@@ -6172,8 +6251,9 @@ function corretorAutoFotoHtml(){
     : (!podeIA ? `<div class="ia-erro" style="margin-top:8px">⚙️ Configure a chave da IA (painel do Administrador) para o modo automático.</div>` : "");
   return `
     <h2 style="margin:6px 0 2px">📷 Modo automático</h2>
-    <div class="corretor-demobadge" style="background:#fff3e0;border-color:#ffcc80;color:#e65100">⚠️ A IA tentará identificar as marcações. Confira o resultado antes de salvar — pode haver erros de leitura.</div>
+    <div class="corretor-demobadge" style="background:#fff3e0;border-color:#ffcc80;color:#e65100">⚠️ A IA tentará identificar as marcações. Você poderá conferir e corrigir antes de calcular a nota.</div>
     ${corretorStepper("autoFoto")}
+    ${corretorDicasFotoHtml()}
     <div class="corretor-capturas">
       <label class="corretor-btn"><input type="file" accept="image/*" capture="environment" onchange="App.onSelecionarFotoProva(this)" hidden>📷 Fotografar prova</label>
       <label class="corretor-btn galeria"><input type="file" accept="image/*" multiple onchange="App.onSelecionarFotoProva(this)" hidden>🖼️ Da galeria</label>
@@ -6183,7 +6263,50 @@ function corretorAutoFotoHtml(){
     ${corretorErroHtml()}
     <div style="display:flex;gap:8px;margin-top:14px">
       <button class="btn gray" style="flex:1" onclick="App.irCorretor('gabarito')">← Voltar</button>
-      <button class="btn" style="flex:2;background:#9b59b6;box-shadow:0 4px 0 #7d3c98" ${C.imagens.length?'':'disabled'} onclick="App.corrigirProva()">✨ Corrigir com IA</button>
+      <button class="btn" style="flex:2;background:#9b59b6;box-shadow:0 4px 0 #7d3c98" ${C.imagens.length?'':'disabled'} onclick="App.corrigirProva()">🔍 Ler marcações com IA</button>
+    </div>`;
+}
+// Dicas de foto (item 7)
+function corretorDicasFotoHtml(){
+  return `<div class="corretor-dicas">
+    <b>📷 Dicas para melhor resultado:</b>
+    <div>✅ Fotografe com boa iluminação</div>
+    <div>✅ Mantenha a câmera paralela ao papel</div>
+    <div>✅ Evite sombras sobre a prova</div>
+    <div>✅ Marque os círculos com caneta preta</div>
+    <div>❌ Não use lápis — dificulta a leitura</div>
+  </div>`;
+}
+// TELA DE CONFIRMAÇÃO (modo automático) — professor revisa/corrige a leitura da IA
+function corretorConfirmarHtml(){
+  const C=Teacher.corretor, L4=["A","B","C","D"];
+  const leituras=C.leituras||[];
+  const nAlta=leituras.filter(function(x){return x.confianca==="alta";}).length;
+  const nMedia=leituras.filter(function(x){return x.confianca==="media";}).length;
+  const nBaixa=leituras.filter(function(x){return x.confianca==="baixa";}).length;
+  const rows=Array.from({length:C.numQ},function(_,i){
+    const sel=soLabel(C.respAluno[i]); const info=leituras[i]||{confianca:"media",observacao:""};
+    const conf=info.confianca||"media"; const alerta=(conf!=="alta");
+    const btns=L4.map(function(x){ return `<button class="gab-btn ${sel===x?'sel':''}" onclick="App.setRespAluno(${i},'${x}')">${x}</button>`; }).join("");
+    const badge = conf==="alta" ? `<span class="conf-tag ok">alta</span>`
+                : (conf==="media" ? `<span class="conf-tag med">⚠️ média</span>` : `<span class="conf-tag low">⚠️ baixa</span>`);
+    const obs = (alerta && info.observacao) ? `<div class="conf-obs">👁️ ${esc(info.observacao)}</div>` : "";
+    return `<div class="gab-row ${alerta?'conf-alerta':''}"><span class="gab-q">Q${i+1}</span>${btns}${badge}</div>${obs}`;
+  }).join("");
+  const retry = (nBaixa>2) ? `<div class="ia-erro" style="margin-top:10px;background:#fff8e1;border-color:#ffe0a3;color:#8a6d00">
+      A imagem pode estar difícil de ler (${nBaixa} questões com baixa confiança).
+      <button class="btn gray small" style="width:100%;margin-top:6px" onclick="App.tentarNovamenteContraste()">🔄 Tentar novamente com mais contraste</button>
+    </div>` : "";
+  return `
+    <h2 style="margin:6px 0 2px">🔍 Confirme as marcações lidas</h2>
+    <p style="font-size:13px;color:#777;margin:0 0 8px">A IA leu as marcações abaixo. <b>Toque para corrigir</b> qualquer questão antes de calcular a nota.</p>
+    <div style="font-size:12px;color:#555;margin-bottom:6px">Confiança: <b style="color:#2e7d32">${nAlta} alta</b> · <b style="color:#e08e00">${nMedia} média</b> · <b style="color:#c62828">${nBaixa} baixa</b></div>
+    <div class="gab-grade">${rows}</div>
+    ${retry}
+    ${corretorErroHtml()}
+    <div style="display:flex;gap:8px;margin-top:14px">
+      <button class="btn gray" style="flex:1" onclick="App.irCorretor('autoFoto')">← Voltar</button>
+      <button class="btn" style="flex:2;background:#9b59b6;box-shadow:0 4px 0 #7d3c98" onclick="App.confirmarLeituraCorretor()">✅ Confirmar e calcular nota</button>
     </div>`;
 }
 function teacherCorretorTab(){
@@ -6193,6 +6316,7 @@ function teacherCorretorTab(){
   if(C.view==="gabarito")  return corretorGabaritoHtml();
   if(C.view==="respostas") return corretorRespostasHtml();
   if(C.view==="autoFoto")  return corretorAutoFotoHtml();
+  if(C.view==="confirmar") return corretorConfirmarHtml();
   return corretorConfigHtml();
 }
 
@@ -6247,6 +6371,7 @@ window.App = {
   // corretor de provas por câmera
   onSelecionarFotoProva, removerFotoProva, setCorretorCampo, corrigirProva,
   setGabaritoResp, setNumQuestoes, setRespAluno, setCorretorModo, corretorAvancarGabarito, irCorretor,
+  confirmarLeituraCorretor, tentarNovamenteContraste,
   salvarCorrecao, gerarPdfCorrecao, compartilharCorrecao, corrigirOutra, abrirCorrecao, excluirCorrecao,
   // sistema
   retryBoot: function(){ boot(); },
