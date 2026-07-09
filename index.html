@@ -63,6 +63,21 @@ body{
 }
 .topbar h2{ font-size:18px; flex:1; }
 .content{ flex:1; min-height:0; padding:16px; overflow-y:auto; -webkit-overflow-scrolling:touch; scrollbar-width:thin; scrollbar-color:var(--brand) #ececff; }
+
+/* ---------- MODO DEMO ---------- */
+.demo-banner{ flex:0 0 auto; display:flex; align-items:center; gap:8px; background:linear-gradient(90deg,#ff8c00,#ff6b00);
+  color:#fff; padding:7px 12px; font-size:12px; line-height:1.25; box-shadow:0 2px 6px rgba(0,0,0,.15); z-index:20; }
+.demo-banner-txt{ flex:1; min-width:0; }
+.demo-banner-txt b{ font-weight:800; }
+.demo-banner-btn{ flex:0 0 auto; border:none; background:#fff; color:#e05a00; font-weight:800; font-family:inherit;
+  font-size:12px; border-radius:12px; padding:6px 10px; cursor:pointer; white-space:nowrap; -webkit-tap-highlight-color:transparent; }
+.demo-banner-btn:active{ transform:translateY(1px); }
+.demo-welcome{ display:flex; flex-direction:column; justify-content:center; align-items:center;
+  background:linear-gradient(160deg,#7b2ff7,#3a8dde); position:relative; }
+.demo-welcome-card{ width:100%; max-width:400px; }
+.demo-badge{ position:absolute; top:12px; right:12px; background:#ff8c00; color:#fff; font-weight:800; font-size:11px;
+  letter-spacing:.5px; padding:5px 10px; border-radius:12px; box-shadow:0 3px 8px rgba(0,0,0,.25); }
+.pill-demo{ display:inline-block; background:#ff8c00; color:#fff; font-size:11px; font-weight:800; border-radius:10px; padding:2px 8px; }
 /* barra de rolagem visível e colorida (navegadores WebKit/Chromium) */
 .content::-webkit-scrollbar{ width:10px; }
 .content::-webkit-scrollbar-track{ background:#ececff; border-radius:10px; }
@@ -790,6 +805,7 @@ let PROFILE = {};   // alias do aluno logado (mantido por compatibilidade com a 
 let SESSAO = null;     // sessão local: { tipo:"aluno"|"professor", id }
 let ALUNO = null;      // doc do aluno logado (Firestore); referenciado também como PROFILE
 let PROFESSOR = null;  // doc do professor logado (Firestore)
+let DEMO = false;      // Modo Demo (feiras/apresentações): dados fictícios, NADA salvo no Firestore
 const app = document.getElementById("app");
 
 function uid(){ return "id" + Math.random().toString(36).slice(2,9) + Date.now().toString(36).slice(-3); }
@@ -858,6 +874,7 @@ function construirDATA(snap){
   // ordena por criadoEm (mais antigo primeiro), tolerando ausência
   docs.sort((a,b)=> ((a.d.criadoEm&&a.d.criadoEm.seconds)||0) - ((b.d.criadoEm&&b.d.criadoEm.seconds)||0));
   docs.forEach(({id,d})=>{
+    if(d.isDemo && !DEMO) return; // lições demo NÃO aparecem para usuários reais
     const disc = d.disciplina;
     if(!DATA[disc]) DATA[disc]=[]; // disciplina fora da lista padrão também é aceita
     DATA[disc].push(licaoDeDoc(id, d));
@@ -951,6 +968,7 @@ function definirAlunoLogado(a){ ALUNO = normalizarAluno(a); PROFILE = ALUNO; }
 
 // Persiste o progresso do aluno: cache local (offline) + write-through no Firestore.
 function saveProfile(){
+  if(DEMO) return; // modo demo: progresso só em memória, nunca no Firestore
   if(!ALUNO) return;
   // espelho plano de licoesConcluidas (união das disciplinas) — atende o spec/consultas
   const flat=[];
@@ -966,7 +984,118 @@ function saveProfile(){
 // ----- Sessão local (quem está logado neste aparelho) -----
 function salvarSessao(){ try{ if(SESSAO) localStorage.setItem(SESSAO_KEY, JSON.stringify(SESSAO)); else localStorage.removeItem(SESSAO_KEY); }catch(e){} }
 function carregarSessao(){ try{ const r=localStorage.getItem(SESSAO_KEY); if(r) SESSAO=JSON.parse(r); }catch(e){ SESSAO=null; } }
-function logout(){ SESSAO=null; ALUNO=null; PROFESSOR=null; PROFILE={}; salvarSessao(); try{ localStorage.removeItem(ALUNO_CACHE_KEY); }catch(e){} State.tela="landing"; render(); }
+function logout(){
+  if(DEMO){ ALUNO=null; PROFESSOR=null; PROFILE={}; State.tela="demoWelcome"; render(); return; } // volta à seleção de perfil demo
+  SESSAO=null; ALUNO=null; PROFESSOR=null; PROFILE={}; salvarSessao(); try{ localStorage.removeItem(ALUNO_CACHE_KEY); }catch(e){} State.tela="landing"; render(); }
+
+/* ============================================================
+   MODO DEMO (feiras/apresentações) — ?demo=true
+   Tudo local/sessionStorage. NENHUM dado é salvo no Firestore.
+   Perfis, lições e rendimento são fictícios (prefixo "demo_").
+   ============================================================ */
+// Detecta o modo demo pela URL (?demo=true) ou pelo sessionStorage (dura enquanto a aba viver).
+function detectarDemo(){
+  let q=false, s=false;
+  try{ q = new URLSearchParams(location.search||"").get("demo")==="true"; }catch(_){ q=/[?&]demo=true(\b|&|$)/i.test(location.search||""); }
+  try{ s = sessionStorage.getItem("modoDemo")==="true"; }catch(_){}
+  DEMO = !!(q||s);
+  if(DEMO){ try{ sessionStorage.setItem("modoDemo","true"); }catch(_){} }
+  return DEMO;
+}
+// Bloqueia (best-effort) escritas no Firestore quando em demo.
+function demoBloqueiaEscrita(){ return DEMO; }
+
+// Perfil fictício do ALUNO demo (João Vitor, 5º ano A). XP/streak/medalhas p/ mostrar gamificação.
+function demoAlunoDoc(){
+  const g = novaGamificacao();
+  g.disciplinas.mat.xp = 60; g.disciplinas.mat.nivel = 2;
+  g.disciplinas.cie.xp = 40; g.disciplinas.cie.nivel = 1;
+  g.disciplinas.por.xp = 50; g.disciplinas.por.nivel = 2;
+  return Object.assign(g, {
+    id:"demo_aluno", nome:"João Vitor", idade:10, ano:"5º ano", turma:"A", nivel:"fund1",
+    xpTotal:150, streak:3, ultimoDia:null,
+    medalhas:["first","streak3"], // 2 conquistas para exibição
+    som:true
+  });
+}
+// Perfil fictício do PROFESSOR demo (leciona todas as disciplinas, 5º ano, turma A).
+function demoProfessorDoc(){
+  return { id:"demo_professor", nome:"Prof. Demo", turmas:["A"], anos:["5º ano"], disciplinas: SUBJECTS.map(s=>s.id) };
+}
+
+// Lições demo pré-cadastradas (locais). Todas 5º ano / Turma A, marcadas isDemo.
+function seedDemo(){
+  const L = (o)=> Object.assign({ id:"demo_"+o.d+"_"+Math.random().toString(36).slice(2,8), ano:"5º ano", turma:"A", nivel:"fund1", isDemo:true }, o);
+  return {
+    mat:[ L({ d:"mat", titulo:"Frações no dia a dia", texto:
+"As frações aparecem o tempo todo no nosso dia! 🍕\n\nUma fração mostra partes de um inteiro. Em 1/2 (um meio), o número de baixo (denominador) diz em quantas partes iguais dividimos, e o de cima (numerador) diz quantas pegamos.\n\n• Metade de uma pizza = 1/2\n• Um quarto de um bolo = 1/4\n• Três pedaços de quatro = 3/4\n\nFrações iguais ao inteiro: 4/4 = 1.",
+      exercicios:[
+        { id:uid(), tipo:"mc", nivel:"facil", enunciado:"Uma pizza tem 8 fatias e você comeu 3. Que fração comeu?", opcoes:["3/8","8/3","1/3","3/5"], correta:0 },
+        { id:uid(), tipo:"vf", nivel:"facil", enunciado:"A fração 2/4 é igual a 1/2.", opcoes:["Verdadeiro","Falso"], correta:0 },
+        { id:uid(), tipo:"fill", nivel:"intermediario", enunciado:"Na fração 5/6, o número 6 é o ____.", resposta:"denominador" },
+        { id:uid(), tipo:"mc", nivel:"intermediario", enunciado:"Qual fração representa 'três quartos'?", opcoes:["4/3","3/4","1/4","3/3"], correta:1 },
+        { id:uid(), tipo:"vf", nivel:"dificil", enunciado:"4/4 é o mesmo que 1 inteiro.", opcoes:["Verdadeiro","Falso"], correta:0 },
+      ] }) ],
+    por:[ L({ d:"por", titulo:"Interpretação: A Raposa e as Uvas", tipo:"interpretacao_texto",
+      tituloTexto:"A Raposa e as Uvas", generoTextual:"Fábula",
+      textoGerado:
+"Numa tarde quente de verão, uma raposa faminta passeava por um pomar. De repente, avistou um cacho de uvas maduras e brilhantes, pendurado bem alto em uma parreira.\n\n— Que uvas deliciosas! — pensou ela, com água na boca.\n\nA raposa deu um salto para alcançá-las, mas não chegou nem perto. Tentou de novo, correndo e pulando com todas as forças. Nada. Por mais que se esforçasse, as uvas continuavam longe demais.\n\nCansada e ofegante, depois de muitas tentativas, a raposa desistiu. Virou o focinho para o alto e, indo embora, resmungou:\n\n— De qualquer forma, essas uvas devem estar verdes e azedas. Nem as queria mesmo!\n\nE assim seguiu seu caminho, fingindo que não se importava.",
+      texto:"Fábula 'A Raposa e as Uvas' com questões de interpretação.",
+      exercicios:[
+        { id:uid(), tipo:"mc", nivel:"facil", enunciado:"O que a raposa queria alcançar?", opcoes:["Um cacho de uvas","Um pedaço de queijo","Água do rio","Um coelho"], correta:0 },
+        { id:uid(), tipo:"mc", nivel:"facil", enunciado:"Por que a raposa não pegou as uvas?", opcoes:["Estavam muito altas","Estavam podres","Não tinha fome","Alguém pegou antes"], correta:0 },
+        { id:uid(), tipo:"vf", nivel:"intermediario", enunciado:"A raposa conseguiu as uvas na primeira tentativa.", opcoes:["Verdadeiro","Falso"], correta:1 },
+        { id:uid(), tipo:"mc", nivel:"intermediario", enunciado:"Ao desistir, a raposa disse que as uvas estavam...", opcoes:["Verdes e azedas","Doces demais","Estragadas","Pequenas"], correta:0 },
+        { id:uid(), tipo:"fill", nivel:"dificil", enunciado:"A expressão popular ligada a esta fábula é: '____ é pouco'. (dica: as uvas estavam...)", resposta:"quem desdenha" },
+      ] }) ],
+    cie:[ L({ d:"cie", titulo:"Sistema Solar", texto:
+"O Sistema Solar é formado pelo Sol e por tudo que gira ao seu redor. ☀️🪐\n\n• O SOL é uma estrela no centro; dá luz e calor.\n• São 8 PLANETAS: Mercúrio, Vênus, Terra, Marte, Júpiter, Saturno, Urano e Netuno.\n• A TERRA é o único planeta com vida conhecida.\n• Júpiter é o maior; Saturno é famoso pelos anéis.\n\nOs planetas fazem TRANSLAÇÃO (ao redor do Sol) e ROTAÇÃO (em torno de si).",
+      exercicios:[
+        { id:uid(), tipo:"mc", nivel:"facil", enunciado:"Quantos planetas há no Sistema Solar?", opcoes:["7","8","9","10"], correta:1 },
+        { id:uid(), tipo:"vf", nivel:"facil", enunciado:"O Sol é uma estrela.", opcoes:["Verdadeiro","Falso"], correta:0 },
+        { id:uid(), tipo:"fill", nivel:"intermediario", enunciado:"O movimento da Terra ao redor do Sol chama-se ____.", resposta:"translação" },
+        { id:uid(), tipo:"mc", nivel:"intermediario", enunciado:"Qual é o maior planeta?", opcoes:["Terra","Marte","Júpiter","Vênus"], correta:2 },
+        { id:uid(), tipo:"mc", nivel:"dificil", enunciado:"Qual planeta é famoso pelos seus anéis?", opcoes:["Saturno","Mercúrio","Netuno","Vênus"], correta:0 },
+      ] }) ],
+    ing:[ L({ d:"ing", titulo:"Animals in English", texto:
+"Vamos aprender os nomes dos animais em inglês! 🐶🐱\n\n• dog = cachorro\n• cat = gato\n• bird = pássaro\n• fish = peixe\n• horse = cavalo\n• cow = vaca\n\nFrase útil: 'I have a dog.' (Eu tenho um cachorro.)\n'My favorite animal is the cat.' (Meu animal favorito é o gato.)",
+      exercicios:[
+        { id:uid(), tipo:"mc", nivel:"facil", enunciado:"Como se diz 'cachorro' em inglês?", opcoes:["cat","dog","cow","bird"], correta:1 },
+        { id:uid(), tipo:"mc", nivel:"facil", enunciado:"O que significa 'fish'?", opcoes:["pássaro","peixe","cavalo","gato"], correta:1 },
+        { id:uid(), tipo:"fill", nivel:"intermediario", enunciado:"Complete: 'I have a ____.' (gato)", resposta:"cat" },
+        { id:uid(), tipo:"mc", nivel:"intermediario", enunciado:"Qual a tradução de 'horse'?", opcoes:["vaca","cavalo","pássaro","peixe"], correta:1 },
+        { id:uid(), tipo:"vf", nivel:"dificil", enunciado:"'bird' significa 'pássaro'.", opcoes:["Verdadeiro","Falso"], correta:0 },
+      ] }) ],
+    his:[ L({ d:"his", titulo:"Independência do Brasil", texto:
+"A Independência do Brasil foi proclamada em 7 de setembro de 1822. 🇧🇷\n\n• Foi declarada por Dom Pedro I, às margens do rio Ipiranga, em São Paulo.\n• O famoso grito foi: 'Independência ou Morte!'.\n• Antes disso, o Brasil era uma colônia de Portugal.\n• Depois, o Brasil virou um Império, com Dom Pedro I como imperador.\n\nComemoramos essa data todo dia 7 de setembro.",
+      exercicios:[
+        { id:uid(), tipo:"mc", nivel:"facil", enunciado:"Em que data comemoramos a Independência do Brasil?", opcoes:["7 de setembro","15 de novembro","21 de abril","1 de maio"], correta:0 },
+        { id:uid(), tipo:"mc", nivel:"facil", enunciado:"Quem proclamou a Independência?", opcoes:["Dom Pedro I","Getúlio Vargas","Tiradentes","Dom João VI"], correta:0 },
+        { id:uid(), tipo:"fill", nivel:"intermediario", enunciado:"O grito da Independência foi: 'Independência ou ____!'", resposta:"morte" },
+        { id:uid(), tipo:"vf", nivel:"intermediario", enunciado:"Antes de 1822, o Brasil era colônia de Portugal.", opcoes:["Verdadeiro","Falso"], correta:0 },
+        { id:uid(), tipo:"mc", nivel:"dificil", enunciado:"Após a Independência, o Brasil tornou-se um...", opcoes:["Império","República","Reino de Portugal","Ducado"], correta:0 },
+      ] }) ],
+  };
+}
+// Carrega as lições demo em DATA (instantâneo, offline).
+function carregarDemoLicoes(){
+  SUBJECTS.forEach(s=> DATA[s.id]=[]);
+  const seed = seedDemo();
+  Object.keys(seed).forEach(sid=>{ DATA[sid]=(DATA[sid]||[]).concat(seed[sid]); });
+}
+
+// Entrar no app como aluno/professor demo (sem sessão real, sem escrita).
+function entrarDemoAluno(){ definirAlunoLogado(demoAlunoDoc()); SESSAO=null; State.tela="home"; render(); }
+function entrarDemoProfessor(){ PROFESSOR=demoProfessorDoc(); Teacher.tab="licoes"; SESSAO=null; State.tela="teacher"; render(); }
+
+// Sair do demo → recarrega o app SEM o parâmetro demo, indo para cadastro/login real.
+function demoSair(destino){
+  try{ sessionStorage.removeItem("modoDemo"); sessionStorage.setItem("demoDestino", destino||"landing"); }catch(_){}
+  try{ location.replace(location.origin + location.pathname); }
+  catch(_){ location.href = location.pathname; }
+}
+function demoCriarConta(){ demoSair("cadastroAluno"); }
+function demoLogin(){ demoSair("loginAluno"); }
 
 function subjById(id){ return SUBJECTS.find(s=>s.id===id); }
 
@@ -1476,6 +1605,7 @@ function render(){
   // protegemos uma vez (para o feedback falado ao errar sobreviver à ida p/ a explicação)
   if(Fala._protegerUmaVez){ Fala._protegerUmaVez=false; } else { Fala.parar(); }
   switch(State.tela){
+    case "demoWelcome":  renderDemoWelcome(); break;
     case "landing":      renderLanding(); break;
     case "loginAluno":   renderLoginAluno(); break;
     case "cadastroAluno":renderCadastroAluno(); break;
@@ -1500,6 +1630,19 @@ function render(){
   }
   atualizarBotoesFala(); // reflete o estado atual da leitura nos botões recém-criados
   atualizarControlesLeitor(); // idem para a barra de leitura por parágrafo (resumo/interpretação)
+  injetarBannerDemo();   // banner fixo do modo demo no topo das telas do app
+}
+// Insere o banner "MODO DEMO" no topo da tela ativa (exceto boas-vindas/auth).
+function injetarBannerDemo(){
+  if(!DEMO) return;
+  const semBanner={ demoWelcome:1, landing:1, loginAluno:1, cadastroAluno:1, loginProf:1, cadastroProf:1, admin:1 };
+  if(semBanner[State.tela]) return;
+  const scr=app.querySelector(".screen.active"); if(!scr || scr.querySelector(".demo-banner")) return;
+  const b=document.createElement("div");
+  b.className="demo-banner";
+  b.innerHTML=`<div class="demo-banner-txt"><b>🎪 MODO DEMO</b> — Explore à vontade! Seus dados não serão salvos.</div>
+    <button class="demo-banner-btn" onclick="App.demoCriarConta()">Criar conta →</button>`;
+  scr.insertBefore(b, scr.firstChild);
 }
 
 function goHome(){ clearInterval(estudoTimer); State.tela="home"; render(); }
@@ -1535,6 +1678,27 @@ function toggleSenha(id, btn){
 }
 
 // ----- LANDING: escolha de perfil -----
+// ----- MODO DEMO: tela de boas-vindas -----
+function renderDemoWelcome(){
+  app.innerHTML = `<div class="screen active">
+    <div class="content demo-welcome">
+      <div class="demo-badge">MODO DEMO</div>
+      <div class="demo-welcome-card">
+        <div style="text-align:center">${mascot('bounce')}</div>
+        <h1 style="text-align:center;color:#fff;font-size:24px;margin:6px 0 2px">🎓 Bem-vindo ao EstudaMais!</h1>
+        <p style="text-align:center;color:#f0e9ff;font-size:14px;margin-bottom:18px">
+          Você está no modo demonstração. Explore o app como aluno ou professor sem precisar de conta!</p>
+        <button class="btn" style="background:#ffb703;box-shadow:0 4px 0 #e08e00;color:#5a3d00" onclick="App.entrarDemoAluno()">
+          👨‍🎓 Entrar como Aluno Demo<br><span style="font-size:12px;font-weight:600;opacity:.85">João Vitor, 5º ano</span></button>
+        <button class="btn blue" style="margin-top:12px" onclick="App.entrarDemoProfessor()">
+          👨‍🏫 Entrar como Professor Demo<br><span style="font-size:12px;font-weight:600;opacity:.85">Prof. Demo</span></button>
+        <button class="btn" style="margin-top:20px;background:rgba(255,255,255,.18);box-shadow:none;color:#fff" onclick="App.demoLogin()">
+          🔒 Já tenho conta — Fazer login</button>
+      </div>
+    </div>
+  </div>`;
+}
+
 function renderLanding(){
   app.innerHTML = authShell(`
     <div style="text-align:center;margin:20px 0 8px">${mascot('bounce')}</div>
@@ -1956,12 +2120,13 @@ function deviceId(){
   return id;
 }
 async function getLicaoGerada(licaoId){
+  if(DEMO) return null; // demo: sem cache no Firestore (gera na hora se houver chave)
   if(!db || !licaoId) return null;
   try{ const d=await db.collection("licoes_geradas").doc(licaoId).get(); return d.exists ? d.data() : null; }
   catch(e){ return null; }
 }
 function salvarLicaoGerada(licaoId, dados){
-  if(!db || !licaoId) return;
+  if(DEMO || !db || !licaoId) return;
   try{
     db.collection("licoes_geradas").doc(licaoId).set(Object.assign({
       licaoId, geradoEm: firebase.firestore.FieldValue.serverTimestamp(), geradoPor: deviceId()
@@ -2089,6 +2254,7 @@ function renderStudy(){
     <div class="content" id="estudoContent" style="background:${s.cor}1a">
       <div style="text-align:center;margin-bottom:6px">${mascot('')}</div>
       <h1 style="text-align:center;font-size:22px;color:${s.cor};margin-bottom:6px">Vamos estudar antes de responder! 📚</h1>
+      ${est.status==="ok" ? `<div style="text-align:center;margin-bottom:8px"><span class="pill-tag" style="background:#8e44ad">✨ Gerado por IA</span></div>`:''}
       ${est.status==="fallback" ? `<p style="text-align:center;font-size:12px;color:#999;margin-bottom:8px">(Resumo automático indisponível — veja o conteúdo da lição abaixo.)</p>`:''}
       ${barraLeitorHtml()}
       <div class="resumo-box">${corpo}</div>
@@ -2428,6 +2594,7 @@ function mostrarExplicacao(texto, respCorreta){
 // já encontra a explicação pronta ao errar. Só roda em aparelho com a chave configurada.
 let pregerando = false;
 async function pregerarExplicacoes(l){
+  if(DEMO) return; // demo: não pré-grava explicações no Firestore
   if(pregerando || !l || !iaConfigurada()) return;
   l.explicacoes = l.explicacoes || {};
   const faltando = (l.exercicios||[]).filter(ex=> ex.id && !l.explicacoes[ex.id]);
@@ -2621,12 +2788,13 @@ let historiaCache = {}; // cache em memória por licaoId
 
 // ----- Cache no Firestore (coleção "historias_geradas") -----
 async function getHistoriaGerada(licaoId){
+  if(DEMO) return null; // demo: gera na hora (se houver chave); nada de cache no Firestore
   if(!db || !licaoId) return null;
   try{ const d=await db.collection("historias_geradas").doc(licaoId).get(); return d.exists ? d.data() : null; }
   catch(e){ return null; }
 }
 function salvarHistoriaGerada(licaoId, h){
-  if(!db || !licaoId || !h) return;
+  if(DEMO || !db || !licaoId || !h) return;
   try{
     db.collection("historias_geradas").doc(licaoId).set({
       titulo:h.titulo, cenario:h.cenario, protagonista:h.protagonista, capitulos:h.capitulos,
@@ -3617,6 +3785,7 @@ function editLesson(id){
 }
 async function deleteLesson(id){
   if(!confirm("Excluir esta lição e todos os seus exercícios?")) return;
+  if(DEMO){ removeLicaoLocal(id); toast("Lição removida (modo demo)."); render(); return; }
   toast("Excluindo...");
   try{
     await db.collection("licoes").doc(id).delete();
@@ -4647,6 +4816,17 @@ async function saveLesson(){
     materialTexto: materialTexto,
     historiaHabilitada: historiaHabilitada
   };
+  // MODO DEMO: "criar lição de teste" salva apenas localmente (nunca no Firestore).
+  if(DEMO){
+    const idLocal = L.id || ("demo_novo_"+Math.random().toString(36).slice(2,8));
+    removeLicaoLocal(idLocal);
+    if(!DATA[disc]) DATA[disc]=[];
+    DATA[disc].push({ id:idLocal, titulo:L.titulo, texto:conteudo, exercicios:L.exercicios, resumoIA:"", explicacoes:{}, turma:turmaN, ano:anoN, nivel:nivelN, materialNomes:materialNomes, materialTipos:materialTipos, materialTexto:materialTexto, historiaHabilitada:historiaHabilitada, tipo:tipo, textoGerado:payload.textoGerado, tituloTexto:payload.tituloTexto, generoTextual:payload.generoTextual, tema:payload.tema, isDemo:true });
+    Teacher.editingLesson=null; Teacher.tab="licoes";
+    toast("Lição de teste criada (modo demo — não salva na nuvem). ✅");
+    render();
+    return;
+  }
   toast("Salvando...");
   try{
     // `L.id` pode já existir numa lição NOVA (id gerado ao anexar material) — por isso
@@ -4725,7 +4905,25 @@ function pctDoProg(p){
   return p.total>0 ? (p.acertos/p.total*100) : 0;
 }
 // Carrega alunos das turmas/anos do professor e seus registros de progresso.
+// Alunos e métricas fictícios do rendimento no modo demo (nada vindo do Firestore).
+const DEMO_ALUNOS_FICT = [
+  { id:"demo_al_1", nome:"Ana Silva",       ano:"5º ano", turma:"A", pct:85, xp:320 },
+  { id:"demo_al_2", nome:"Pedro Oliveira",  ano:"5º ano", turma:"A", pct:72, xp:280 },
+  { id:"demo_al_3", nome:"Maria Santos",    ano:"5º ano", turma:"A", pct:91, xp:410 },
+  { id:"demo_al_4", nome:"Lucas Costa",     ano:"5º ano", turma:"A", pct:68, xp:190 },
+  { id:"demo_al_5", nome:"Beatriz Lima",    ano:"5º ano", turma:"A", pct:95, xp:450 },
+];
+const DEMO_METRICAS = { alunos:5, licoes:12, media:82, disciplinas:[
+  { id:"por", pct:100 }, { id:"mat", pct:75 }, { id:"cie", pct:60 }
+] };
+function carregarRendimentoDemo(){
+  Teacher.prog.alunos = DEMO_ALUNOS_FICT.map(a=>Object.assign({}, a));
+  Teacher.prog.progresso = [];
+  Teacher.prog.carregada=true; Teacher.prog.carregando=false; Teacher.prog.erro="";
+  render();
+}
 async function carregarRendimento(){
+  if(DEMO){ carregarRendimentoDemo(); return; } // demo: dados fictícios, sem Firestore
   Teacher.prog.carregando=true; Teacher.prog.erro=""; render();
   try{
     const professor = PROFESSOR || {};
@@ -4760,6 +4958,7 @@ function recarregarRendimento(){ Teacher.prog.carregada=false; carregarRendiment
 
 // --- Gestão de alunos (professor): redefinir senha / remover ---
 async function redefinirSenhaAluno(id){
+  if(DEMO){ toast("Indisponível no modo demo."); return; }
   const aluno=(Teacher.prog.alunos||[]).find(a=>a.id===id);
   const nome = aluno ? aluno.nome : "o aluno";
   const nova = prompt(`Nova senha para ${nome}:`);
@@ -4773,6 +4972,7 @@ async function redefinirSenhaAluno(id){
   }catch(e){ toast("Erro ao redefinir a senha. Verifique a conexão."); }
 }
 async function removerAluno(id){
+  if(DEMO){ toast("Indisponível no modo demo."); return; }
   const aluno=(Teacher.prog.alunos||[]).find(a=>a.id===id);
   const nome = aluno ? aluno.nome : "este aluno";
   if(!confirm(`Remover ${nome}? A conta e o histórico de progresso dele serão excluídos. Esta ação não pode ser desfeita.`)) return;
@@ -4788,6 +4988,7 @@ async function removerAluno(id){
 }
 // Zera TODO o progresso de um aluno (mantém a conta). Só para alunos das turmas do professor.
 async function zerarProgressoAluno(id){
+  if(DEMO){ toast("Indisponível no modo demo."); return; }
   const aluno=(Teacher.prog.alunos||[]).find(a=>a.id===id);
   if(!aluno){ toast("Aluno não encontrado."); return; }
   // Segurança: o aluno precisa estar no escopo (turma+ano) do professor logado.
@@ -4845,7 +5046,31 @@ function totalLicoesAluno(aluno, discId){
   return n;
 }
 
+// Painel de rendimento fictício (modo demo).
+function teacherProgressDemoHtml(){
+  const m=DEMO_METRICAS;
+  const resumo = `<div class="stat-row" style="margin:10px 0 4px">
+    <div class="stat-pill" style="background:#ede7f6;color:#5e35b1"><div class="v">${m.alunos}</div><div class="l">Alunos ativos</div></div>
+    <div class="stat-pill" style="background:#e3f2fd;color:#1565c0"><div class="v">${m.licoes}</div><div class="l">Lições feitas</div></div>
+    <div class="stat-pill" style="background:#e8f5e9;color:#2e7d32"><div class="v">${m.media}%</div><div class="l">Média acertos</div></div>
+  </div>`;
+  const barras = m.disciplinas.map(d=>{ const s=subjById(d.id)||{nome:d.id,icon:"",cor:"#999"};
+    return `<div style="margin-bottom:8px">
+      <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px"><span>${s.icon} ${esc(s.nome)}</span><b style="color:${s.cor}">${d.pct}%</b></div>
+      <div class="prog-bar-mini"><div style="width:${d.pct}%;background:${s.cor}"></div></div>
+    </div>`; }).join("");
+  const linhas = DEMO_ALUNOS_FICT.map(a=>`<div class="t-lesson-row" style="align-items:center">
+      <div class="info" style="min-width:0"><div class="t">${esc(a.nome)}</div>
+        <div style="font-size:12px;color:var(--gray-d)">${esc(a.ano)} ${esc(a.turma)} • ${a.pct}% acertos • ${a.xp} XP</div></div>
+      <div class="prog-bar-mini" style="width:90px"><div style="width:${a.pct}%;background:${a.pct>=85?'#2e7d32':(a.pct>=70?'#f9a825':'#e53935')}"></div></div>
+    </div>`).join("");
+  return `<p style="font-size:12px;color:#999;margin:4px 0 2px">👀 Dados fictícios para demonstração — 5º ano, Turma A.</p>
+    ${resumo}
+    <div class="sec-title">Conclusão por disciplina</div>${barras}
+    <div class="sec-title">Alunos da turma</div>${linhas}`;
+}
 function teacherProgressTab(){
+  if(DEMO) return teacherProgressDemoHtml();
   const P=Teacher.prog;
   if(P.carregando) return `<div class="ia-loading" style="color:#9b59b6;padding:30px 0"><span class="ia-spinner"></span> Carregando rendimento...</div>`;
   const turmas = (PROFESSOR && Array.isArray(PROFESSOR.turmas)) ? PROFESSOR.turmas : [];
@@ -4970,6 +5195,14 @@ function premForm(){
 }
 // Carrega as premiações das turmas do professor.
 async function carregarPremiacoesProf(){
+  if(DEMO){ // demo: premiações de exemplo (sem Firestore)
+    Teacher.prem.lista = [
+      { id:"demo_pr_1", nome:"Mestre das Frações", descricao:"Concluiu todas as lições de Matemática", icone:"➗", criterio:"xp", valorMinimo:200, turma:"A" },
+      { id:"demo_pr_2", nome:"Leitor Voraz", descricao:"Leu 5 textos de interpretação", icone:"📚", criterio:"licoes", valorMinimo:5, turma:"A" },
+      { id:"demo_pr_3", nome:"Craque do Inglês", descricao:"90% de acertos em Inglês", icone:"🇬🇧", criterio:"xp", valorMinimo:150, turma:"A" },
+    ];
+    Teacher.prem.carregada=true; Teacher.prem.carregando=false; Teacher.prem.erro=""; render(); return;
+  }
   Teacher.prem.carregando=true; Teacher.prem.erro=""; render();
   try{
     const turmas=(PROFESSOR && Array.isArray(PROFESSOR.turmas))?PROFESSOR.turmas:[];
@@ -4991,6 +5224,10 @@ async function criarPremiacao(){
   const turma=val('pmTurma'), expira=val('pmExpira');
   if(!nome){ toast("Dê um nome à premiação."); return; }
   if(!valorMinimo){ toast("Informe o valor do critério."); return; }
+  if(DEMO){ // demo: adiciona só localmente
+    Teacher.prem.lista = (Teacher.prem.lista||[]).concat([{ id:"demo_pr_"+Math.random().toString(36).slice(2,7), nome, descricao, icone, criterio, valorMinimo, turma }]);
+    Teacher.prem.form=null; toast("Premiação criada (modo demo). 🏆"); render(); return;
+  }
   Teacher.prem.salvando=true; render();
   try{
     const payload={ nome, descricao, icone, criterio, valorMinimo, turma };
@@ -5003,6 +5240,7 @@ async function criarPremiacao(){
 }
 async function excluirPremiacao(id){
   if(!confirm("Excluir esta premiação?")) return;
+  if(DEMO){ Teacher.prem.lista=Teacher.prem.lista.filter(p=>p.id!==id); toast("Premiação excluída (modo demo)."); render(); return; }
   try{
     await db.collection("premiacoes").doc(id).delete();
     Teacher.prem.lista=Teacher.prem.lista.filter(p=>p.id!==id);
@@ -5097,6 +5335,7 @@ async function salvarConta(){
   if(!anos.length){ toast("Selecione ao menos um ano/série que você leciona."); return; }
   if(!disciplinas.length){ toast("Selecione ao menos uma disciplina."); return; }
   if(!PROFESSOR || !PROFESSOR.id){ toast("Sessão inválida. Entre novamente."); return; }
+  if(DEMO){ PROFESSOR.turmas=turmas; PROFESSOR.anos=anos; PROFESSOR.disciplinas=disciplinas; toast("Conta atualizada (modo demo — não salva na nuvem). ✅"); render(); return; }
   Teacher.conta.salvando=true; render();
   try{
     await db.collection("professores").doc(PROFESSOR.id).set({ turmas, anos, disciplinas }, { merge:true });
@@ -5125,6 +5364,8 @@ window.App = {
   // configurações de áudio (voz/velocidade/tom)
   setEstiloVoz, testarEstilo, setEstiloRapido, setVelocidade, setVelocidadeSlider, setVelocidadeRapido,
   setAudioVoz, setAudioVozDropdown, testarVoz,
+  // modo demo (feiras/apresentações)
+  entrarDemoAluno, entrarDemoProfessor, demoCriarConta, demoLogin,
   // autenticação
   irTela, logout, toggleSenha,
   irCadastroAluno, submitLoginAluno, onNivelCadAluno, submitCadastroAluno,
@@ -5203,12 +5444,23 @@ async function boot(){
   loadIA();
   carregarSessao();
   SUBJECTS.forEach(s=> DATA[s.id]=DATA[s.id]||[]);
+  // MODO DEMO: carregamento rápido e offline; nada de Firestore obrigatório.
+  if(detectarDemo()){
+    mostrarCarregando("Carregando demonstração...");
+    carregarDemoLicoes();                    // lições locais (instantâneo)
+    // IA é opcional no demo: tenta carregar a chave, mas não bloqueia se falhar/offline
+    try{ initFirebase(); await carregarChaveIA(); }catch(_){}
+    State.tela="demoWelcome"; render();
+    return;
+  }
   mostrarCarregando("Carregando...");
   try{
     initFirebase();
     await carregarChaveIA();   // chave da OpenAI compartilhada (Firestore)
     await ouvirLicoes();       // listener em tempo real; resolve no primeiro snapshot
     await restaurarSessao();   // recarrega aluno/professor logado, se houver
+    // veio de uma saída do modo demo? abre direto o cadastro/login pedido
+    try{ const d=sessionStorage.getItem("demoDestino"); if(d){ sessionStorage.removeItem("demoDestino"); if(!SESSAO && (d==="cadastroAluno"||d==="loginAluno"||d==="landing")){ State.tela=d; if(d!=="landing") toast("Gostou do EstudaMais? Crie sua conta grátis!"); } } }catch(_){}
     render();
   }catch(e){
     mostrarErroConexao();
