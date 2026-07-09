@@ -245,10 +245,34 @@ label{ display:block; font-weight:700; font-size:14px; margin-bottom:6px; color:
 /* ---------- 5. PAINEL DO PROFESSOR ---------- */
 .teacher-tabs{ display:flex; border-bottom:2px solid var(--gray); background:#fff; }
 .teacher-tab{
-  flex:1; padding:14px 4px; text-align:center; font-weight:700; font-size:13px;
+  flex:1; padding:14px 3px; text-align:center; font-weight:700; font-size:12px;
   border:none; background:none; color:var(--gray-d); cursor:pointer; border-bottom:3px solid transparent;
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
 }
 .teacher-tab.active{ color:var(--blue); border-bottom-color:var(--blue); }
+/* ---------- CORRETOR DE PROVAS ---------- */
+.corretor-dica{ background:#fff7e6; border:1px solid #ffe0a3; border-left:4px solid #ff8c00; border-radius:12px; padding:10px 12px; margin-bottom:12px; }
+.corretor-dica b{ color:#e08e00; }
+.corretor-capturas{ display:flex; gap:8px; flex-wrap:wrap; }
+.corretor-btn{ flex:1; min-width:150px; display:inline-flex; align-items:center; justify-content:center; gap:6px;
+  background:#9b59b6; color:#fff; font-weight:800; font-size:14px; border-radius:14px; padding:14px 12px;
+  cursor:pointer; box-shadow:0 4px 0 #7d3c98; -webkit-tap-highlight-color:transparent; }
+.corretor-btn.galeria{ background:#1cb0f6; box-shadow:0 4px 0 #1591cc; }
+.corretor-btn:active{ transform:translateY(2px); box-shadow:none; }
+.corretor-thumbs{ display:flex; gap:8px; flex-wrap:wrap; margin-top:10px; }
+.corretor-thumb{ position:relative; width:88px; height:88px; border-radius:10px; overflow:hidden; border:2px solid var(--gray); }
+.corretor-thumb img{ width:100%; height:100%; object-fit:cover; display:block; }
+.corretor-thumb button{ position:absolute; top:2px; right:2px; width:22px; height:22px; border:none; border-radius:50%;
+  background:rgba(0,0,0,.6); color:#fff; font-size:12px; cursor:pointer; line-height:1; }
+.corretor-tiles{ display:flex; gap:10px; margin:10px 0 4px; }
+.corretor-tile{ flex:1; background:#fff; border:2px solid var(--gray); border-radius:14px; padding:12px 6px; text-align:center; }
+.corretor-tile .v{ font-size:24px; font-weight:800; color:#9b59b6; line-height:1.1; }
+.corretor-tile .l{ font-size:11px; color:var(--gray-d); font-weight:700; margin-top:2px; }
+.corretor-q{ background:#fff; border:2px solid var(--gray); border-left-width:5px; border-radius:12px; padding:10px 12px; margin-bottom:8px; }
+.corretor-acoes{ display:flex; gap:8px; flex-wrap:wrap; margin-top:16px; }
+.corretor-acoes .btn{ flex:1; min-width:140px; margin:0; }
+.corretor-demobadge{ background:#fff3e0; border:1px solid #ffcc80; color:#e65100; font-size:12px; font-weight:700;
+  border-radius:10px; padding:8px 10px; margin-bottom:10px; text-align:center; }
 .t-lesson-row{
   display:flex; align-items:center; gap:10px; background:#fff;
   border:2px solid var(--gray); border-radius:12px; padding:12px; margin-bottom:10px;
@@ -437,6 +461,7 @@ label{ display:block; font-weight:700; font-size:14px; margin-bottom:6px; color:
 <!-- Extração de texto de documentos anexados (Material de Apoio) -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 
 <script>
 /* ============================================================
@@ -3754,7 +3779,7 @@ const Teacher = { tab:"licoes", subj:"mat", editingLesson:null, gerando:false, r
   // upload de material de apoio (barra de progresso / status de leitura)
   upload:{ ativo:false, pct:0, nome:"", lendo:false },
   // painel de rendimento (Fase C)
-  prog:{ carregada:false, carregando:false, erro:"", alunos:[], progresso:[], fTurma:"", fDisc:"", fPeriodo:"todos" },
+  prog:{ carregada:false, carregando:false, erro:"", alunos:[], progresso:[], correcoes:[], fTurma:"", fDisc:"", fPeriodo:"todos" },
   // premiações personalizadas (Fase D)
   prem:{ carregada:false, carregando:false, erro:"", lista:[], salvando:false, form:null },
   // edição da própria conta (turmas/disciplinas)
@@ -3762,7 +3787,11 @@ const Teacher = { tab:"licoes", subj:"mat", editingLesson:null, gerando:false, r
   // gerenciamento do Modo História por lição
   hist:{ gerando:false, preview:null, erro:"" },
   // geração de lição de interpretação de texto (Português)
-  interp:{ gerando:false, erro:"" } };
+  interp:{ gerando:false, erro:"" },
+  // corretor de provas por câmera (OpenAI Vision)
+  corretor:{ view:"form", imagens:[], alunoId:"", subj:"mat", licaoId:"", valor:"10",
+    carregando:false, msgIdx:0, erro:"", resultado:null, ehDemo:false, meta:null,
+    alunos:[], alunosCarregados:false, historico:[], histCarregado:false } };
 
 function renderTeacher(){
   if(Teacher.previewing){ renderPreview(); return; }
@@ -3770,6 +3799,7 @@ function renderTeacher(){
   if(Teacher.tab==="licoes") inner=teacherLessonsTab();
   else if(Teacher.tab==="novo") inner=teacherEditorTab();
   else if(Teacher.tab==="premios") inner=teacherPremiosTab();
+  else if(Teacher.tab==="corretor") inner=teacherCorretorTab();
   else if(Teacher.tab==="conta") inner=teacherContaTab();
   else inner=teacherProgressTab();
 
@@ -3783,6 +3813,7 @@ function renderTeacher(){
       <button class="teacher-tab ${Teacher.tab==='novo'?'active':''}" onclick="App.teacherTab('novo')">${Teacher.editingLesson?'✏️ Editar':'➕ Nova'}</button>
       <button class="teacher-tab ${Teacher.tab==='progresso'?'active':''}" onclick="App.teacherTab('progresso')">📊 Rendi.</button>
       <button class="teacher-tab ${Teacher.tab==='premios'?'active':''}" onclick="App.teacherTab('premios')">🏆 Prêmios</button>
+      <button class="teacher-tab ${Teacher.tab==='corretor'?'active':''}" onclick="App.teacherTab('corretor')">📷 Corretor</button>
       <button class="teacher-tab ${Teacher.tab==='conta'?'active':''}" onclick="App.teacherTab('conta')">👤 Conta</button>
     </div>
     <div class="content" style="background:#faf7ff">${inner}</div>
@@ -3793,6 +3824,10 @@ function teacherTab(t){
   Teacher.tab=t;
   if(t==="progresso" && !Teacher.prog.carregada && !Teacher.prog.carregando){ carregarRendimento(); return; }
   if(t==="premios" && !Teacher.prem.carregada && !Teacher.prem.carregando){ carregarPremiacoesProf(); return; }
+  if(t==="corretor"){ // carrega alunos e histórico de correções ao abrir
+    Teacher.corretor.subj = Teacher.corretor.subj || Teacher.subj || "mat";
+    carregarAlunosCorretor(); carregarHistoricoCorrecoes();
+  }
   if(t==="conta"){ // carrega os valores atuais da conta para edição
     Teacher.conta.turmas = (PROFESSOR && Array.isArray(PROFESSOR.turmas)) ? PROFESSOR.turmas.slice() : [];
     Teacher.conta.anos   = (PROFESSOR && Array.isArray(PROFESSOR.anos)) ? PROFESSOR.anos.slice() : [];
@@ -5046,7 +5081,10 @@ async function carregarRendimento(){
     const progresso=[];
     const snapP = await db.collection("progresso").get();
     snapP.forEach(d=>{ const p=d.data(); if(ids[p.alunoId]) progresso.push(p); });
-    Teacher.prog.alunos=alunos; Teacher.prog.progresso=progresso;
+    // provas corrigidas pelo professor (corretor por câmera)
+    let correcoes=[];
+    try{ const snapC = await db.collection("correcoes").where("professorId","==",professor.id||"").get(); snapC.forEach(d=>{ correcoes.push(d.data()); }); }catch(_){}
+    Teacher.prog.alunos=alunos; Teacher.prog.progresso=progresso; Teacher.prog.correcoes=correcoes;
     Teacher.prog.carregada=true; Teacher.prog.carregando=false; render();
   }catch(e){
     Teacher.prog.carregando=false; Teacher.prog.carregada=true;
@@ -5149,21 +5187,31 @@ function totalLicoesAluno(aluno, discId){
 // Painel de rendimento fictício (modo demo).
 function teacherProgressDemoHtml(){
   const m=DEMO_METRICAS;
+  // provas corrigidas (fictícias + salvas na sessão do demo)
+  corrCarregarHistoricoDemo();
+  const provas = Teacher.corretor.historico||[];
+  const mediaProvas = provas.length ? (provas.reduce((a,c)=>a + (c.notaFinal/(c.notaMaxima||10)*10),0)/provas.length) : 0;
+  const provasPorNome = {}; provas.forEach(c=>{ provasPorNome[c.alunoNome]=(provasPorNome[c.alunoNome]||0)+1; });
   const resumo = `<div class="stat-row" style="margin:10px 0 4px">
     <div class="stat-pill" style="background:#ede7f6;color:#5e35b1"><div class="v">${m.alunos}</div><div class="l">Alunos ativos</div></div>
     <div class="stat-pill" style="background:#e3f2fd;color:#1565c0"><div class="v">${m.licoes}</div><div class="l">Lições feitas</div></div>
     <div class="stat-pill" style="background:#e8f5e9;color:#2e7d32"><div class="v">${m.media}%</div><div class="l">Média acertos</div></div>
+  </div>
+  <div class="stat-row" style="margin:0 0 4px">
+    <div class="stat-pill" style="background:#f3e5f5;color:#8e24aa"><div class="v">📷 ${provas.length}</div><div class="l">Provas corrigidas</div></div>
+    <div class="stat-pill" style="background:#fff3e0;color:#e65100"><div class="v">${mediaProvas?mediaProvas.toFixed(1):'—'}</div><div class="l">Média das provas</div></div>
   </div>`;
   const barras = m.disciplinas.map(d=>{ const s=subjById(d.id)||{nome:d.id,icon:"",cor:"#999"};
     return `<div style="margin-bottom:8px">
       <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px"><span>${s.icon} ${esc(s.nome)}</span><b style="color:${s.cor}">${d.pct}%</b></div>
       <div class="prog-bar-mini"><div style="width:${d.pct}%;background:${s.cor}"></div></div>
     </div>`; }).join("");
-  const linhas = DEMO_ALUNOS_FICT.map(a=>`<div class="t-lesson-row" style="align-items:center">
+  const linhas = DEMO_ALUNOS_FICT.map(a=>{ const np=provasPorNome[a.nome]||0;
+    return `<div class="t-lesson-row" style="align-items:center">
       <div class="info" style="min-width:0"><div class="t">${esc(a.nome)}</div>
-        <div style="font-size:12px;color:var(--gray-d)">${esc(a.ano)} ${esc(a.turma)} • ${a.pct}% acertos • ${a.xp} XP</div></div>
+        <div style="font-size:12px;color:var(--gray-d)">${a.pct}% acertos • ${a.xp} XP • 📷 ${np} prova(s)</div></div>
       <div class="prog-bar-mini" style="width:90px"><div style="width:${a.pct}%;background:${a.pct>=85?'#2e7d32':(a.pct>=70?'#f9a825':'#e53935')}"></div></div>
-    </div>`).join("");
+    </div>`; }).join("");
   return `<p style="font-size:12px;color:#999;margin:4px 0 2px">👀 Dados fictícios para demonstração — 5º ano, Turma A.</p>
     ${resumo}
     <div class="sec-title">Conclusão por disciplina</div>${barras}
@@ -5230,11 +5278,20 @@ function teacherProgressTab(){
   const totConcl = prog.length;
   const comTotal = prog.filter(p=>p.total>0);
   const mediaAcertos = comTotal.length ? Math.round(comTotal.reduce((a,p)=>a + pctDoProg(p),0)/comTotal.length) : 0;
+  // provas corrigidas (corretor) no escopo, respeitando o filtro de disciplina
+  const idsAlunos={}; alunos.forEach(a=> idsAlunos[a.id]=true);
+  const correcoes=(P.correcoes||[]).filter(c=> idsAlunos[c.alunoId] && (!P.fDisc || c.disciplina===P.fDisc));
+  const provasPorAluno={}; correcoes.forEach(c=>{ provasPorAluno[c.alunoId]=(provasPorAluno[c.alunoId]||0)+1; });
+  const mediaProvas = correcoes.length ? (correcoes.reduce((a,c)=>a + (c.notaFinal/((c.notaMaxima)||10)*10),0)/correcoes.length) : 0;
   const resumo = `<div class="stat-row" style="margin:10px 0 4px">
     <div class="stat-pill" style="background:#ede7f6;color:#5e35b1"><div class="v">${alunos.length}</div><div class="l">Alunos</div></div>
     <div class="stat-pill" style="background:#e3f2fd;color:#1565c0"><div class="v">${totConcl}</div><div class="l">Lições feitas</div></div>
     <div class="stat-pill" style="background:#e8f5e9;color:#2e7d32"><div class="v">${mediaAcertos}%</div><div class="l">Média acertos</div></div>
-  </div>`;
+  </div>
+  ${correcoes.length?`<div class="stat-row" style="margin:0 0 4px">
+    <div class="stat-pill" style="background:#f3e5f5;color:#8e24aa"><div class="v">📷 ${correcoes.length}</div><div class="l">Provas corrigidas</div></div>
+    <div class="stat-pill" style="background:#fff3e0;color:#e65100"><div class="v">${mediaProvas.toFixed(1)}</div><div class="l">Média das provas</div></div>
+  </div>`:''}`;
 
   // ----- Gráfico de barras: % de conclusão por disciplina (turma) -----
   const discList = P.fDisc ? SUBJECTS.filter(s=>s.id===P.fDisc) : SUBJECTS;
@@ -5273,7 +5330,7 @@ function teacherProgressTab(){
     return `<div class="card" style="cursor:default">
       <div style="display:flex;align-items:center;gap:10px">
         <div style="flex:1"><b>${esc(a.nome)}</b>
-          <div style="font-size:12px;color:var(--gray-d)">Turma ${esc(a.turma||'-')} • ⭐ ${a.xpTotal||0} XP • ${feitas}/${possiveis} lições • ✅ ${acc}% acertos</div></div>
+          <div style="font-size:12px;color:var(--gray-d)">Turma ${esc(a.turma||'-')} • ⭐ ${a.xpTotal||0} XP • ${feitas}/${possiveis} lições • ✅ ${acc}% acertos${provasPorAluno[a.id]?(' • 📷 '+provasPorAluno[a.id]+' prova(s)'):''}</div></div>
         <b style="color:#9b59b6">${pct}%</b>
       </div>
       <div class="prog-bar-mini"><div style="width:${pct}%;background:#9b59b6"></div></div>
@@ -5445,6 +5502,410 @@ async function salvarConta(){
 }
 
 /* ============================================================
+   CORRETOR DE PROVAS POR CÂMERA (OpenAI Vision) — painel do professor
+   ============================================================ */
+const CORRETOR_LOAD_MSGS = ["📷 Analisando a imagem...","🔍 Identificando as questões...","✏️ Lendo as respostas do aluno...","📊 Calculando a pontuação...","✨ Gerando o relatório..."];
+let corretorLoadTimer = null;
+const CORRETOR_JSON_FORMATO =
+`Retorne APENAS um JSON válido (aspas duplas), sem texto ao redor, no formato exato:
+{"totalQuestoes":0,"questoesCorretas":0,"questoesIncorretas":0,"questoesParciais":0,"notaFinal":0,"notaMaxima":0,"percentualAcerto":0,"conceito":"Excelente|Ótimo|Bom|Regular|Insuficiente","questoes":[{"numero":1,"respostaAluno":"texto identificado na imagem","respostaCorreta":"texto do gabarito","status":"correta|incorreta|parcial|em_branco","pontuacao":0,"pontuacaoMaxima":0,"observacao":"comentário do professor"}],"feedbackGeral":"análise em 2-3 frases","pontosMelhoria":["..."],"pontosForca":["..."]}`;
+
+function dataHojeBR(){ try{ return new Date().toLocaleDateString("pt-BR"); }catch(_){ return ""; } }
+function conceitoDeNota(pct){ if(pct>=90)return "Excelente"; if(pct>=75)return "Ótimo"; if(pct>=60)return "Bom"; if(pct>=40)return "Regular"; return "Insuficiente"; }
+function corrStatusInfo(s){
+  if(s==="correta")   return { ic:"✅", txt:"CORRETA",   cor:"#2e7d32", bg:"#e8f5e9" };
+  if(s==="incorreta") return { ic:"❌", txt:"INCORRETA", cor:"#c62828", bg:"#ffebee" };
+  if(s==="parcial")   return { ic:"⚠️", txt:"PARCIAL",   cor:"#f9a825", bg:"#fff8e1" };
+  return { ic:"○", txt:"EM BRANCO", cor:"#757575", bg:"#f5f5f5" };
+}
+
+// Resultado fictício (modo demo sem chave de IA)
+function correcaoDemoResultado(){
+  return { totalQuestoes:5, questoesCorretas:4, questoesIncorretas:1, questoesParciais:0,
+    notaFinal:8.0, notaMaxima:10.0, percentualAcerto:80, conceito:"Ótimo",
+    questoes:[
+      { numero:1, status:"correta", pontuacao:2, pontuacaoMaxima:2, respostaAluno:"B) 3/4", respostaCorreta:"3/4", observacao:"Correto! Boa identificação da fração." },
+      { numero:2, status:"correta", pontuacao:2, pontuacaoMaxima:2, respostaAluno:"Verdadeiro", respostaCorreta:"Verdadeiro", observacao:"Correto!" },
+      { numero:3, status:"incorreta", pontuacao:0, pontuacaoMaxima:2, respostaAluno:"1/3", respostaCorreta:"1/2", observacao:"A metade de um inteiro é sempre 1/2." },
+      { numero:4, status:"correta", pontuacao:2, pontuacaoMaxima:2, respostaAluno:"C) Denominador", respostaCorreta:"Denominador", observacao:"Perfeito!" },
+      { numero:5, status:"correta", pontuacao:2, pontuacaoMaxima:2, respostaAluno:"2/4 = 1/2", respostaCorreta:"1/2", observacao:"Excelente! Soube simplificar a fração." }
+    ],
+    feedbackGeral:"Ótimo desempenho! O aluno demonstra boa compreensão sobre frações. Apenas a questão 3 precisa de revisão sobre representação de metades.",
+    pontosForca:["Identificação de frações","Vocabulário matemático","Simplificação de frações"],
+    pontosMelhoria:["Representação visual de metades","Frações equivalentes"] };
+}
+function historicoDemo(){
+  return [
+    { id:"demo_c1", alunoNome:"Maria Santos",   disciplina:"mat", notaFinal:9.0, notaMaxima:10, conceito:"Excelente", dataStr:"07/07/2026" },
+    { id:"demo_c2", alunoNome:"Pedro Oliveira", disciplina:"por", notaFinal:7.5, notaMaxima:10, conceito:"Bom",       dataStr:"06/07/2026" },
+    { id:"demo_c3", alunoNome:"Ana Silva",      disciplina:"cie", notaFinal:8.5, notaMaxima:10, conceito:"Ótimo",     dataStr:"05/07/2026" },
+  ];
+}
+
+// ---- carregamento de alunos e histórico ----
+function carregarAlunosCorretor(){
+  const C=Teacher.corretor;
+  if(C.alunosCarregados) return;
+  if(DEMO){ C.alunos = DEMO_ALUNOS_FICT.map(a=>({ id:a.id, nome:a.nome })); C.alunosCarregados=true; return; }
+  if(!db){ C.alunos=[]; C.alunosCarregados=true; return; }
+  db.collection("alunos").get().then(snap=>{
+    const arr=[]; snap.forEach(d=>{ const a=Object.assign({ id:d.id }, d.data()); if(alunoNoEscopo(a, PROFESSOR)) arr.push({ id:a.id, nome:a.nome }); });
+    arr.sort((a,b)=>(a.nome||'').localeCompare(b.nome||''));
+    C.alunos=arr; C.alunosCarregados=true; if(Teacher.tab==="corretor") render();
+  }).catch(()=>{ C.alunosCarregados=true; });
+}
+function corrCarregarHistoricoDemo(){
+  let extra=[]; try{ extra=JSON.parse(sessionStorage.getItem("estudamais_demo_correcoes")||"[]")||[]; }catch(_){}
+  Teacher.corretor.historico = extra.concat(historicoDemo());
+}
+function carregarHistoricoCorrecoes(){
+  const C=Teacher.corretor;
+  if(C.histCarregado) return;
+  if(DEMO){ corrCarregarHistoricoDemo(); C.histCarregado=true; return; }
+  if(!db || !PROFESSOR || !PROFESSOR.id){ C.histCarregado=true; return; }
+  db.collection("correcoes").where("professorId","==",PROFESSOR.id).get().then(snap=>{
+    const arr=[]; snap.forEach(d=> arr.push(Object.assign({ id:d.id }, d.data())));
+    arr.sort((a,b)=> ((b.data&&b.data.seconds)||0)-((a.data&&a.data.seconds)||0));
+    C.historico=arr.slice(0,10); C.histCarregado=true; if(Teacher.tab==="corretor") render();
+  }).catch(()=>{ C.histCarregado=true; });
+}
+
+// ---- captura/compressão de imagem ----
+// Redimensiona para no máx 1024px (mantendo proporção) e comprime em JPEG (~<1MB).
+function comprimirImagem(file, cb){
+  const reader=new FileReader();
+  reader.onload=function(){
+    const img=new Image();
+    img.onload=function(){
+      let w=img.width, h=img.height; const max=1024;
+      if(w>max || h>max){ if(w>=h){ h=Math.round(h*max/w); w=max; } else { w=Math.round(w*max/h); h=max; } }
+      try{
+        const cv=document.createElement("canvas"); cv.width=w; cv.height=h;
+        cv.getContext("2d").drawImage(img,0,0,w,h);
+        let q=0.85, dataUrl=cv.toDataURL("image/jpeg", q);
+        // reduz a qualidade até o base64 caber em ~1MB decodificado (limite prático da API)
+        while(dataUrl.length>1300000 && q>0.4){ q-=0.15; dataUrl=cv.toDataURL("image/jpeg", q); }
+        cb(dataUrl);
+      }catch(e){ cb(null); }
+    };
+    img.onerror=function(){ cb(null); };
+    img.src=reader.result;
+  };
+  reader.onerror=function(){ cb(null); };
+  reader.readAsDataURL(file);
+}
+function onSelecionarFotoProva(input){
+  const files=Array.from(input.files||[]); input.value="";
+  const C=Teacher.corretor;
+  const restante=3-C.imagens.length;
+  if(restante<=0){ toast("Máximo de 3 fotos por correção."); return; }
+  files.slice(0,restante).forEach(f=>{
+    comprimirImagem(f, function(dataUrl){ if(dataUrl){ C.imagens.push(dataUrl); if(Teacher.tab==="corretor") render(); } else toast("Não consegui ler essa imagem. Tente outra."); });
+  });
+}
+function removerFotoProva(i){ Teacher.corretor.imagens.splice(i,1); render(); }
+function syncCorretorInputs(){ const v=document.getElementById("corValor"); if(v) Teacher.corretor.valor=v.value; }
+function setCorretorCampo(campo, v){ syncCorretorInputs(); Teacher.corretor[campo]=v; if(campo==="subj") Teacher.corretor.licaoId=""; render(); }
+
+// ---- loading rotativo ----
+function iniciarRotacaoCorretor(){
+  clearInterval(corretorLoadTimer); Teacher.corretor.msgIdx=0;
+  corretorLoadTimer=setInterval(function(){
+    Teacher.corretor.msgIdx=(Teacher.corretor.msgIdx+1)%CORRETOR_LOAD_MSGS.length;
+    const el=document.getElementById("corretorMsg"); if(el) el.textContent=CORRETOR_LOAD_MSGS[Teacher.corretor.msgIdx];
+  }, 2000);
+}
+function pararRotacaoCorretor(){ clearInterval(corretorLoadTimer); }
+
+// ---- normalização/correção ----
+function normalizarCorrecao(r, valorTotal){
+  const qs=Array.isArray(r.questoes)?r.questoes:[];
+  let somaMax=0, soma=0, cor=0, inc=0, par=0, br=0;
+  qs.forEach(function(q,i){
+    q.numero = q.numero || (i+1);
+    q.pontuacaoMaxima = Number(q.pontuacaoMaxima) || (valorTotal/(qs.length||1));
+    q.pontuacao = Number(q.pontuacao)||0;
+    const st=String(q.status||"").toLowerCase();
+    q.status = /branco/.test(st) ? "em_branco" : (/parcial/.test(st) ? "parcial" : (/incorret/.test(st) ? "incorreta" : (/corret/.test(st) ? "correta" : "incorreta")));
+    somaMax+=q.pontuacaoMaxima; soma+=q.pontuacao;
+    if(q.status==="correta")cor++; else if(q.status==="parcial")par++; else if(q.status==="em_branco")br++; else inc++;
+  });
+  const notaMax = Number(r.notaMaxima)||valorTotal||10;
+  let nota = (typeof r.notaFinal==="number") ? r.notaFinal : (somaMax? (soma/somaMax*notaMax) : 0);
+  nota = Math.round(nota*10)/10;
+  const pct = (typeof r.percentualAcerto==="number") ? Math.round(r.percentualAcerto) : Math.round(notaMax? (nota/notaMax*100) : 0);
+  return Object.assign({}, r, {
+    totalQuestoes: r.totalQuestoes||qs.length,
+    questoesCorretas:(typeof r.questoesCorretas==="number"?r.questoesCorretas:cor),
+    questoesIncorretas:(typeof r.questoesIncorretas==="number"?r.questoesIncorretas:inc),
+    questoesParciais:(typeof r.questoesParciais==="number"?r.questoesParciais:par),
+    notaFinal:nota, notaMaxima:notaMax, percentualAcerto:pct, conceito:r.conceito||conceitoDeNota(pct),
+    questoes:qs, feedbackGeral:r.feedbackGeral||"",
+    pontosMelhoria:Array.isArray(r.pontosMelhoria)?r.pontosMelhoria:[], pontosForca:Array.isArray(r.pontosForca)?r.pontosForca:[]
+  });
+}
+function mensagemErroCorretor(e){
+  const m=(e&&e.message)||"";
+  if(m==="timeout") return "A correção demorou demais. Algumas questões podem não ter sido lidas — tente novamente com uma foto mais nítida.";
+  if(m==="sem_questoes") return "Não consegui identificar questões nesta imagem. Tente uma foto mais próxima e nítida.";
+  if(/Failed to fetch|NetworkError|Load failed/i.test(m)) return "Falha ao contatar a IA. Verifique a conexão e a chave configurada.";
+  return "A imagem está difícil de ler. Tente fotografar com mais luz e a câmera estável.";
+}
+async function corrigirProvaIA(meta){
+  const subjNome=(subjById(meta.subj)||{}).nome||"";
+  const licao = meta.licaoId ? (DATA[meta.subj]||[]).find(function(l){return l.id===meta.licaoId;}) : null;
+  const cab = `Valor total da prova: ${meta.valor} pontos. Disciplina: ${subjNome}.`;
+  let prompt;
+  if(licao){
+    const pub=descreverPublicoLicao(licao);
+    const gab=(licao.exercicios||[]).map(function(ex,i){
+      const correta = ex.tipo==="fill" ? (ex.resposta||"") : ((ex.opcoes&&ex.opcoes[ex.correta])||"");
+      return `${i+1}. ${ex.enunciado} → Resposta correta: ${correta}`;
+    }).join("\n");
+    prompt =
+`Você é um professor corretor experiente do ${pub.ano} do ${nomeNivel(pub.nivelId)}.
+Analise a imagem desta prova/atividade respondida por um aluno. ${cab}
+
+Gabarito de referência (exercícios da lição '${licao.titulo}'):
+${gab}
+
+Para cada questão identificada na imagem: 1) identifique o número; 2) leia a resposta do aluno; 3) compare com o gabarito; 4) classifique como CORRETA, INCORRETA, PARCIALMENTE CORRETA ou EM BRANCO; 5) atribua pontuação proporcional ao valor total (${meta.valor}).
+
+${CORRETOR_JSON_FORMATO}`;
+  } else {
+    prompt =
+`Você é um professor corretor experiente. Analise a imagem desta prova/atividade respondida por um aluno. ${cab}
+Identifique todas as questões, leia as respostas do aluno e corrija com base no contexto educacional visível na prova. Identifique o assunto, o nível de dificuldade aparente e, se houver gabarito visível, use-o. Infira as respostas corretas pelo conteúdo educacional.
+
+${CORRETOR_JSON_FORMATO}`;
+  }
+  const content=[{ type:"text", text:prompt }];
+  Teacher.corretor.imagens.forEach(function(u){ content.push({ type:"image_url", image_url:{ url:u } }); });
+  const txt = await chamarIAMensagens([{ role:"user", content:content }], 45000);
+  const r = parseJsonObjIA(txt);
+  if(!r || !Array.isArray(r.questoes) || !r.questoes.length) throw new Error("sem_questoes");
+  return normalizarCorrecao(r, meta.valor);
+}
+async function corrigirProva(){
+  syncCorretorInputs();
+  const C=Teacher.corretor;
+  if(!C.imagens.length){ toast("Adicione ao menos uma foto da prova."); return; }
+  const temIA = iaConfigurada();
+  if(!temIA && !DEMO){ C.erro="Configure a chave da IA nas configurações do administrador para usar o corretor."; render(); return; }
+  const aluno=(C.alunos||[]).find(function(a){return a.id===C.alunoId;})||null;
+  C.meta={ alunoId:C.alunoId, alunoNome: aluno?aluno.nome:(DEMO?"Aluno(a) da Apresentação":"Aluno(a)"),
+    subj:C.subj, licaoId:C.licaoId, valor:parseFloat(C.valor)||10, dataStr:dataHojeBR() };
+  C.erro=""; C.carregando=true; C.view="loading"; C.msgIdx=0; render(); iniciarRotacaoCorretor();
+
+  // DEMO sem IA → resultado fictício após ~2.6s (mantém a animação de loading)
+  if(!temIA && DEMO){
+    setTimeout(function(){ pararRotacaoCorretor();
+      C.resultado=correcaoDemoResultado(); C.ehDemo=true; C.carregando=false; C.view="result"; render();
+    }, 2600);
+    return;
+  }
+  try{
+    const r = await corrigirProvaIA(C.meta);
+    pararRotacaoCorretor(); C.resultado=r; C.ehDemo=false; C.carregando=false; C.view="result"; render();
+  }catch(e){
+    pararRotacaoCorretor(); C.carregando=false;
+    if(DEMO){ C.resultado=correcaoDemoResultado(); C.ehDemo=true; C.view="result"; render(); return; } // demo nunca mostra erro de API
+    C.view="form"; C.erro=mensagemErroCorretor(e); render();
+  }
+}
+
+// ---- ações pós-correção ----
+function salvarCorrecao(){
+  const C=Teacher.corretor, r=C.resultado, m=C.meta; if(!r||!m) return;
+  const registro={ alunoId:m.alunoId||"", alunoNome:m.alunoNome, professorId:(PROFESSOR&&PROFESSOR.id)||"",
+    disciplina:m.subj, licaoId:m.licaoId||"", notaFinal:r.notaFinal, notaMaxima:r.notaMaxima,
+    percentualAcerto:r.percentualAcerto, conceito:r.conceito, questoes:r.questoes, feedbackGeral:r.feedbackGeral,
+    pontosMelhoria:r.pontosMelhoria, pontosForca:r.pontosForca, dataStr:m.dataStr };
+  if(DEMO){
+    let arr=[]; try{ arr=JSON.parse(sessionStorage.getItem("estudamais_demo_correcoes")||"[]")||[]; }catch(_){}
+    arr.unshift(Object.assign({ id:"demo_c_"+Math.random().toString(36).slice(2,7) }, registro));
+    try{ sessionStorage.setItem("estudamais_demo_correcoes", JSON.stringify(arr.slice(0,10))); }catch(_){}
+    Teacher.corretor.histCarregado=false; carregarHistoricoCorrecoes();
+    toast("Resultado salvo localmente (modo demo)"); return;
+  }
+  if(!db){ toast("Sem conexão para salvar."); return; }
+  const imgRef=(C.imagens[0]||"").slice(0, 50*1024); // só ~50KB para referência
+  const payload=Object.assign({}, registro, { imagemBase64:imgRef, data:firebase.firestore.FieldValue.serverTimestamp() });
+  db.collection("correcoes").add(payload).then(function(){ toast("Resultado salvo! ✅"); Teacher.corretor.histCarregado=false; carregarHistoricoCorrecoes(); }).catch(function(){ toast("Erro ao salvar o resultado."); });
+}
+function gerarPdfCorrecao(){
+  const C=Teacher.corretor, r=C.resultado, m=C.meta; if(!r||!m) return;
+  const ctor = (window.jspdf && window.jspdf.jsPDF) || window.jsPDF;
+  if(!ctor){ toast("A biblioteca de PDF não carregou. Verifique a internet."); return; }
+  try{
+    const doc=new ctor({ unit:"pt", format:"a4" });
+    const W=doc.internal.pageSize.getWidth(); let y=48;
+    doc.setFontSize(18); doc.setTextColor(123,47,247); doc.text("EstudaMais — Relatório de Correção", 40, y); y+=22;
+    doc.setDrawColor(220); doc.line(40,y,W-40,y); y+=20;
+    doc.setFontSize(11); doc.setTextColor(60);
+    doc.text("Aluno: "+(m.alunoNome||"—"), 40, y); y+=16;
+    doc.text("Disciplina: "+((subjById(m.subj)||{}).nome||"—")+"    Data: "+(m.dataStr||""), 40, y); y+=16;
+    doc.text("Professor: "+((PROFESSOR&&PROFESSOR.nome)||"Prof. Demo"), 40, y); y+=22;
+    doc.setFontSize(14); doc.setTextColor(20);
+    doc.text("Nota: "+r.notaFinal+" / "+r.notaMaxima+"   ("+r.percentualAcerto+"%)   Conceito: "+r.conceito, 40, y); y+=22;
+    doc.setFontSize(12); doc.setTextColor(20); doc.text("Questões:", 40, y); y+=16;
+    doc.setFontSize(10);
+    (r.questoes||[]).forEach(function(q){
+      if(y>790){ doc.addPage(); y=48; }
+      doc.setTextColor(40); doc.text("Q"+q.numero+": "+corrStatusInfo(q.status).txt+"  ("+q.pontuacao+"/"+q.pontuacaoMaxima+")", 48, y); y+=13;
+      const det="Aluno: "+(q.respostaAluno||"—")+(q.status!=="correta"&&q.respostaCorreta?("   | Correto: "+q.respostaCorreta):"");
+      doc.setTextColor(120); const dl=doc.splitTextToSize(det, W-110); doc.text(dl, 60, y); y+=12*dl.length+4;
+    });
+    y+=6; if(y>760){ doc.addPage(); y=48; }
+    if(r.feedbackGeral){ doc.setFontSize(12); doc.setTextColor(20); doc.text("Feedback geral:", 40, y); y+=15;
+      doc.setFontSize(10); doc.setTextColor(70); const fl=doc.splitTextToSize(r.feedbackGeral, W-80); doc.text(fl, 40, y); y+=12*fl.length+8; }
+    if((r.pontosMelhoria||[]).length){ if(y>760){doc.addPage();y=48;} doc.setFontSize(11); doc.setTextColor(20); doc.text("Pontos a melhorar:", 40, y); y+=14;
+      doc.setFontSize(10); doc.setTextColor(70); r.pontosMelhoria.forEach(function(p){ const pl=doc.splitTextToSize("• "+p, W-80); doc.text(pl,48,y); y+=12*pl.length; }); }
+    doc.setFontSize(9); doc.setTextColor(150); doc.text("Corrigido por IA — EstudaMais", 40, 820);
+    doc.save("correcao_"+String(m.alunoNome||"aluno").replace(/[^\w]+/g,"_")+".pdf");
+  }catch(e){ toast("Não foi possível gerar o PDF."); }
+}
+function compartilharCorrecao(){
+  const C=Teacher.corretor, r=C.resultado, m=C.meta||{}; if(!r) return;
+  const texto="Nota: "+r.notaFinal+"/"+r.notaMaxima+" | Acertos: "+r.percentualAcerto+"% | Conceito: "+r.conceito;
+  if(navigator.share){ navigator.share({ title:"Resultado de "+(m.alunoNome||"aluno"), text:texto, url:location.href }).catch(function(){}); }
+  else { try{ navigator.clipboard.writeText(texto); toast("Resultado copiado!"); }catch(_){ toast(texto); } }
+}
+function corrigirOutra(){ const C=Teacher.corretor; C.view="form"; C.imagens=[]; C.resultado=null; C.erro=""; C.ehDemo=false; C.meta=null; render(); }
+function abrirCorrecao(id){
+  const c=(Teacher.corretor.historico||[]).find(function(x){return x.id===id;}); if(!c) return;
+  if(c.questoes && c.questoes.length){
+    Teacher.corretor.resultado=normalizarCorrecao(c, c.notaMaxima||10);
+    Teacher.corretor.meta={ alunoNome:c.alunoNome, subj:c.disciplina, dataStr:c.dataStr, valor:c.notaMaxima, licaoId:c.licaoId||"" };
+    Teacher.corretor.ehDemo=!!(DEMO && String(id).indexOf("demo_c")===0);
+    Teacher.corretor.imagens=[]; Teacher.corretor.view="result"; render();
+  } else {
+    toast(`${c.alunoNome||'Aluno'} — ${(+c.notaFinal).toFixed(1)}/${(+ (c.notaMaxima||10)).toFixed(0)} • ${c.conceito||''}`);
+  }
+}
+function excluirCorrecao(id){
+  if(!confirm("Excluir esta correção?")) return;
+  const C=Teacher.corretor;
+  if(DEMO){
+    let arr=[]; try{ arr=JSON.parse(sessionStorage.getItem("estudamais_demo_correcoes")||"[]")||[]; }catch(_){}
+    arr=arr.filter(function(x){return x.id!==id;}); try{ sessionStorage.setItem("estudamais_demo_correcoes", JSON.stringify(arr)); }catch(_){}
+    C.historico=(C.historico||[]).filter(function(x){return x.id!==id;}); render(); return;
+  }
+  if(!db){ return; }
+  db.collection("correcoes").doc(id).delete().then(function(){ C.historico=(C.historico||[]).filter(function(x){return x.id!==id;}); toast("Correção excluída."); render(); }).catch(function(){ toast("Erro ao excluir."); });
+}
+
+// ---- render da aba Corretor ----
+function corretorLoadingHtml(){
+  return `<div style="display:flex;flex-direction:column;gap:14px;color:#9b59b6;padding:40px 10px;text-align:center;align-items:center">
+    <div class="hist-bounce" style="font-size:56px">📷</div>
+    <div style="font-weight:700"><span class="ia-spinner" style="border-top-color:#9b59b6;vertical-align:middle"></span> <span id="corretorMsg">${esc(CORRETOR_LOAD_MSGS[0])}</span></div>
+    <p style="color:#999;font-size:12px">Isso pode levar alguns segundos…</p></div>`;
+}
+function corretorHistoricoHtml(){
+  const itens=Teacher.corretor.historico||[];
+  const linhas = itens.length ? itens.slice(0,10).map(function(c){
+    const s=subjById(c.disciplina)||{ icon:"", nome:c.disciplina||"" };
+    return `<div class="t-lesson-row" style="align-items:center">
+      <div class="info" style="min-width:0;cursor:pointer" onclick="App.abrirCorrecao('${esc(c.id)}')">
+        <div class="t">${esc(c.alunoNome||'Aluno')}</div>
+        <div class="d">${s.icon} ${esc(s.nome)} • ${(+c.notaFinal).toFixed(1)}/${(+ (c.notaMaxima||10)).toFixed(0)} • ${esc(c.conceito||'')}${c.dataStr?(' • '+esc(c.dataStr)):''}</div>
+      </div>
+      <button class="icon-btn" title="Abrir" onclick="App.abrirCorrecao('${esc(c.id)}')">👁️</button>
+      <button class="icon-btn" title="Excluir" onclick="App.excluirCorrecao('${esc(c.id)}')">🗑️</button>
+    </div>`;
+  }).join("") : `<p style="font-size:13px;color:#999">Nenhuma correção ainda. Corrija uma prova para começar!</p>`;
+  return `<div class="sec-title" style="margin-top:20px">📋 Correções anteriores</div>${linhas}`;
+}
+function renderCorretorResultHtml(){
+  const C=Teacher.corretor, r=C.resultado, m=C.meta||{}; if(!r) return "";
+  const s=subjById(m.subj)||{ icon:"", nome:"" };
+  const demoBadge = C.ehDemo ? `<div class="corretor-demobadge">📊 Resultado demonstrativo — dados simulados para apresentação</div>` : "";
+  const iaBadge = !C.ehDemo ? `<span class="pill-tag" style="background:#8e44ad">✨ Corrigido por IA</span>` : "";
+  const tiles = `<div class="corretor-tiles">
+    <div class="corretor-tile"><div class="v">${(+r.notaFinal).toFixed(1)}</div><div class="l">NOTA</div></div>
+    <div class="corretor-tile"><div class="v">${r.percentualAcerto}%</div><div class="l">ACERTOS</div></div>
+    <div class="corretor-tile"><div class="v" style="font-size:16px">${esc(r.conceito||'')}</div><div class="l">CONCEITO</div></div>
+  </div>`;
+  const questoes = (r.questoes||[]).map(function(q){
+    const si=corrStatusInfo(q.status);
+    return `<div class="corretor-q" style="border-left-color:${si.cor}">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+        <b>Questão ${q.numero}</b>
+        <span style="background:${si.bg};color:${si.cor};font-weight:800;font-size:11px;padding:3px 8px;border-radius:10px">${si.ic} ${si.txt}</span>
+      </div>
+      <div style="font-size:13px;margin-top:4px">Resposta do aluno: <b>${esc(q.respostaAluno||'—')}</b></div>
+      ${(q.status!=="correta" && q.respostaCorreta)?`<div style="font-size:13px;color:#2e7d32">Resposta correta: <b>${esc(q.respostaCorreta)}</b></div>`:""}
+      <div style="font-size:12px;color:#777;margin-top:2px">Pontuação: ${q.pontuacao}/${q.pontuacaoMaxima}</div>
+      ${q.observacao?`<div style="font-size:12px;color:#555;margin-top:4px;font-style:italic">💬 ${esc(q.observacao)}</div>`:""}
+    </div>`;
+  }).join("");
+  const forca=(r.pontosForca||[]).map(function(p){return `<li>${esc(p)}</li>`;}).join("");
+  const melhoria=(r.pontosMelhoria||[]).map(function(p){return `<li>${esc(p)}</li>`;}).join("");
+  const imgs=(C.imagens||[]).length ? `<div class="sec-title">🖼️ Prova</div><div class="corretor-thumbs">${C.imagens.map(function(u){return `<div class="corretor-thumb"><img src="${u}" alt="Prova"></div>`;}).join("")}</div>` : "";
+  return `
+    ${demoBadge}
+    <h2 style="margin:6px 0 2px">📊 Resultado da Correção ${iaBadge}</h2>
+    <div style="font-size:13px;color:#555;margin-bottom:6px">
+      Aluno: <b>${esc(m.alunoNome||'—')}</b><br>
+      Disciplina: <b>${s.icon} ${esc(s.nome||'—')}</b> • Data: ${esc(m.dataStr||'')}
+    </div>
+    ${tiles}
+    <div class="sec-title">Detalhamento por questão</div>
+    ${questoes}
+    ${r.feedbackGeral?`<div class="sec-title">Feedback geral</div><p style="font-size:14px;line-height:1.5;background:#fff;border:2px solid var(--gray);border-radius:12px;padding:12px;margin:0">${esc(r.feedbackGeral)}</p>`:""}
+    ${forca?`<div class="sec-title">⭐ Pontos fortes</div><ul style="margin:0 0 8px 18px;font-size:13px;line-height:1.6">${forca}</ul>`:""}
+    ${melhoria?`<div class="sec-title">📚 Pontos a melhorar</div><ul style="margin:0 0 8px 18px;font-size:13px;line-height:1.6">${melhoria}</ul>`:""}
+    ${imgs}
+    <div class="corretor-acoes">
+      <button class="btn blue small" onclick="App.salvarCorrecao()">💾 Salvar resultado</button>
+      <button class="btn gray small" onclick="App.gerarPdfCorrecao()">📄 Gerar PDF</button>
+      <button class="btn gray small" onclick="App.compartilharCorrecao()">📱 Compartilhar</button>
+      <button class="btn gray small" onclick="App.corrigirOutra()">🔄 Corrigir outra</button>
+    </div>`;
+}
+function teacherCorretorTab(){
+  const C=Teacher.corretor;
+  if(C.view==="loading") return corretorLoadingHtml();
+  if(C.view==="result")  return renderCorretorResultHtml();
+  const dica = DEMO ? `<div class="corretor-dica"><b>💡 Como funciona</b>
+    <ol style="margin:6px 0 0 18px;padding:0;font-size:13px;line-height:1.55">
+      <li>Fotografe qualquer prova</li><li>A IA lê e corrige automaticamente</li>
+      <li>Receba nota, conceito e feedback</li><li>Exporte o resultado em PDF</li></ol></div>` : "";
+  const thumbs = C.imagens.length ? `<div class="corretor-thumbs">${C.imagens.map(function(u,i){return `<div class="corretor-thumb"><img src="${u}" alt="Foto ${i+1}"><button onclick="App.removerFotoProva(${i})" aria-label="Remover">✕</button></div>`;}).join("")}</div>
+    <p style="font-size:12px;color:#999;margin:4px 0 10px">${C.imagens.length}/3 foto(s). ${C.imagens.length<3?'Você pode adicionar mais (provas com várias páginas).':'Máximo de fotos atingido.'}</p>` : "";
+  const alunoOpts = `<option value="">Selecionar aluno...</option>`+(C.alunos||[]).map(function(a){return `<option value="${esc(a.id)}" ${C.alunoId===a.id?'selected':''}>${esc(a.nome)}</option>`;}).join("");
+  const discOpts = SUBJECTS.map(function(s){return `<option value="${s.id}" ${C.subj===s.id?'selected':''}>${s.icon} ${esc(s.nome)}</option>`;}).join("");
+  const licoesDisc = (DATA[C.subj]||[]).filter(function(l){ return DEMO ? true : licaoNoEscopoProfessor(l, PROFESSOR); });
+  const licaoOpts = `<option value="">(Opcional) Vincular a uma lição...</option>`+licoesDisc.map(function(l){return `<option value="${esc(l.id)}" ${C.licaoId===l.id?'selected':''}>${esc(l.titulo)}</option>`;}).join("");
+  const podeIA = iaConfigurada();
+  const aviso = (!podeIA && !DEMO) ? `<div class="ia-erro" style="margin-top:8px">⚙️ Configure a chave da IA (painel do Administrador) para usar o corretor.</div>`
+    : (!podeIA && DEMO ? `<p style="font-size:12px;color:#e08e00;margin-top:6px">Sem chave da IA agora: será exibido um resultado de demonstração.</p>` : "");
+  return `
+    <h2 style="margin:6px 0 2px">📷 Corretor de Provas com IA</h2>
+    <p style="font-size:13px;color:#777;margin:0 0 12px">Fotografe a prova do aluno e a IA fará a correção automaticamente.</p>
+    ${dica}
+    <div class="corretor-capturas">
+      <label class="corretor-btn"><input type="file" accept="image/*" capture="environment" onchange="App.onSelecionarFotoProva(this)" hidden>📷 Fotografar prova</label>
+      <label class="corretor-btn galeria"><input type="file" accept="image/*" multiple onchange="App.onSelecionarFotoProva(this)" hidden>🖼️ Da galeria</label>
+    </div>
+    ${thumbs}
+    <div class="sec-title">Configurações da correção</div>
+    <label>Aluno</label>
+    <select onchange="App.setCorretorCampo('alunoId', this.value)">${alunoOpts}</select>
+    <label>Disciplina</label>
+    <select onchange="App.setCorretorCampo('subj', this.value)">${discOpts}</select>
+    <label>Lição (opcional)</label>
+    <select onchange="App.setCorretorCampo('licaoId', this.value)">${licaoOpts}</select>
+    <label>Valor total da prova</label>
+    <input id="corValor" type="number" min="1" step="0.5" value="${esc(C.valor)}" placeholder="Ex.: 10">
+    ${C.erro?`<div class="ia-erro" style="margin-top:8px">⚠️ ${esc(C.erro)}</div>`:""}
+    ${aviso}
+    <button class="btn" style="margin-top:12px;background:#9b59b6;box-shadow:0 4px 0 #7d3c98" ${C.imagens.length?'':'disabled'} onclick="App.corrigirProva()">✨ Corrigir com IA</button>
+    ${corretorHistoricoHtml()}`;
+}
+
+/* ============================================================
    F) INICIALIZAÇÃO + API pública (App.*)
    ============================================================ */
 window.App = {
@@ -5492,6 +5953,9 @@ window.App = {
   toggleContaTurma, toggleContaAno, toggleContaDisc, salvarConta,
   // IA
   gerarExerciciosIA, toggleIaConfig, setModoIA, regenerarConteudoIA,
+  // corretor de provas por câmera
+  onSelecionarFotoProva, removerFotoProva, setCorretorCampo, corrigirProva,
+  salvarCorrecao, gerarPdfCorrecao, compartilharCorrecao, corrigirOutra, abrirCorrecao, excluirCorrecao,
   // sistema
   retryBoot: function(){ boot(); },
   diagLicoes, // diagnóstico de escopo: rode App.diagLicoes() no console do navegador
