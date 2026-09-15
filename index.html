@@ -4081,8 +4081,8 @@ const INTERP_TAMANHOS = [
   { v:"medio", l:"Médio (250-350 palavras) — 4º ao 6º ano", palavras:"250 a 350" },
   { v:"longo", l:"Longo (400-500 palavras) — 7º ao 9º e Médio", palavras:"400 a 500" },
 ];
-const INTERP_TIMEOUT_TEXTO = 60000;     // etapa 1: só o texto
-const INTERP_TIMEOUT_QUESTOES = 75000;  // etapas 2 e 3: um bloco de questões
+const INTERP_TIMEOUT_TEXTO = 120000;     // etapa 1: só o texto
+const INTERP_TIMEOUT_QUESTOES = 150000;  // etapas 2 e 3: um bloco de questões
 // Blocos de questões: gerar as 15 de uma vez fazia a resposta ficar longa demais
 // (e estourar o tempo). Dividido em dois pedidos menores sobre o MESMO texto.
 const INTERP_BLOCOS = [
@@ -4704,9 +4704,13 @@ async function testarIA(){
     chars = chars || (txt||"").length;
     const seg = (Date.now()-t1)/1000;
     const vel = Math.round(chars/Math.max(seg,0.1));
+    const semStream = !ttfb;
     const detalhe = ttfb ? `início em ${(ttfb/1000).toFixed(1)}s, ` : "sem streaming (resposta veio inteira), ";
+    const aviso = semStream && (IA.proxyUrl && IA.proxyUrl.trim())
+      ? " ⚠️ O proxy publicado ainda não repassa o streaming: republique o Worker (pasta proxy/) — sem isso ele segura a resposta inteira e gerações longas estouram."
+      : "";
     Teacher.iaTeste={ rodando:false, ok:true,
-      msg:`Conexão OK (${via}). Resposta curta em ${curtoSeg}s. Resposta longa: ${chars} caracteres em ${seg.toFixed(1)}s (${detalhe}${vel} caracteres/s).` };
+      msg:`Conexão OK (${via}). Resposta curta em ${curtoSeg}s. Resposta longa: ${chars} caracteres em ${seg.toFixed(1)}s (${detalhe}${vel} caracteres/s).${aviso}` };
   }catch(err){
     console.warn("Teste longo da IA falhou:", err);
     const seg = ((Date.now()-t1)/1000).toFixed(1);
