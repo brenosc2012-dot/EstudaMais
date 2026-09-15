@@ -3940,7 +3940,7 @@ function escopoLicaoLabel(l){
 }
 function teacherSelectSubj(v){ Teacher.subj=v; render(); }
 
-function resetIaEstado(){ Teacher.gerando=false; Teacher.regenerando=false; Teacher.previewing=false; Teacher.iaErro=""; Teacher.iaConfigAberta=false; }
+function resetIaEstado(){ Teacher.gerando=false; Teacher.regenerando=false; Teacher.previewing=false; Teacher.iaErro=""; Teacher.iaConfigAberta=false; Teacher.iaTeste=null; }
 function newLesson(){ Teacher.editingLesson={ id:null, titulo:"", texto:"", exercicios:[], turma:"", nivel:"", ano:"", materialNomes:[], materialTipos:[], materialTexto:"", materialTextos:[], materialCotas:[], historiaHabilitada:true, tipo:"padrao", textoGerado:"", tituloTexto:"", generoTextual:"", tema:"", _tamanho:"", _focos:[], _persistido:false }; resetIaEstado(); Teacher.upload={ ativo:false, nome:"", lendo:false }; Teacher.hist={ gerando:false, preview:null, erro:"" }; Teacher.interp={ gerando:false, erro:"" }; Teacher.tab="novo"; render(); }
 function editLesson(id){
   const l=(DATA[Teacher.subj]||[]).find(x=>x.id===id);
@@ -4082,10 +4082,18 @@ const INTERP_TAMANHOS = [
   { v:"longo", l:"Longo (400-500 palavras) — 7º ao 9º e Médio", palavras:"400 a 500" },
 ];
 const INTERP_LOAD_MSGS = ["✍️ Escrevendo o texto...","📚 Criando as questões...","🎨 Finalizando a lição..."];
-let interpLoadTimer = null;
-function iniciarRotacaoInterp(){
-  clearInterval(interpLoadTimer); let i=0;
-  interpLoadTimer=setInterval(()=>{ i=(i+1)%INTERP_LOAD_MSGS.length; const e=document.getElementById("interpMsg"); if(e) e.textContent=INTERP_LOAD_MSGS[i]; }, 1800);
+const INTERP_TIMEOUT_TUDO = 90000;      // texto + 15 questões numa resposta só
+const INTERP_TIMEOUT_QUESTOES = 60000;  // só as 15 questões (texto já existe)
+let interpLoadTimer = null, interpLoadIni = 0;
+function iniciarRotacaoInterp(limiteMs){
+  clearInterval(interpLoadTimer); let i=0; interpLoadIni=Date.now();
+  const limite = Math.round((limiteMs||INTERP_TIMEOUT_TUDO)/1000);
+  interpLoadTimer=setInterval(()=>{
+    const seg = Math.round((Date.now()-interpLoadIni)/1000);
+    if(seg%2===0) i=(i+1)%INTERP_LOAD_MSGS.length;
+    const e=document.getElementById("interpMsg");
+    if(e) e.textContent = `${INTERP_LOAD_MSGS[i]} (${seg}s de até ${limite}s)`;
+  }, 1000);
 }
 function tamanhoInterp(v){ return INTERP_TAMANHOS.find(t=>t.v===v) || INTERP_TAMANHOS[1]; }
 
@@ -4119,6 +4127,7 @@ function interpConfigPanel(L){
     <div style="display:flex;flex-wrap:wrap;margin-bottom:6px">${focosChips}</div>
     ${status}
     <button class="btn" style="background:#1cb0f6;box-shadow:0 4px 0 #1899d6;margin-top:6px" ${(!temChave||I.gerando)?'disabled':''} onclick="App.gerarInterpretacao()">✨ Gerar texto e exercícios</button>
+    ${botaoTesteIa(I.gerando)}
     ${!temChave?`<p style="font-size:12px;color:#c0392b;text-align:center;margin-top:6px">Chave da IA não configurada (peça ao Administrador ⚙️).</p>`:''}
     ${preview}
   </div>`;
@@ -4138,7 +4147,8 @@ function focosTexto(L){
   const focos=(L._focos||[]).map(k=>{ const f=INTERP_FOCOS.find(x=>x.k===k); return f?f.l:null; }).filter(Boolean);
   return focos.length ? focos.join(", ") : "a compreensão geral do texto";
 }
-// Gera TEXTO + 15 exercícios (objeto). Timeout de 30s (texto é mais longo).
+// Gera TEXTO + 15 exercícios (objeto). Timeout FOLGADO (90s): é a chamada mais
+// pesada do app — a IA escreve o texto inteiro e as 15 questões numa resposta só.
 async function gerarInterpretacaoIA(L){
   const pub=descreverPublicoLicao(L); const tam=tamanhoInterp(L._tamanho);
   const prompt =
@@ -4169,7 +4179,7 @@ Retorne APENAS um JSON válido:
     {"nivel": "facil", "tipo": "multipla_escolha", "enunciado": "...", "opcoes": ["texto opção 1","texto opção 2","texto opção 3","texto opção 4"], "resposta_correta": "texto da resposta correta"}
   ]
 }`;
-  const txt=await chamarIA(prompt, 30000);
+  const txt=await chamarIA(prompt, INTERP_TIMEOUT_TUDO);
   const obj=parseJsonObjIA(txt);
   if(!obj || !obj.texto) throw new Error("A IA não retornou um texto válido. Tente novamente.");
   return obj;
@@ -4188,7 +4198,7 @@ Retorne APENAS um JSON array no formato:
 
 TEXTO:
 ${L.textoGerado}`;
-  const txt=await chamarIA(prompt, 30000);
+  const txt=await chamarIA(prompt, INTERP_TIMEOUT_QUESTOES);
   return parseExerciciosIA(txt);
 }
 function aplicarInterpGerado(L, dados){
@@ -4204,7 +4214,7 @@ async function gerarInterpretacao(){
   if(!(L.tema||"").trim()){ Teacher.interp.erro="Informe o tema do texto."; render(); return; }
   if(!L.generoTextual){ Teacher.interp.erro="Escolha o gênero textual."; render(); return; }
   if(!iaConfigurada()){ Teacher.interp.erro="IA não configurada (peça ao Administrador)."; render(); return; }
-  Teacher.interp.gerando=true; Teacher.interp.erro=""; render(); iniciarRotacaoInterp();
+  Teacher.interp.gerando=true; Teacher.interp.erro=""; render(); iniciarRotacaoInterp(INTERP_TIMEOUT_TUDO);
   try{
     const dados = await gerarInterpretacaoIA(L);
     aplicarInterpGerado(L, dados);
@@ -4226,7 +4236,7 @@ async function regenerarExerciciosInterp(){
   const L=Teacher.editingLesson; if(!L) return;
   if(!(L.textoGerado||"").trim()){ toast("Gere o texto primeiro."); return; }
   if(!iaConfigurada()){ Teacher.interp.erro="IA não configurada."; render(); return; }
-  Teacher.interp.gerando=true; Teacher.interp.erro=""; render(); iniciarRotacaoInterp();
+  Teacher.interp.gerando=true; Teacher.interp.erro=""; render(); iniciarRotacaoInterp(INTERP_TIMEOUT_QUESTOES);
   try{
     const arr = await gerarExerciciosInterpIA(L);
     clearInterval(interpLoadTimer); Teacher.interp.gerando=false;
@@ -4618,6 +4628,7 @@ function iaPanel(L){
       <option value="acumular" ${IA.modo==='acumular'?'selected':''}>Acumular (somar aos atuais)</option>
     </select>
     <p style="font-size:12px;color:#999;margin-top:-4px">A chave da OpenAI é configurada pelo Administrador (⚙️ na tela inicial) e compartilhada entre os dispositivos.</p>
+    ${botaoTesteIa(false)}
   ` : "";
 
   return `<div class="ia-panel">
@@ -4640,6 +4651,39 @@ function iaPanel(L){
   </div>`;
 }
 function toggleIaConfig(){ syncTextInputs(); Teacher.iaConfigAberta=!Teacher.iaConfigAberta; render(); }
+
+// Teste rápido da IA: uma chamada mínima (1 palavra) que mostra o que REALMENTE
+// acontece — chave inválida, bloqueio de rede/firewall, lentidão — em vez de só
+// "falhou". Útil quando uma geração longa dá erro: separa "problema de conexão"
+// de "a IA demorou demais nesta geração".
+async function testarIA(){
+  Teacher.iaTeste={ rodando:true, ok:false, msg:"" }; render();
+  const via = (IA.proxyUrl && IA.proxyUrl.trim()) ? "via proxy" : "direto na OpenAI";
+  const t0 = Date.now();
+  try{
+    if(!iaConfigurada()) throw new Error("IA não configurada (peça ao Administrador ⚙️).");
+    const txt = await chamarIA("Responda apenas com a palavra: ok", 20000);
+    const seg = ((Date.now()-t0)/1000).toFixed(1);
+    Teacher.iaTeste={ rodando:false, ok:true, msg:`Conexão OK (${via}) — respondeu em ${seg}s: "${String(txt||"").trim().slice(0,30)}"` };
+  }catch(err){
+    const seg = ((Date.now()-t0)/1000).toFixed(1);
+    console.warn("Teste da IA falhou:", err);
+    Teacher.iaTeste={ rodando:false, ok:false, msg:`Falhou após ${seg}s (${via}): ${mensagemErroIA(err)}` };
+  }
+  render();
+}
+// Caixinha com o resultado do último teste (usada nos painéis de IA do professor).
+function testeIaHtml(){
+  const t=Teacher.iaTeste;
+  if(!t) return "";
+  if(t.rodando) return `<div class="ia-loading" style="margin-top:6px"><span class="ia-spinner"></span> Testando a conexão com a IA...</div>`;
+  const cor = t.ok ? "#27ae60" : "#c0392b";
+  return `<div style="margin-top:6px;font-size:12px;color:${cor};border:1px solid ${cor};border-radius:8px;padding:6px 8px;background:#fff">${t.ok?"✅":"❌"} ${esc(t.msg)}</div>`;
+}
+// Botão padrão de teste (aparece nos dois painéis de geração por IA).
+function botaoTesteIa(desabilitado){
+  return `<button class="btn gray small" style="width:100%;margin-top:8px" ${desabilitado?'disabled':''} onclick="App.testarIA()">🔎 Testar conexão com a IA</button>${testeIaHtml()}`;
+}
 function setModoIA(v){ IA.modo=v; saveIaModo(); }
 
 // Força a regeneração do resumo de estudo e atualiza o cache compartilhado (licoes_geradas).
@@ -4702,34 +4746,45 @@ async function chamarIAMensagens(messages, timeoutMs){
   if(ctrl && timeoutMs){ timer=setTimeout(()=>{ expirou=true; try{ ctrl.abort(); }catch(_){} }, timeoutMs); }
   const headers = { "Content-Type":"application/json" };
   if(!usaProxy) headers["Authorization"] = "Bearer " + IA.apiKey.trim(); // proxy injeta a chave
-  let resp;
+  // IMPORTANTE: o timer só é cancelado depois de LER O CORPO da resposta. Se ele
+  // fosse cancelado logo após o fetch (que resolve com os cabeçalhos), uma resposta
+  // que parasse no meio deixaria `resp.json()` pendurado para sempre — o painel
+  // ficava "gerando..." sem nunca voltar nem mostrar erro.
   try{
-    resp = await fetch(usaProxy ? IA.proxyUrl.trim() : IA_ENDPOINT, {
-      method:"POST",
-      headers: headers,
-      body: JSON.stringify({
-        model: IA_MODELO,
-        messages: messages,
-        temperature: 0.7
-      }),
-      signal: ctrl ? ctrl.signal : undefined
-    });
-  }catch(e){
-    if(expirou || (e && e.name==="AbortError")) throw new Error("timeout");
-    throw e;
+    let resp;
+    try{
+      resp = await fetch(usaProxy ? IA.proxyUrl.trim() : IA_ENDPOINT, {
+        method:"POST",
+        headers: headers,
+        body: JSON.stringify({
+          model: IA_MODELO,
+          messages: messages,
+          temperature: 0.7
+        }),
+        signal: ctrl ? ctrl.signal : undefined
+      });
+    }catch(e){
+      if(expirou || (e && e.name==="AbortError")) throw new Error("timeout");
+      throw e;
+    }
+    if(!resp.ok){
+      let detalhe="";
+      try{ const e=await resp.json(); detalhe = e.error && e.error.message ? e.error.message : ""; }catch(_){}
+      if(resp.status===401) detalhe = detalhe || "Chave da API inválida.";
+      if(resp.status===429) detalhe = detalhe || "Limite de uso atingido (ou conta sem créditos). Aguarde e tente de novo.";
+      throw new Error(`Erro ${resp.status}${detalhe? " — "+detalhe : ""}`);
+    }
+    let data;
+    try{ data = await resp.json(); }
+    catch(e){
+      if(expirou || (e && e.name==="AbortError")) throw new Error("timeout");
+      throw new Error("A resposta da IA chegou incompleta. Tente novamente.");
+    }
+    return data.choices && data.choices[0] && data.choices[0].message
+      ? (data.choices[0].message.content || "") : "";
   }finally{
     if(timer) clearTimeout(timer);
   }
-  if(!resp.ok){
-    let detalhe="";
-    try{ const e=await resp.json(); detalhe = e.error && e.error.message ? e.error.message : ""; }catch(_){}
-    if(resp.status===401) detalhe = detalhe || "Chave da API inválida.";
-    if(resp.status===429) detalhe = detalhe || "Limite de uso atingido. Aguarde um pouco e tente novamente.";
-    throw new Error(`Erro ${resp.status}${detalhe? " — "+detalhe : ""}`);
-  }
-  const data = await resp.json();
-  return data.choices && data.choices[0] && data.choices[0].message
-    ? (data.choices[0].message.content || "") : "";
 }
 
 // Mensagem de erro amigável e precisa para falhas da IA (uso nos painéis do professor/admin).
@@ -6439,7 +6494,7 @@ window.App = {
   // modo história (professor)
   toggleHistoriaHabilitada, regenerarHistoriaProf,
   // interpretação de texto (professor)
-  setTipoLicao, toggleFocoInterp, gerarInterpretacao, regenerarTextoInterp, regenerarExerciciosInterp,
+  setTipoLicao, toggleFocoInterp, gerarInterpretacao, regenerarTextoInterp, regenerarExerciciosInterp, testarIA,
   // rendimento (Fase C)
   recarregarRendimento, setProgTurma, setProgDisc, setProgPeriodo,
   // gestão de alunos
