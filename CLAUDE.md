@@ -94,15 +94,22 @@ best-effort para cache offline).
 - Lição interna no app: `{ id, titulo, texto, exercicios, resumoIA, explicacoes, turma, ano, nivel,
   materialUrls, materialNomes, materialTipos, materialTexto }`
   (note: `conteudo`↔`texto`, `id` = id do documento). Conversão em `licaoDeDoc()`.
-- **Material de apoio (documentos anexados):** o professor anexa PDF/DOC/DOCX/TXT/PNG/JPG
-  (até 10MB, 3 por lição) no editor. Vão para o **Firebase Storage** em
-  `materiais/{professorId}/{licaoId}/{arquivo}`; as URLs/nomes/tipos ficam na lição.
-  O texto é extraído no navegador (TXT via FileReader, PDF via PDF.js, DOCX via mammoth,
-  imagens via **visão** da OpenAI/OCR — `ocrImagemIA`), limitado a 8.000 caracteres em
-  `materialTexto`, e alimenta a geração de exercícios e o resumo. `storage = firebase.storage()`
-  em `initFirebase()`; regras em `storage.rules`. O aluno vê os anexos na tela de estudo
-  (seção colapsável "📚 Material de Apoio"). Lições novas ganham o id (`db.collection().doc().id`)
-  ao anexar o 1º arquivo; `L._persistido` distingue criar vs. editar em `saveLesson()`.
+- **Material de apoio (documentos importados):** o professor importa PDF/DOC/DOCX/TXT/PNG/JPG
+  no editor — `MATERIAL_MAX_ARQUIVOS` (**15**) por lição, `MATERIAL_MAX_BYTES` (10MB) cada,
+  vários de uma vez. **Não há upload**: o texto é extraído no próprio navegador (TXT via
+  FileReader, PDF via PDF.js, DOCX via mammoth, imagens via **visão** da OpenAI/OCR —
+  `ocrImagemIA`) e só o texto vai para a lição (`materialNomes`/`materialTipos`/`materialTexto`).
+  O texto de cada documento fica **inteiro** no estado de edição (`L.materialTextos`, local,
+  não vai ao Firestore) e `combinarMaterial()` monta o `materialTexto` combinado
+  (cabeçalho `[nome]` + conteúdo) respeitando `MATERIAL_TEXTO_MAX` (**60.000** chars) com
+  **divisão justa do orçamento**: cota igual por documento e sobras dos pequenos
+  redistribuídas aos grandes — assim todos os documentos aparecem no prompt (antes o teto
+  era consumido pelos primeiros). `L.materialCotas` guarda os chars usados por documento
+  (mostrados no painel). `dividirBlocosMaterial()` reconstrói os blocos ao reabrir uma lição
+  salva (varredura sequencial dos cabeçalhos); `garantirMateriaisEstado()`/`recomporMaterial()`
+  mantêm o estado coerente. `timeoutComMaterial(base, material)` estica o timeout da IA
+  (+15s a cada 20k chars, até +45s) porque o prompt fica maior. O aluno vê os nomes dos
+  anexos na tela de estudo (seção colapsável "📚 Material de Apoio").
 - **Conteúdo de IA é persistido no Firestore para compartilhar entre dispositivos:**
   `resumoIA` (resumo de estudo, string) e `explicacoes` (mapa `{exId: texto}` das
   explicações de erro). Gerado uma vez por qualquer aparelho e salvo no doc; os demais

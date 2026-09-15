@@ -2352,7 +2352,7 @@ O resumo deve ter no máximo 300 palavras e terminar com uma dica de memorizaç�
 ${pub.frase}
 CONTEÚDO DA LIÇÃO: ${l.texto}${blocoMaterialAluno}`;
   try{
-    const texto = await chamarIA(prompt, 20000);
+    const texto = await chamarIA(prompt, timeoutComMaterial(20000, materialAluno));
     if(!texto.trim()) throw new Error("vazio");
     resumoCache[lid]=texto;
     salvarLicaoGerada(lid, { resumo:texto, exercicios:l.exercicios });
@@ -3941,7 +3941,7 @@ function escopoLicaoLabel(l){
 function teacherSelectSubj(v){ Teacher.subj=v; render(); }
 
 function resetIaEstado(){ Teacher.gerando=false; Teacher.regenerando=false; Teacher.previewing=false; Teacher.iaErro=""; Teacher.iaConfigAberta=false; }
-function newLesson(){ Teacher.editingLesson={ id:null, titulo:"", texto:"", exercicios:[], turma:"", nivel:"", ano:"", materialNomes:[], materialTipos:[], materialTexto:"", historiaHabilitada:true, tipo:"padrao", textoGerado:"", tituloTexto:"", generoTextual:"", tema:"", _tamanho:"", _focos:[], _persistido:false }; resetIaEstado(); Teacher.upload={ ativo:false, nome:"", lendo:false }; Teacher.hist={ gerando:false, preview:null, erro:"" }; Teacher.interp={ gerando:false, erro:"" }; Teacher.tab="novo"; render(); }
+function newLesson(){ Teacher.editingLesson={ id:null, titulo:"", texto:"", exercicios:[], turma:"", nivel:"", ano:"", materialNomes:[], materialTipos:[], materialTexto:"", materialTextos:[], materialCotas:[], historiaHabilitada:true, tipo:"padrao", textoGerado:"", tituloTexto:"", generoTextual:"", tema:"", _tamanho:"", _focos:[], _persistido:false }; resetIaEstado(); Teacher.upload={ ativo:false, nome:"", lendo:false }; Teacher.hist={ gerando:false, preview:null, erro:"" }; Teacher.interp={ gerando:false, erro:"" }; Teacher.tab="novo"; render(); }
 function editLesson(id){
   const l=(DATA[Teacher.subj]||[]).find(x=>x.id===id);
   if(!l) return;
@@ -3950,7 +3950,7 @@ function editLesson(id){
   Teacher.editingLesson._persistido = true; // já existe no Firestore
   // garante os campos em lições antigas (compatibilidade)
   const L=Teacher.editingLesson;
-  L.materialNomes=L.materialNomes||[]; L.materialTipos=L.materialTipos||[]; L.materialTexto=L.materialTexto||"";
+  garantirMateriaisEstado(L);
   if(L.historiaHabilitada===undefined) L.historiaHabilitada=true;
   if(!L.tipo) L.tipo="padrao"; if(!Array.isArray(L._focos)) L._focos=[]; if(L._tamanho===undefined) L._tamanho="";
   resetIaEstado(); Teacher.upload={ ativo:false, nome:"", lendo:false }; Teacher.hist={ gerando:false, preview:null, erro:"" }; Teacher.interp={ gerando:false, erro:"" };
@@ -4286,8 +4286,8 @@ function renderPreview(){
    via visão da OpenAI (base64). NÃO há upload: só o texto (limitado a
    MATERIAL_TEXTO_MAX caracteres) é salvo na lição e usado para gerar exercícios/resumo. */
 const MATERIAL_MAX_BYTES = 10*1024*1024;      // 10 MB por arquivo
-const MATERIAL_MAX_ARQUIVOS = 3;              // no máximo 3 documentos por lição
-const MATERIAL_TEXTO_MAX = 8000;              // teto do texto extraído enviado à IA
+const MATERIAL_MAX_ARQUIVOS = 15;             // no máximo 15 documentos por lição
+const MATERIAL_TEXTO_MAX = 60000;             // teto do texto COMBINADO enviado à IA
 const MATERIAL_EXT_OK = ["pdf","doc","docx","txt","png","jpg","jpeg"];
 
 function materialExt(nome){ const m=String(nome||"").toLowerCase().match(/\.([a-z0-9]+)$/); return m?m[1]:""; }
@@ -4351,20 +4351,84 @@ async function extrairTextoArquivo(file){
   return "";
 }
 
-// Envia o material para o Storage com barra de progresso; resolve com a URL de download.
-// Recompõe o texto combinado dos documentos (cabeçalho [nome] + texto), limitado a MATERIAL_TEXTO_MAX.
-// Remove do texto combinado o bloco do documento de índice `idx` (usado ao remover um anexo).
-function removerBlocoMaterial(combinado, nomes, idx){
-  const marca = `[${nomes[idx]||""}]\n`;
-  const start = (combinado||"").indexOf(marca);
-  if(start<0) return combinado||""; // bloco não localizado — mantém o texto como está
-  let end = combinado.length;
-  for(let j=0;j<nomes.length;j++){
-    if(j===idx) continue;
-    const m2 = combinado.indexOf(`[${nomes[j]||""}]\n`, start+marca.length);
-    if(m2>=0 && m2<end) end = m2;
+// Quebra o texto combinado de volta em um bloco por documento (usado ao reabrir uma lição
+// já salva: só o texto combinado vai ao Firestore, os blocos são reconstruídos aqui).
+function dividirBlocosMaterial(combinado, nomes){
+  const txt = String(combinado||""), lista = nomes||[];
+  const rotulo = i => `[${lista[i]||("documento "+(i+1))}]\n`;
+  // os blocos estão na mesma ordem dos nomes: varre com um cursor (aceita nomes repetidos)
+  const pos = new Array(lista.length).fill(-1);
+  let cursor = 0;
+  for(let i=0;i<lista.length;i++){
+    const at = txt.indexOf(rotulo(i), cursor);
+    if(at>=0){ pos[i]=at; cursor = at + rotulo(i).length; }
   }
-  return (combinado.slice(0,start) + combinado.slice(end)).replace(/\n{3,}/g,"\n\n").replace(/^\s+|\s+$/g,"");
+  return lista.map((n,i)=>{
+    if(pos[i]<0) return "";
+    const ini = pos[i] + rotulo(i).length;
+    let end = txt.length;
+    for(let j=i+1;j<pos.length;j++){ if(pos[j]>=ini){ end = pos[j]; break; } }
+    return txt.slice(ini,end).trim();
+  });
+}
+
+// Junta os documentos em UM texto (cabeçalho `[nome]` + conteúdo) respeitando o teto
+// MATERIAL_TEXTO_MAX. O orçamento é dividido de forma JUSTA: cada documento recebe uma
+// cota igual e as sobras de quem é pequeno são redistribuídas a quem é grande — assim o
+// 13º arquivo continua representado no prompt da IA (antes o teto era consumido pelos
+// primeiros e o resto era ignorado). Devolve { texto, cotas } (cotas = chars usados por doc).
+function combinarMaterial(nomes, textos){
+  const lista = textos||[], n = lista.length;
+  if(!n) return { texto:"", cotas:[] };
+  const rotulo = i => `[${(nomes||[])[i]||("documento "+(i+1))}]\n`;
+  let overhead = 0;
+  for(let i=0;i<n;i++) overhead += rotulo(i).length + 2; // cabeçalho + separador "\n\n"
+  const pedidos = lista.map(t => String(t||"").trim().length);
+  const cotas = new Array(n).fill(0);
+  let livre = Math.max(0, MATERIAL_TEXTO_MAX - overhead);
+  let pendentes = [];
+  for(let i=0;i<n;i++) if(pedidos[i]>0) pendentes.push(i);
+  while(pendentes.length && livre>0){
+    const cota = Math.floor(livre/pendentes.length);
+    if(cota<=0) break;
+    const proximos=[]; let usado=0;
+    for(const i of pendentes){
+      const dar = Math.min(cota, pedidos[i]-cotas[i]);
+      cotas[i]+=dar; usado+=dar;
+      if(cotas[i]<pedidos[i]) proximos.push(i);
+    }
+    livre -= usado;
+    if(!usado) break;
+    pendentes = proximos;
+  }
+  const partes=[];
+  for(let i=0;i<n;i++){
+    const t = String(lista[i]||"").trim().slice(0, cotas[i]).trim();
+    if(t) partes.push(rotulo(i) + t);
+  }
+  return { texto: partes.join("\n\n").trim(), cotas: cotas };
+}
+
+// Garante os arrays de material no estado de edição e reconstrói os blocos por documento
+// quando a lição veio do Firestore (onde só existe o texto combinado).
+function garantirMateriaisEstado(L){
+  if(!L) return;
+  L.materialNomes = L.materialNomes||[]; L.materialTipos = L.materialTipos||[];
+  L.materialTexto = L.materialTexto||"";
+  if(!Array.isArray(L.materialTextos) || L.materialTextos.length !== L.materialNomes.length){
+    L.materialTextos = dividirBlocosMaterial(L.materialTexto, L.materialNomes);
+  }
+  if(!Array.isArray(L.materialCotas) || L.materialCotas.length !== L.materialNomes.length){
+    L.materialCotas = L.materialTextos.map(t => String(t||"").length);
+  }
+}
+
+// Recompõe `materialTexto` (o que vai ao Firestore e à IA) a partir dos blocos atuais.
+function recomporMaterial(L){
+  garantirMateriaisEstado(L);
+  const r = combinarMaterial(L.materialNomes, L.materialTextos);
+  L.materialTexto = r.texto; L.materialCotas = r.cotas;
+  return r;
 }
 
 // Handler do seletor de arquivos: valida e EXTRAI O TEXTO LOCALMENTE (sem upload).
@@ -4374,21 +4438,24 @@ async function onSelecionarMateriais(fileList){
   const L = Teacher.editingLesson;
   const arquivos = Array.prototype.slice.call(fileList||[]);
   if(!arquivos.length) return;
-  L.materialNomes=L.materialNomes||[]; L.materialTipos=L.materialTipos||[]; L.materialTexto=L.materialTexto||"";
+  garantirMateriaisEstado(L);
   if(L.materialNomes.length + arquivos.length > MATERIAL_MAX_ARQUIVOS){
-    toast(`Máximo de ${MATERIAL_MAX_ARQUIVOS} documentos por lição.`); return;
+    const livres = Math.max(0, MATERIAL_MAX_ARQUIVOS - L.materialNomes.length);
+    toast(`Máximo de ${MATERIAL_MAX_ARQUIVOS} documentos por lição (ainda cabem ${livres}).`); return;
   }
   // valida tamanho e tipo ANTES de ler
   for(const f of arquivos){
     if(f.size > MATERIAL_MAX_BYTES){ toast(`"${f.name}" tem mais de 10MB. Escolha um arquivo menor.`); return; }
     if(!materialTipoOk(f)){ toast(`Formato não suportado: "${f.name}". Use PDF, DOC, DOCX, TXT, PNG ou JPG.`); return; }
   }
-  let textoAcumulado = L.materialTexto || "";
   let algumErro=false, lidos=0;
-  for(const f of arquivos){
+  const total = arquivos.length;
+  for(let k=0;k<total;k++){
+    const f = arquivos[k];
     try{
-      // loading "📄 Lendo documento..."
-      Teacher.upload={ ativo:true, nome:f.name, lendo:true }; render();
+      // loading "📄 Lendo documento 3 de 13..."
+      Teacher.upload={ ativo:true, nome:f.name, lendo:true, atual:k+1, total:total }; render();
+      await new Promise(r=>setTimeout(r,0)); // deixa o navegador pintar o progresso
       let txt = (await extrairTextoArquivo(f) || "").trim();
       if(!txt){
         // .doc antigo, PDF sem texto selecionável, ou imagem sem chave de IA configurada
@@ -4396,12 +4463,8 @@ async function onSelecionarMateriais(fileList){
         toast(`Não foi possível extrair texto de "${f.name}". Tente um PDF/DOCX/TXT com texto selecionável.`);
         continue;
       }
-      // acumula (com cabeçalho do arquivo), limitando o TOTAL a MATERIAL_TEXTO_MAX (primeiros 8000)
-      if(textoAcumulado.length < MATERIAL_TEXTO_MAX){
-        textoAcumulado += (textoAcumulado?"\n\n":"") + `[${f.name}]\n` + txt;
-        if(textoAcumulado.length > MATERIAL_TEXTO_MAX) textoAcumulado = textoAcumulado.slice(0, MATERIAL_TEXTO_MAX);
-      }
-      L.materialNomes.push(f.name); L.materialTipos.push(f.type||"");
+      // guarda o texto COMPLETO de cada documento; o teto é aplicado ao recompor o combinado
+      L.materialNomes.push(f.name); L.materialTipos.push(f.type||""); L.materialTextos.push(txt);
       lidos++;
     }catch(e){
       algumErro=true;
@@ -4409,11 +4472,11 @@ async function onSelecionarMateriais(fileList){
       toast(`Erro ao ler "${f.name}". Verifique o arquivo e tente novamente.`);
     }
   }
-  L.materialTexto = textoAcumulado; // guardado apenas no estado local; vai ao Firestore só ao Salvar
-  Teacher.upload={ ativo:false, nome:"", lendo:false };
+  recomporMaterial(L); // só estado local; vai ao Firestore ao Salvar a lição
+  Teacher.upload={ ativo:false, nome:"", lendo:false, atual:0, total:0 };
   render();
   if(lidos && !algumErro){
-    toast(`✅ Documento lido com sucesso! ${textoAcumulado.length} caracteres extraídos.`);
+    toast(`✅ ${lidos} documento${lidos>1?"s":""} lido${lidos>1?"s":""}! ${L.materialTexto.length} caracteres no material.`);
   }
 }
 
@@ -4424,8 +4487,9 @@ function removerMaterial(i){
   if(!L || !Array.isArray(L.materialNomes) || i<0 || i>=L.materialNomes.length) return;
   const nome=L.materialNomes[i]||"este documento";
   if(!confirm(`Remover "${nome}" do material de apoio?`)) return;
-  L.materialTexto = removerBlocoMaterial(L.materialTexto||"", L.materialNomes, i);
-  L.materialNomes.splice(i,1); L.materialTipos.splice(i,1);
+  garantirMateriaisEstado(L);
+  L.materialNomes.splice(i,1); L.materialTipos.splice(i,1); L.materialTextos.splice(i,1);
+  recomporMaterial(L);
   render();
   toast("Documento removido.");
 }
@@ -4437,33 +4501,45 @@ function cancelarEdicaoLicao(){
 
 // Painel "Material de Apoio" no editor de lição (importação local — sem upload).
 function materialApoioPanel(L){
-  const nomes=L.materialNomes||[], tipos=L.materialTipos||[];
+  garantirMateriaisEstado(L);
+  const nomes=L.materialNomes, tipos=L.materialTipos, textos=L.materialTextos, cotas=L.materialCotas;
   const cheio = nomes.length >= MATERIAL_MAX_ARQUIVOS;
   const lendo = !!(Teacher.upload && Teacher.upload.ativo);
   const textoTotal = (L.materialTexto||"").trim();
 
-  const lista = nomes.length ? nomes.map((n,i)=>`
+  const lista = nomes.length ? nomes.map((n,i)=>{
+    const tot = String(textos[i]||"").trim().length, usado = cotas[i]||0;
+    const cortado = tot > usado;
+    const info = tot
+      ? `${usado.toLocaleString("pt-BR")} caracteres usados${cortado?` de ${tot.toLocaleString("pt-BR")} (resumido p/ caber)`:""}`
+      : "sem texto extraído";
+    return `
     <div class="t-lesson-row" style="align-items:center">
       <div style="width:28px;text-align:center;font-size:18px">${materialIcone(tipos[i], n)}</div>
-      <div class="info" style="min-width:0"><div class="t" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(n)}</div></div>
+      <div class="info" style="min-width:0">
+        <div class="t" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(n)}</div>
+        <div style="font-size:11px;color:${cortado?'#e67e22':'#888'}">${info}</div>
+      </div>
       <button class="btn red small" style="width:auto;padding:6px 10px" onclick="App.removerMaterial(${i})" ${lendo?'disabled':''}>✕ Remover</button>
-    </div>`).join("") : `<p style="font-size:12px;color:#999;margin:4px 0">Nenhum documento importado ainda.</p>`;
+    </div>`; }).join("") : `<p style="font-size:12px;color:#999;margin:4px 0">Nenhum documento importado ainda.</p>`;
 
   // Resumo do texto extraído: total de caracteres + prévia (primeiros 200 caracteres).
+  const pct = Math.min(100, Math.round(textoTotal.length/MATERIAL_TEXTO_MAX*100));
   const preview = textoTotal
     ? `<div style="margin-top:8px;background:#f4fbf6;border:1px solid #cde9d5;border-radius:8px;padding:8px 10px">
-         <div style="font-size:12px;color:#27ae60;font-weight:700">✅ ${textoTotal.length} caracteres extraídos</div>
+         <div style="font-size:12px;color:#27ae60;font-weight:700">✅ ${nomes.length} documento${nomes.length>1?"s":""} • ${textoTotal.length.toLocaleString("pt-BR")} de ${MATERIAL_TEXTO_MAX.toLocaleString("pt-BR")} caracteres (${pct}%)</div>
+         <div style="height:6px;background:#dff0e4;border-radius:4px;margin:6px 0;overflow:hidden"><div style="height:100%;width:${pct}%;background:${pct>=100?'#e67e22':'#27ae60'}"></div></div>
          <div style="font-size:12px;color:#555;margin-top:4px;white-space:pre-wrap">${esc(textoTotal.slice(0,200))}${textoTotal.length>200?"…":""}</div>
        </div>`
     : "";
 
   const progresso = lendo
-    ? `<div class="ia-loading" style="color:#9b59b6;margin-top:8px"><span class="ia-spinner"></span> 📄 Lendo documento: ${esc(Teacher.upload.nome)}...</div>`
+    ? `<div class="ia-loading" style="color:#9b59b6;margin-top:8px"><span class="ia-spinner"></span> 📄 Lendo documento ${Teacher.upload.total>1?`${Teacher.upload.atual||1} de ${Teacher.upload.total}`:""}: ${esc(Teacher.upload.nome)}...</div>`
     : "";
 
   return `<div class="ia-panel">
     <div class="ia-head"><b>📄 Material de Apoio</b></div>
-    <p style="font-size:12px;color:#777;margin-bottom:8px">O texto do documento será usado pela IA para gerar exercícios mais precisos baseados no seu material. Aceita PDF, DOC, DOCX, TXT, PNG e JPG (até 10MB, ${MATERIAL_MAX_ARQUIVOS} por lição). O texto é extraído no seu navegador — nada é enviado para a nuvem além do texto.</p>
+    <p style="font-size:12px;color:#777;margin-bottom:8px">O texto dos documentos será usado pela IA para gerar exercícios mais precisos baseados no seu material. Aceita PDF, DOC, DOCX, TXT, PNG e JPG (até 10MB cada, ${MATERIAL_MAX_ARQUIVOS} por lição) e você pode selecionar vários de uma vez. O texto é extraído no seu navegador — nada é enviado para a nuvem além do texto. Se os documentos somarem mais de ${MATERIAL_TEXTO_MAX.toLocaleString("pt-BR")} caracteres, cada um é reduzido proporcionalmente para que <b>todos</b> apareçam no material enviado à IA.</p>
     <div id="materialLista">${lista}</div>
     ${preview}
     ${progresso}
@@ -4471,7 +4547,7 @@ function materialApoioPanel(L){
       📄 Importar documento
       <input type="file" accept=".pdf,.doc,.docx,.txt,.png,.jpg,.jpeg,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain,image/png,image/jpeg" multiple style="display:none" onchange="App.onSelecionarMateriais(this.files); this.value='';">
     </label>
-    ${cheio?`<p style="font-size:12px;color:#c0392b;text-align:center;margin-top:6px">Limite de ${MATERIAL_MAX_ARQUIVOS} documentos atingido.</p>`:''}
+    ${cheio?`<p style="font-size:12px;color:#c0392b;text-align:center;margin-top:6px">Limite de ${MATERIAL_MAX_ARQUIVOS} documentos atingido.</p>`:`<p style="font-size:11px;color:#999;text-align:center;margin-top:6px">${nomes.length} de ${MATERIAL_MAX_ARQUIVOS} documentos</p>`}
   </div>`;
 }
 
@@ -4586,7 +4662,7 @@ O resumo deve ter no máximo 300 palavras e terminar com uma dica de memorizaç�
 ${pub.frase}
 CONTEÚDO DA LIÇÃO: ${conteudo}${blocoMaterial}`;
   try{
-    const texto=await chamarIA(prompt, 20000);
+    const texto=await chamarIA(prompt, timeoutComMaterial(20000, material));
     if(!texto.trim()) throw new Error("A IA retornou um resumo vazio. Tente novamente.");
     delete resumoCache[L.id];
     salvarLicaoGerada(L.id, { resumo:texto, exercicios:L.exercicios });
@@ -4601,6 +4677,12 @@ CONTEÚDO DA LIÇÃO: ${conteudo}${blocoMaterial}`;
 
 // Chamada genérica à IA. Usa o proxy se configurado (sem chave no cliente);
 // senão chama a OpenAI direto com a chave. timeoutMs aborta e lança Error("timeout").
+// Material de apoio extenso aumenta o prompt (mais tempo de leitura pela IA):
+// acrescenta 15s de timeout a cada 20.000 caracteres de material, até +45s.
+function timeoutComMaterial(base, material){
+  const n = String(material||"").length;
+  return base + Math.min(45000, Math.floor(n/20000)*15000);
+}
 async function chamarIA(prompt, timeoutMs){
   return chamarIAMensagens([{ role:"user", content: prompt }], timeoutMs);
 }
@@ -4741,7 +4823,7 @@ CONTEÚDO DA LIÇÃO:
 ${conteudo}${blocoMaterial}`;
 
   try{
-    const texto = await chamarIA(prompt, 45000);
+    const texto = await chamarIA(prompt, timeoutComMaterial(45000, material));
     const novos = parseExerciciosIA(texto);
     if(!novos.length) throw new Error("A IA não retornou exercícios reconhecíveis. Tente novamente.");
 
