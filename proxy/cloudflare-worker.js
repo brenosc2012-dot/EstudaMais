@@ -48,6 +48,10 @@ export default {
       messages: Array.isArray(body.messages) ? body.messages : [],
       temperature: typeof body.temperature === "number" ? body.temperature : 0.7
     };
+    // streaming: o app pede `stream:true` para receber o texto aos poucos (respostas
+    // longas não dependem mais de a conexão aguentar uma espera única e silenciosa)
+    const ehStream = body.stream === true;
+    if (ehStream) payload.stream = true;
 
     let r;
     try {
@@ -61,6 +65,19 @@ export default {
       });
     } catch (e) {
       return resp({ error: { message: "Falha ao contatar a OpenAI: " + (e && e.message) } }, 502, cors);
+    }
+
+    // streaming: repassa o corpo em fluxo (sem bufferizar), preservando o SSE
+    if (ehStream && r.ok && r.body) {
+      return new Response(r.body, {
+        status: r.status,
+        headers: {
+          ...cors,
+          "Content-Type": "text/event-stream; charset=utf-8",
+          "Cache-Control": "no-cache",
+          "Connection": "keep-alive"
+        }
+      });
     }
 
     // devolve a resposta da OpenAI como veio, agora COM CORS

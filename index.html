@@ -4093,18 +4093,24 @@ const INTERP_BLOCOS = [
     desc:"5 questões difíceis (inferência, opinião fundamentada, análise)",
     niveis:'"dificil"' },
 ];
-let interpLoadTimer = null, interpLoadIni = 0, interpLoadRotulo = "";
+let interpLoadTimer = null, interpLoadIni = 0, interpLoadRotulo = "", interpLoadChars = 0;
 function iniciarRotacaoInterp(limiteMs, rotulo){
-  clearInterval(interpLoadTimer); interpLoadIni=Date.now();
+  clearInterval(interpLoadTimer); interpLoadIni=Date.now(); interpLoadChars=0;
   interpLoadRotulo = rotulo || "Gerando com IA";
   const limite = Math.round((limiteMs||INTERP_TIMEOUT_TEXTO)/1000);
   const pinta=()=>{
     const seg = Math.round((Date.now()-interpLoadIni)/1000);
     const e=document.getElementById("interpMsg");
-    if(e) e.textContent = `${interpLoadRotulo}... (${seg}s de até ${limite}s)`;
+    if(!e) return;
+    // enquanto a IA está escrevendo, mostra o que já chegou (prova de que não travou)
+    e.textContent = interpLoadChars
+      ? `${interpLoadRotulo}... (${seg}s · ${interpLoadChars} caracteres recebidos)`
+      : `${interpLoadRotulo}... (aguardando a IA começar: ${seg}s de até ${limite}s)`;
   };
   pinta(); interpLoadTimer=setInterval(pinta, 1000);
 }
+// Callback de progresso das chamadas em streaming da interpretação.
+function progressoInterp(parcial){ interpLoadChars = (parcial||"").length; }
 function tamanhoInterp(v){ return INTERP_TAMANHOS.find(t=>t.v===v) || INTERP_TAMANHOS[1]; }
 
 function interpConfigPanel(L){
@@ -4172,7 +4178,7 @@ O texto deve:
 
 Retorne APENAS um JSON válido, sem comentários:
 {"titulo_texto": "título do texto", "genero": "gênero textual", "texto": "texto completo aqui..."}`;
-  const txt=await chamarIA(prompt, INTERP_TIMEOUT_TEXTO);
+  const txt=await chamarIA(prompt, INTERP_TIMEOUT_TEXTO, { onProgresso: progressoInterp });
   const obj=parseJsonObjIA(txt);
   if(!obj || !obj.texto) throw new Error("A IA não retornou um texto válido. Tente novamente.");
   return obj;
@@ -4192,7 +4198,7 @@ Retorne APENAS um JSON array no formato:
 
 TEXTO:
 ${L.textoGerado}`;
-  const txt=await chamarIA(prompt, INTERP_TIMEOUT_QUESTOES);
+  const txt=await chamarIA(prompt, INTERP_TIMEOUT_QUESTOES, { onProgresso: progressoInterp });
   return parseExerciciosIA(txt);
 }
 // Roda os blocos de questões em sequência, preservando o que já veio se um falhar.
@@ -4675,16 +4681,37 @@ function toggleIaConfig(){ syncTextInputs(); Teacher.iaConfigAberta=!Teacher.iaC
 async function testarIA(){
   Teacher.iaTeste={ rodando:true, ok:false, msg:"" }; render();
   const via = (IA.proxyUrl && IA.proxyUrl.trim()) ? "via proxy" : "direto na OpenAI";
+  // Teste 1: resposta de 1 palavra (mede se a chamada sai e volta).
   const t0 = Date.now();
   try{
     if(!iaConfigurada()) throw new Error("IA não configurada (peça ao Administrador ⚙️).");
-    const txt = await chamarIA("Responda apenas com a palavra: ok", 20000);
-    const seg = ((Date.now()-t0)/1000).toFixed(1);
-    Teacher.iaTeste={ rodando:false, ok:true, msg:`Conexão OK (${via}) — respondeu em ${seg}s: "${String(txt||"").trim().slice(0,30)}"` };
+    await chamarIA("Responda apenas com a palavra: ok", 20000);
   }catch(err){
-    const seg = ((Date.now()-t0)/1000).toFixed(1);
-    console.warn("Teste da IA falhou:", err);
-    Teacher.iaTeste={ rodando:false, ok:false, msg:`Falhou após ${seg}s (${via}): ${mensagemErroIA(err)}` };
+    console.warn("Teste curto da IA falhou:", err);
+    Teacher.iaTeste={ rodando:false, ok:false, msg:`Resposta curta falhou após ${((Date.now()-t0)/1000).toFixed(1)}s (${via}): ${mensagemErroIA(err)}` };
+    render(); return;
+  }
+  const curtoSeg = ((Date.now()-t0)/1000).toFixed(1);
+  // Teste 2: resposta LONGA. É o que realmente importa — uma rede que afunila
+  // respostas grandes passa no teste curto e falha na geração de verdade.
+  const t1 = Date.now(); let ttfb = 0, chars = 0;
+  try{
+    const txt = await chamarIA(
+      "Escreva um texto de aproximadamente 300 palavras sobre o ciclo da água, para uma criança de 10 anos.",
+      45000,
+      { onProgresso: (parcial)=>{ if(!ttfb) ttfb = Date.now()-t1; chars = parcial.length; } }
+    );
+    chars = chars || (txt||"").length;
+    const seg = (Date.now()-t1)/1000;
+    const vel = Math.round(chars/Math.max(seg,0.1));
+    const detalhe = ttfb ? `início em ${(ttfb/1000).toFixed(1)}s, ` : "sem streaming (resposta veio inteira), ";
+    Teacher.iaTeste={ rodando:false, ok:true,
+      msg:`Conexão OK (${via}). Resposta curta em ${curtoSeg}s. Resposta longa: ${chars} caracteres em ${seg.toFixed(1)}s (${detalhe}${vel} caracteres/s).` };
+  }catch(err){
+    console.warn("Teste longo da IA falhou:", err);
+    const seg = ((Date.now()-t1)/1000).toFixed(1);
+    Teacher.iaTeste={ rodando:false, ok:false,
+      msg:`A resposta CURTA funcionou (${curtoSeg}s), mas a LONGA falhou após ${seg}s${chars?` com ${chars} caracteres recebidos`:" sem receber nada"} (${via}): ${mensagemErroIA(err)}. Isso indica bloqueio/afunilamento da rede em respostas grandes — use o proxy (pasta proxy/).` };
   }
   render();
 }
@@ -4743,8 +4770,8 @@ function timeoutComMaterial(base, material){
   const n = String(material||"").length;
   return base + Math.min(45000, Math.floor(n/20000)*15000);
 }
-async function chamarIA(prompt, timeoutMs){
-  return chamarIAMensagens([{ role:"user", content: prompt }], timeoutMs);
+async function chamarIA(prompt, timeoutMs, opts){
+  return chamarIAMensagens([{ role:"user", content: prompt }], timeoutMs, opts);
 }
 // Extrai texto educacional de uma imagem via visão da OpenAI (OCR). dataUrl = "data:image/...;base64,..."
 async function ocrImagemIA(dataUrl){
@@ -4754,29 +4781,79 @@ async function ocrImagemIA(dataUrl){
   ]}], 45000);
 }
 // Núcleo da chamada à IA: recebe o array `messages` (texto ou conteúdo multimodal p/ visão).
-async function chamarIAMensagens(messages, timeoutMs){
+// Tempo sem receber NENHUM byte que faz desistir de uma resposta em streaming.
+// Enquanto a IA estiver mandando texto, a espera continua — o que mata a chamada
+// é a conexão parar, não a resposta ser longa.
+const IA_INATIVIDADE_MS = 30000;
+const IA_TETO_TOTAL_MS = 300000; // trava de segurança: 5 min no total
+
+// Lê uma resposta em streaming (SSE) da OpenAI, juntando os pedaços de texto.
+// `aoPrimeiroByte` desarma o timeout inicial; `onProgresso` recebe o texto parcial
+// (usado para mostrar o progresso real na tela do professor).
+async function lerStreamIA(resp, ctrl, opts){
+  const reader = resp.body.getReader();
+  const dec = new TextDecoder();
+  let buf="", texto="", ultimo=Date.now(), primeiro=true;
+  const inatividade = (opts && opts.inatividadeMs) || IA_INATIVIDADE_MS;
+  const vigia = setInterval(()=>{
+    if(Date.now()-ultimo > inatividade){ try{ ctrl && ctrl.abort(); }catch(_){} }
+  }, 1000);
+  const tetoTotal = setTimeout(()=>{ try{ ctrl && ctrl.abort(); }catch(_){} }, IA_TETO_TOTAL_MS);
+  try{
+    for(;;){
+      const { done, value } = await reader.read();
+      if(done) break;
+      ultimo = Date.now();
+      if(primeiro){ primeiro=false; if(opts && opts.aoPrimeiroByte) opts.aoPrimeiroByte(); }
+      buf += dec.decode(value, { stream:true });
+      let i;
+      while((i = buf.indexOf("\n")) >= 0){
+        const linha = buf.slice(0,i).trim(); buf = buf.slice(i+1);
+        if(!linha || linha.charAt(0)===":" || linha.indexOf("data:")!==0) continue;
+        const dados = linha.slice(5).trim();
+        if(dados === "[DONE]") continue;
+        try{
+          const j = JSON.parse(dados);
+          const esc0 = j.choices && j.choices[0];
+          const pedaco = esc0 && ((esc0.delta && esc0.delta.content) || (esc0.message && esc0.message.content));
+          if(pedaco){ texto += pedaco; if(opts && opts.onProgresso) opts.onProgresso(texto); }
+        }catch(_){ /* linha parcial ou keep-alive: ignora */ }
+      }
+    }
+  }finally{ clearInterval(vigia); clearTimeout(tetoTotal); }
+  return texto;
+}
+
+// Núcleo da chamada à IA. `opts`: { stream:false } desliga o streaming,
+// { onProgresso, inatividadeMs } acompanham a resposta enquanto ela chega.
+async function chamarIAMensagens(messages, timeoutMs, opts){
+  opts = opts || {};
   const usaProxy = !!(IA.proxyUrl && IA.proxyUrl.trim());
   if(!usaProxy && !IA.apiKey.trim()) throw new Error("Sem chave de API configurada.");
   const ctrl = (typeof AbortController!=="undefined") ? new AbortController() : null;
   let timer=null, expirou=false;
-  if(ctrl && timeoutMs){ timer=setTimeout(()=>{ expirou=true; try{ ctrl.abort(); }catch(_){} }, timeoutMs); }
+  // `timeoutMs` agora é o limite para a resposta COMEÇAR a chegar. Depois do primeiro
+  // byte quem manda é a inatividade (ver lerStreamIA): uma geração longa mas que está
+  // progredindo não é mais cortada no meio.
+  const armarTimeout = ()=>{ if(ctrl && timeoutMs) timer=setTimeout(()=>{ expirou=true; try{ ctrl.abort(); }catch(_){} }, timeoutMs); };
+  const desarmarTimeout = ()=>{ if(timer){ clearTimeout(timer); timer=null; } };
+  armarTimeout();
   const headers = { "Content-Type":"application/json" };
   if(!usaProxy) headers["Authorization"] = "Bearer " + IA.apiKey.trim(); // proxy injeta a chave
-  // IMPORTANTE: o timer só é cancelado depois de LER O CORPO da resposta. Se ele
+  const querStream = opts.stream!==false && typeof TextDecoder!=="undefined";
+  // IMPORTANTE: o timer só é desarmado depois de LER O CORPO da resposta. Se ele
   // fosse cancelado logo após o fetch (que resolve com os cabeçalhos), uma resposta
   // que parasse no meio deixaria `resp.json()` pendurado para sempre — o painel
   // ficava "gerando..." sem nunca voltar nem mostrar erro.
   try{
     let resp;
     try{
+      const corpo = { model: IA_MODELO, messages: messages, temperature: 0.7 };
+      if(querStream) corpo.stream = true;
       resp = await fetch(usaProxy ? IA.proxyUrl.trim() : IA_ENDPOINT, {
         method:"POST",
         headers: headers,
-        body: JSON.stringify({
-          model: IA_MODELO,
-          messages: messages,
-          temperature: 0.7
-        }),
+        body: JSON.stringify(corpo),
         signal: ctrl ? ctrl.signal : undefined
       });
     }catch(e){
@@ -4790,6 +4867,24 @@ async function chamarIAMensagens(messages, timeoutMs){
       if(resp.status===429) detalhe = detalhe || "Limite de uso atingido (ou conta sem créditos). Aguarde e tente de novo.";
       throw new Error(`Erro ${resp.status}${detalhe? " — "+detalhe : ""}`);
     }
+    // Resposta em streaming (SSE). Se o proxy antigo não repassar `stream`, a OpenAI
+    // devolve JSON normal e caímos no caminho de baixo — os dois seguem funcionando.
+    const ct = (resp.headers && resp.headers.get) ? (resp.headers.get("content-type")||"") : "";
+    if(querStream && /event-stream/i.test(ct) && resp.body && resp.body.getReader){
+      let texto;
+      try{
+        texto = await lerStreamIA(resp, ctrl, {
+          inatividadeMs: opts.inatividadeMs,
+          onProgresso: opts.onProgresso,
+          aoPrimeiroByte: desarmarTimeout
+        });
+      }catch(e){
+        if(expirou || (e && e.name==="AbortError")) throw new Error("timeout");
+        throw new Error("A resposta da IA foi interrompida no meio. Tente novamente.");
+      }
+      if(!texto.trim()) throw new Error("A IA respondeu vazio. Tente novamente.");
+      return texto;
+    }
     let data;
     try{ data = await resp.json(); }
     catch(e){
@@ -4799,7 +4894,7 @@ async function chamarIAMensagens(messages, timeoutMs){
     return data.choices && data.choices[0] && data.choices[0].message
       ? (data.choices[0].message.content || "") : "";
   }finally{
-    if(timer) clearTimeout(timer);
+    desarmarTimeout();
   }
 }
 

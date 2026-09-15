@@ -245,12 +245,22 @@ Regras necessárias em `firestore.rules` (ponto de partida; ver arquivo no repo)
     `mensagemErroIA()` explica isso; o proxy elimina o problema.
   - **Geração agora cria 15 exercícios** em 3 níveis (5 fácil / 5 intermediário /
     5 difícil); o parser captura o campo `nivel`. XP por acerto: 10/20/30.
+- **Streaming (padrão):** `chamarIAMensagens` envia `stream:true` e lê o SSE em
+  `lerStreamIA()`. Com isso `timeoutMs` passou a ser o limite para a resposta **começar**
+  (desarmado no 1º byte); depois quem corta é a **inatividade** (`IA_INATIVIDADE_MS`, 30s
+  sem nenhum byte), com teto total de `IA_TETO_TOTAL_MS` (5 min). Ou seja: geração longa
+  que está progredindo não é mais cortada; conexão que para é. `opts.onProgresso(parcial)`
+  recebe o texto enquanto chega (a interpretação usa isso para mostrar os caracteres na
+  tela). Se o proxy não repassar `stream` (versão antiga do Worker), a OpenAI devolve JSON
+  normal e o caminho antigo continua valendo — os dois formatos são aceitos.
 - ⚠️ O timeout de `chamarIAMensagens` cobre o `fetch` **e a leitura do corpo** da resposta
-  (o `clearTimeout` fica num `finally` depois do `resp.json()`). Cancelá-lo antes deixava
-  `resp.json()` sem limite: uma resposta interrompida no meio travava a Promise para sempre
-  e o painel ficava "gerando..." sem erro. Não mova esse `clearTimeout`.
+  (o `clearTimeout`/`desarmarTimeout` fica num `finally` depois de ler o corpo). Cancelá-lo
+  antes deixava `resp.json()` sem limite: uma resposta interrompida no meio travava a Promise
+  para sempre e o painel ficava "gerando..." sem erro. Não mova esse `finally`.
 - Diagnóstico: `App.testarIA()` (botão "🔎 Testar conexão com a IA" nos painéis do professor)
-  faz uma chamada mínima e mostra chave inválida / bloqueio de rede / tempo de resposta.
+  faz **duas** chamadas — uma de 1 palavra e uma de ~300 palavras — e reporta tempo de início
+  e caracteres/s. Rede corporativa que afunila respostas grandes passa na curta e falha na
+  longa; é esse o sintoma que o teste isola.
 - Helper compartilhado: `chamarIA(prompt)` faz o `fetch` e devolve o texto (lança
   `Error` em falha). Usado por três fluxos:
   1. **Gerar exercícios** (professor) — `gerarExerciciosIA()`.
