@@ -1238,6 +1238,35 @@ function demoLogin(){ demoSair("loginAluno"); }
 
 function subjById(id){ return SUBJECTS.find(s=>s.id===id); }
 
+// Mostra na tela erros de JavaScript que antes morriam no console (o usuário via
+// só "não acontece nada" ao clicar). Inclui o local do erro para diagnóstico.
+function mostrarErroJs(origem, detalhe){
+  try{
+    let box=document.getElementById("erroJs");
+    if(!box){
+      box=document.createElement("div"); box.id="erroJs";
+      box.style.cssText="position:fixed;left:8px;right:8px;bottom:8px;z-index:9999;background:#c0392b;color:#fff;padding:10px 12px;border-radius:10px;font-size:12px;line-height:1.4;box-shadow:0 6px 16px rgba(0,0,0,.35);max-height:45vh;overflow:auto;white-space:pre-wrap";
+      document.body.appendChild(box);
+    }
+    box.textContent = `⚠️ Erro no app (${origem}): ${String(detalhe||"")}`;
+    const fechar=document.createElement("button");
+    fechar.textContent="Fechar";
+    fechar.style.cssText="display:block;margin-top:8px;padding:4px 10px;border:0;border-radius:6px;background:#fff;color:#c0392b;font-weight:700;cursor:pointer";
+    fechar.onclick=()=>box.remove();
+    box.appendChild(fechar);
+    console.error("[EstudaMais]", origem, detalhe);
+  }catch(_){}
+}
+if(typeof window!=="undefined"){
+  window.addEventListener("error", (e)=>{
+    const err = e && e.error;
+    mostrarErroJs("erro", (err && (err.stack||err.message)) || (e && e.message) || e);
+  });
+  window.addEventListener("unhandledrejection", (e)=>{
+    const r = e && e.reason;
+    mostrarErroJs("promessa", (r && (r.stack||r.message)) || r);
+  });
+}
 function toast(msg){
   const t=document.getElementById("toast"); t.textContent=msg; t.classList.add("show");
   clearTimeout(t._tid); t._tid=setTimeout(()=>t.classList.remove("show"),2200);
@@ -3812,6 +3841,11 @@ function resetProgress(){
    E) UI DO PROFESSOR
    ============================================================ */
 const Teacher = { tab:"licoes", subj:"mat", editingLesson:null, gerando:false, regenerando:false, previewing:false, iaErro:"", iaConfigAberta:false,
+  // estado dos painéis de IA (criados também em newLesson/editLesson; aqui garantem
+  // que um clique nunca esbarre em `undefined`)
+  interp:{ gerando:false, erro:"" },
+  hist:{ gerando:false, preview:null, erro:"" },
+  iaTeste:null,
   // upload de material de apoio (barra de progresso / status de leitura)
   upload:{ ativo:false, pct:0, nome:"", lendo:false },
   // painel de rendimento (Fase C)
@@ -4112,6 +4146,8 @@ function iniciarRotacaoInterp(limiteMs, rotulo){
 // Callback de progresso das chamadas em streaming da interpretação.
 function progressoInterp(parcial){ interpLoadChars = (parcial||"").length; }
 function tamanhoInterp(v){ return INTERP_TAMANHOS.find(t=>t.v===v) || INTERP_TAMANHOS[1]; }
+// Garante o estado do painel de interpretação antes de qualquer handler mexer nele.
+function estadoInterp(){ if(!Teacher.interp) Teacher.interp={ gerando:false, erro:"" }; return Teacher.interp; }
 
 function interpConfigPanel(L){
   const I=Teacher.interp||{}; const temChave=iaConfigurada();
@@ -4222,12 +4258,14 @@ function aplicarInterpGerado(L, dados){
   if(!L.titulo || !L.titulo.trim()) L.titulo = L.tituloTexto || ("Interpretação de texto — "+(L.tema||""));
 }
 async function gerarInterpretacao(){
-  syncTextInputs();
-  const L=Teacher.editingLesson; if(!L) return;
+  estadoInterp(); syncTextInputs();
+  const L=Teacher.editingLesson;
+  if(!L){ toast("Abra ou crie uma lição primeiro."); return; }
   if(!(L.tema||"").trim()){ Teacher.interp.erro="Informe o tema do texto."; render(); return; }
   if(!L.generoTextual){ Teacher.interp.erro="Escolha o gênero textual."; render(); return; }
   if(!iaConfigurada()){ Teacher.interp.erro="IA não configurada (peça ao Administrador)."; render(); return; }
   Teacher.interp.gerando=true; Teacher.interp.erro=""; render();
+  toast("Iniciando a geração..."); // confirma ao professor que o clique foi registrado
   // ETAPA 1 — o texto
   iniciarRotacaoInterp(INTERP_TIMEOUT_TEXTO, "Etapa 1 de 3 — escrevendo o texto");
   try{
@@ -4254,8 +4292,9 @@ async function regenerarTextoInterp(){
   gerarInterpretacao();
 }
 async function regenerarExerciciosInterp(){
-  syncTextInputs();
-  const L=Teacher.editingLesson; if(!L) return;
+  estadoInterp(); syncTextInputs();
+  const L=Teacher.editingLesson;
+  if(!L){ toast("Abra ou crie uma lição primeiro."); return; }
   if(!(L.textoGerado||"").trim()){ toast("Gere o texto primeiro."); return; }
   if(!iaConfigurada()){ Teacher.interp.erro="IA não configurada."; render(); return; }
   Teacher.interp.gerando=true; Teacher.interp.erro=""; render();
