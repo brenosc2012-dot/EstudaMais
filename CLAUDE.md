@@ -44,6 +44,16 @@ node -e "const fs=require('fs');const h=fs.readFileSync('index.html','utf8');con
 
 Sempre rode isso após mexer no JavaScript.
 
+O `node --check` **não** pega constante removida cujo uso ficou para trás (o erro só
+aparece em tempo de execução, e o clique simplesmente "não faz nada"). Rode também:
+
+```bash
+node -e "const fs=require('fs');const js=[...fs.readFileSync('index.html','utf8').matchAll(/<script>([\s\S]*?)<\/script>/g)].pop()[1];const d=new Set([...js.matchAll(/(?:(?:const|let|var)\s+|,\s*)([A-Z][A-Z0-9_]*)\s*=/g)].map(m=>m[1]));const f=[...new Set([...js.matchAll(/([A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+)/g)].map(m=>m[1]))].filter(n=>!d.has(n));console.log(f.length?('ORFAS: '+f.join(', ')):'OK')"
+```
+
+Erros de runtime também ficam visíveis no app: `window.onerror`/`unhandledrejection`
+mostram uma faixa vermelha na tela com a mensagem (ver `mostrarErroJs`).
+
 ## Estrutura do `index.html`
 
 O CSS e o JS são organizados em seções comentadas. No JavaScript (dentro de uma IIFE

@@ -4157,7 +4157,8 @@ function interpConfigPanel(L){
     return `<button type="button" class="btn ${on?'':'gray'} small" style="width:auto;min-width:0;margin:0 6px 6px 0;text-transform:none;font-size:13px" onclick="App.toggleFocoInterp('${f.k}')">${on?'✓ ':''}${esc(f.l)}</button>`;
   }).join("");
   let status="";
-  if(I.gerando) status=`<div class="ia-loading" style="color:#1cb0f6;margin-top:8px"><span class="ia-spinner"></span> <span id="interpMsg">${esc(INTERP_LOAD_MSGS[0])}</span></div>`;
+  // o texto de #interpMsg é atualizado a cada segundo por iniciarRotacaoInterp()
+  if(I.gerando) status=`<div class="ia-loading" style="color:#1cb0f6;margin-top:8px"><span class="ia-spinner"></span> <span id="interpMsg">Preparando a geração...</span></div>`;
   else if(I.erro) status=`<div class="ia-erro">⚠️ ${esc(I.erro)}</div>`;
   const temTexto=(L.textoGerado||"").trim().length>0;
   const preview = temTexto ? `
