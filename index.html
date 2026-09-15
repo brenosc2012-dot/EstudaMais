@@ -4081,19 +4081,29 @@ const INTERP_TAMANHOS = [
   { v:"medio", l:"Médio (250-350 palavras) — 4º ao 6º ano", palavras:"250 a 350" },
   { v:"longo", l:"Longo (400-500 palavras) — 7º ao 9º e Médio", palavras:"400 a 500" },
 ];
-const INTERP_LOAD_MSGS = ["✍️ Escrevendo o texto...","📚 Criando as questões...","🎨 Finalizando a lição..."];
-const INTERP_TIMEOUT_TUDO = 90000;      // texto + 15 questões numa resposta só
-const INTERP_TIMEOUT_QUESTOES = 60000;  // só as 15 questões (texto já existe)
-let interpLoadTimer = null, interpLoadIni = 0;
-function iniciarRotacaoInterp(limiteMs){
-  clearInterval(interpLoadTimer); let i=0; interpLoadIni=Date.now();
-  const limite = Math.round((limiteMs||INTERP_TIMEOUT_TUDO)/1000);
-  interpLoadTimer=setInterval(()=>{
+const INTERP_TIMEOUT_TEXTO = 60000;     // etapa 1: só o texto
+const INTERP_TIMEOUT_QUESTOES = 75000;  // etapas 2 e 3: um bloco de questões
+// Blocos de questões: gerar as 15 de uma vez fazia a resposta ficar longa demais
+// (e estourar o tempo). Dividido em dois pedidos menores sobre o MESMO texto.
+const INTERP_BLOCOS = [
+  { rotulo:"Etapa 2 de 3 — questões fáceis e intermediárias", n:10,
+    desc:"5 questões fáceis (identificação direta de informações no texto) e 5 questões intermediárias (relações entre informações, vocabulário)",
+    niveis:'"facil" (nas 5 primeiras) e "intermediario" (nas 5 últimas)' },
+  { rotulo:"Etapa 3 de 3 — questões difíceis", n:5,
+    desc:"5 questões difíceis (inferência, opinião fundamentada, análise)",
+    niveis:'"dificil"' },
+];
+let interpLoadTimer = null, interpLoadIni = 0, interpLoadRotulo = "";
+function iniciarRotacaoInterp(limiteMs, rotulo){
+  clearInterval(interpLoadTimer); interpLoadIni=Date.now();
+  interpLoadRotulo = rotulo || "Gerando com IA";
+  const limite = Math.round((limiteMs||INTERP_TIMEOUT_TEXTO)/1000);
+  const pinta=()=>{
     const seg = Math.round((Date.now()-interpLoadIni)/1000);
-    if(seg%2===0) i=(i+1)%INTERP_LOAD_MSGS.length;
     const e=document.getElementById("interpMsg");
-    if(e) e.textContent = `${INTERP_LOAD_MSGS[i]} (${seg}s de até ${limite}s)`;
-  }, 1000);
+    if(e) e.textContent = `${interpLoadRotulo}... (${seg}s de até ${limite}s)`;
+  };
+  pinta(); interpLoadTimer=setInterval(pinta, 1000);
 }
 function tamanhoInterp(v){ return INTERP_TAMANHOS.find(t=>t.v===v) || INTERP_TAMANHOS[1]; }
 
@@ -4147,9 +4157,8 @@ function focosTexto(L){
   const focos=(L._focos||[]).map(k=>{ const f=INTERP_FOCOS.find(x=>x.k===k); return f?f.l:null; }).filter(Boolean);
   return focos.length ? focos.join(", ") : "a compreensão geral do texto";
 }
-// Gera TEXTO + 15 exercícios (objeto). Timeout FOLGADO (90s): é a chamada mais
-// pesada do app — a IA escreve o texto inteiro e as 15 questões numa resposta só.
-async function gerarInterpretacaoIA(L){
+// ETAPA 1 — gera SÓ o texto (título + gênero + texto). Resposta curta, rápida.
+async function gerarTextoInterpIA(L){
   const pub=descreverPublicoLicao(L); const tam=tamanhoInterp(L._tamanho);
   const prompt =
 `Você é um professor de Português do ${pub.ano} do ${nomeNivel(pub.nivelId)} (Sistema Positivo). Crie um ${L.generoTextual} original sobre o tema '${L.tema}' adequado para uma criança de ${pub.idade} anos, com aproximadamente ${tam.palavras} palavras.
@@ -4161,35 +4170,20 @@ O texto deve:
 - Usar vocabulário variado mas acessível
 - Incluir elementos que permitam explorar: ${focosTexto(L)}
 
-Após o texto, gere exatamente 15 questões de interpretação divididas em:
-- 5 questões fáceis (identificação direta de informações no texto)
-- 5 questões intermediárias (relações entre informações, vocabulário)
-- 5 questões difíceis (inferência, opinião fundamentada, análise)
-
-Tipos de questão: múltipla escolha (4 opções), verdadeiro/falso, completar lacunas com palavras do próprio texto.
-
-IMPORTANTE: A resposta_correta deve conter o TEXTO da resposta correta, não o label (A, B, C, D).
-
-Retorne APENAS um JSON válido:
-{
-  "titulo_texto": "título do texto gerado",
-  "genero": "gênero textual",
-  "texto": "texto completo aqui...",
-  "exercicios": [
-    {"nivel": "facil", "tipo": "multipla_escolha", "enunciado": "...", "opcoes": ["texto opção 1","texto opção 2","texto opção 3","texto opção 4"], "resposta_correta": "texto da resposta correta"}
-  ]
-}`;
-  const txt=await chamarIA(prompt, INTERP_TIMEOUT_TUDO);
+Retorne APENAS um JSON válido, sem comentários:
+{"titulo_texto": "título do texto", "genero": "gênero textual", "texto": "texto completo aqui..."}`;
+  const txt=await chamarIA(prompt, INTERP_TIMEOUT_TEXTO);
   const obj=parseJsonObjIA(txt);
   if(!obj || !obj.texto) throw new Error("A IA não retornou um texto válido. Tente novamente.");
   return obj;
 }
-// Gera SÓ as 15 questões sobre o texto já existente (regenerar exercícios).
-async function gerarExerciciosInterpIA(L){
+// ETAPAS 2 e 3 — gera um BLOCO de questões sobre o texto já existente.
+async function gerarQuestoesInterpIA(L, bloco){
   const pub=descreverPublicoLicao(L);
   const prompt =
 `Você é um professor de Português do ${pub.ano} do ${nomeNivel(pub.nivelId)} (Sistema Positivo).
-Com base no TEXTO abaixo, gere exatamente 15 questões de interpretação: 5 fáceis (identificação direta), 5 intermediárias (relações/vocabulário) e 5 difíceis (inferência/opinião/análise).
+Com base no TEXTO abaixo, gere exatamente ${bloco.n} questões de interpretação: ${bloco.desc}.
+O campo "nivel" deve ser ${bloco.niveis}.
 Tipos: múltipla escolha (4 opções), verdadeiro/falso, completar lacunas com palavras do próprio texto.
 Explore: ${focosTexto(L)}.
 IMPORTANTE: resposta_correta deve conter o TEXTO da resposta, não a letra (A, B, C, D).
@@ -4200,6 +4194,19 @@ TEXTO:
 ${L.textoGerado}`;
   const txt=await chamarIA(prompt, INTERP_TIMEOUT_QUESTOES);
   return parseExerciciosIA(txt);
+}
+// Roda os blocos de questões em sequência, preservando o que já veio se um falhar.
+async function gerarQuestoesEmBlocos(L){
+  let todas=[], erro="";
+  for(const b of INTERP_BLOCOS){
+    iniciarRotacaoInterp(INTERP_TIMEOUT_QUESTOES, b.rotulo);
+    try{
+      const arr = await gerarQuestoesInterpIA(L, b);
+      if(arr && arr.length) todas = todas.concat(arr);
+      else { erro = "A IA não retornou as questões desta etapa."; break; }
+    }catch(err){ erro = mensagemErroIA(err); break; }
+  }
+  return { questoes: todas, erro: erro };
 }
 function aplicarInterpGerado(L, dados){
   if(dados.titulo_texto) L.tituloTexto=String(dados.titulo_texto);
@@ -4214,18 +4221,27 @@ async function gerarInterpretacao(){
   if(!(L.tema||"").trim()){ Teacher.interp.erro="Informe o tema do texto."; render(); return; }
   if(!L.generoTextual){ Teacher.interp.erro="Escolha o gênero textual."; render(); return; }
   if(!iaConfigurada()){ Teacher.interp.erro="IA não configurada (peça ao Administrador)."; render(); return; }
-  Teacher.interp.gerando=true; Teacher.interp.erro=""; render(); iniciarRotacaoInterp(INTERP_TIMEOUT_TUDO);
+  Teacher.interp.gerando=true; Teacher.interp.erro=""; render();
+  // ETAPA 1 — o texto
+  iniciarRotacaoInterp(INTERP_TIMEOUT_TEXTO, "Etapa 1 de 3 — escrevendo o texto");
   try{
-    const dados = await gerarInterpretacaoIA(L);
-    aplicarInterpGerado(L, dados);
-    clearInterval(interpLoadTimer); Teacher.interp.gerando=false;
-    // se o texto veio mas as questões falharam, mantém o texto e orienta a regenerar só elas
-    if(!L.exercicios.length) Teacher.interp.erro="O texto foi gerado, mas as questões não. Use '🔄 Regenerar exercícios'.";
-    render();
-    if(L.exercicios.length) toast("Texto e exercícios gerados! ✅ Revise e publique.");
+    aplicarInterpGerado(L, await gerarTextoInterpIA(L));
+    L.exercicios=[]; // texto novo → as questões antigas não servem mais
   }catch(err){
-    clearInterval(interpLoadTimer); Teacher.interp.gerando=false; Teacher.interp.erro=mensagemErroIA(err); render();
+    clearInterval(interpLoadTimer); Teacher.interp.gerando=false;
+    Teacher.interp.erro=mensagemErroIA(err); render(); return;
   }
+  // ETAPAS 2 e 3 — as questões, em dois blocos menores
+  const r = await gerarQuestoesEmBlocos(L);
+  clearInterval(interpLoadTimer); Teacher.interp.gerando=false;
+  if(r.questoes.length) L.exercicios = r.questoes;
+  if(r.erro){
+    Teacher.interp.erro = L.exercicios.length
+      ? `O texto e ${L.exercicios.length} questões foram gerados, mas faltaram as demais (${r.erro}). Use '🔄 Regenerar exercícios'.`
+      : `O texto foi gerado, mas as questões não (${r.erro}). Use '🔄 Regenerar exercícios'.`;
+  }
+  render();
+  if(!r.erro) toast(`Texto e ${L.exercicios.length} exercícios gerados! ✅ Revise e publique.`);
 }
 async function regenerarTextoInterp(){
   if(!confirm("Gerar uma NOVA versão do texto? As questões serão refeitas para combinar com o novo texto.")) return;
@@ -4236,14 +4252,14 @@ async function regenerarExerciciosInterp(){
   const L=Teacher.editingLesson; if(!L) return;
   if(!(L.textoGerado||"").trim()){ toast("Gere o texto primeiro."); return; }
   if(!iaConfigurada()){ Teacher.interp.erro="IA não configurada."; render(); return; }
-  Teacher.interp.gerando=true; Teacher.interp.erro=""; render(); iniciarRotacaoInterp(INTERP_TIMEOUT_QUESTOES);
-  try{
-    const arr = await gerarExerciciosInterpIA(L);
-    clearInterval(interpLoadTimer); Teacher.interp.gerando=false;
-    if(arr && arr.length){ L.exercicios=arr; toast("Novas questões geradas! ✅"); }
-    else Teacher.interp.erro="Não consegui gerar as questões. Tente novamente.";
-    render();
-  }catch(err){ clearInterval(interpLoadTimer); Teacher.interp.gerando=false; Teacher.interp.erro=mensagemErroIA(err); render(); }
+  Teacher.interp.gerando=true; Teacher.interp.erro=""; render();
+  const r = await gerarQuestoesEmBlocos(L);
+  clearInterval(interpLoadTimer); Teacher.interp.gerando=false;
+  if(r.questoes.length){ L.exercicios=r.questoes; toast(`${r.questoes.length} questões geradas! ✅`); }
+  if(r.erro) Teacher.interp.erro = r.questoes.length
+    ? `Vieram ${r.questoes.length} questões; as demais falharam (${r.erro}). Tente regenerar de novo.`
+    : `Não consegui gerar as questões (${r.erro}).`;
+  render();
 }
 function previewLesson(){ syncTextInputs(); Teacher.previewing=true; render(); }
 function fecharPreview(){ Teacher.previewing=false; render(); }

@@ -175,11 +175,16 @@ Regras necessárias em `firestore.rules` (ponto de partida; ver arquivo no repo)
 - Novo **tipo de lição** (`lesson.tipo="interpretacao_texto"`, seletor só em Português):
   a IA gera um **texto original** + 15 questões de interpretação sobre ele.
 - Editor (professor): `interpConfigPanel` — tema, gênero (`INTERP_GENEROS`), tamanho
-  (`INTERP_TAMANHOS`), focos (`INTERP_FOCOS`). `gerarInterpretacao` (30s) →
-  `gerarInterpretacaoIA` retorna `{titulo_texto,genero,texto,exercicios}`; `regenerarTextoInterp`
-  (nova versão) e `regenerarExerciciosInterp` (mesmo texto). Campos salvos: `tipo`,
-  `textoGerado`, `tituloTexto`, `generoTextual`, `tema` (e `conteudo`=textoGerado). Badge
-  "📖 Interpretação" na lista de lições.
+  (`INTERP_TAMANHOS`), focos (`INTERP_FOCOS`). `gerarInterpretacao` roda em **3 etapas**
+  (uma resposta só com texto + 15 questões passava de 90s e estourava o tempo):
+  etapa 1 `gerarTextoInterpIA` → `{titulo_texto,genero,texto}` (`INTERP_TIMEOUT_TEXTO`, 60s);
+  etapas 2 e 3 `gerarQuestoesEmBlocos` → `gerarQuestoesInterpIA` por bloco de `INTERP_BLOCOS`
+  (10 fáceis/intermediárias + 5 difíceis, `INTERP_TIMEOUT_QUESTOES` 75s cada). Se um bloco
+  falha, **o que já veio é preservado** (texto e questões parciais) e a mensagem manda usar
+  `regenerarExerciciosInterp` (mesmo texto, também em blocos); `regenerarTextoInterp` refaz tudo.
+  O loading mostra a etapa e os segundos decorridos (`iniciarRotacaoInterp(limite, rótulo)`).
+  Campos salvos: `tipo`, `textoGerado`, `tituloTexto`, `generoTextual`, `tema`
+  (e `conteudo`=textoGerado). Badge "📖 Interpretação" na lista de lições.
 - Aluno: `openLesson` desvia para `renderInterpRead` (Etapa 1 — leitura com TTS por
   parágrafo via `LeitorTexto`, rate 0.8/pitch 1.1, destaque + pausa 0.5s, controles
   play/pausar/continuar/parar; botão "Já li" liberado após 30s **ou** fim do scroll) →
@@ -240,6 +245,12 @@ Regras necessárias em `firestore.rules` (ponto de partida; ver arquivo no repo)
     `mensagemErroIA()` explica isso; o proxy elimina o problema.
   - **Geração agora cria 15 exercícios** em 3 níveis (5 fácil / 5 intermediário /
     5 difícil); o parser captura o campo `nivel`. XP por acerto: 10/20/30.
+- ⚠️ O timeout de `chamarIAMensagens` cobre o `fetch` **e a leitura do corpo** da resposta
+  (o `clearTimeout` fica num `finally` depois do `resp.json()`). Cancelá-lo antes deixava
+  `resp.json()` sem limite: uma resposta interrompida no meio travava a Promise para sempre
+  e o painel ficava "gerando..." sem erro. Não mova esse `clearTimeout`.
+- Diagnóstico: `App.testarIA()` (botão "🔎 Testar conexão com a IA" nos painéis do professor)
+  faz uma chamada mínima e mostra chave inválida / bloqueio de rede / tempo de resposta.
 - Helper compartilhado: `chamarIA(prompt)` faz o `fetch` e devolve o texto (lança
   `Error` em falha). Usado por três fluxos:
   1. **Gerar exercícios** (professor) — `gerarExerciciosIA()`.
