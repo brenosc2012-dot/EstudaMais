@@ -1,0 +1,27 @@
+{
+  "name": "estudamais",
+  "version": "2.0.0",
+  "private": true,
+  "description": "EstudaMais — app de estudos gamificado (index.html único). Este package.json existe só para as ferramentas de teste/lint; o app não tem build.",
+  "scripts": {
+    "check": "node tests/tools/validar-app.js",
+    "lint": "node tests/tools/extrair-app.js && eslint .",
+    "check:no-only": "node tests/tools/verificar-sem-only.js",
+    "test": "npm run test:all",
+    "test:unit": "node tests/tools/extrair-app.js && node --test \"tests/unit/**/*.test.js\"",
+    "test:integration": "node tests/tools/extrair-app.js && node --test \"tests/integration/**/*.test.js\"",
+    "test:e2e": "playwright test",
+    "test:all": "npm run test:unit && npm run test:integration && npm run test:e2e",
+    "coverage": "node tests/tools/extrair-app.js && c8 node --test \"tests/unit/**/*.test.js\" \"tests/integration/**/*.test.js\"",
+    "test:ai-real": "node tests/tools/extrair-app.js && node --test \"tests/opcional/**/*.test.js\"",
+    "ci": "npm run check && npm run check:no-only && npm run lint && npm run coverage && npm run test:e2e"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@playwright/test": "^1.63.0",
+    "c8": "^12.0.0",
+    "eslint": "^10.11.0",
+    "globals": "^17.12.0",
+    "jsdom": "^26.1.0"
+  }
+}

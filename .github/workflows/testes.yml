@@ -1,0 +1,38 @@
+name: Testes
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  testes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      # validação estática (o projeto não tem TypeScript/compilação): sintaxe, constantes
+      # órfãs, handlers App.x() inexistentes e JSONs
+      - run: npm run check
+      # proíbe test.only / skip / todo / fixme
+      - run: npm run check:no-only
+      - run: npm run lint
+      # unitários + integração com limites mínimos de cobertura (.c8rc.json)
+      - run: npm run coverage
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:e2e
+        env:
+          CI: "true"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: relatorios
+          path: |
+            coverage/
+            playwright-report/
+          retention-days: 7

@@ -3890,10 +3890,7 @@ const Teacher = { tab:"licoes", subj:"mat", editingLesson:null, gerando:false, r
   prem:{ carregada:false, carregando:false, erro:"", lista:[], salvando:false, form:null },
   // edição da própria conta (turmas/disciplinas)
   conta:{ turmas:[], anos:[], disc:[], salvando:false },
-  // gerenciamento do Modo História por lição
-  hist:{ gerando:false, preview:null, erro:"" },
-  // geração de lição de interpretação de texto (Português)
-  interp:{ gerando:false, erro:"" },
+  // (hist e interp — Modo História e interpretação de texto — ficam no início do objeto)
   // corretor de provas por câmera (OpenAI Vision)
   corretor:{ view:"config", modo:"manual", imagens:[], alunoId:"", subj:"mat", licaoId:"", valor:"10",
     numQ:5, gab:["C","B","D","B","B"], // gabarito por questão (labels) — pré-preenchido com a prova demo de frações

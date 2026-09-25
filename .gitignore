@@ -14,3 +14,10 @@ desktop.ini
 .vscode/
 *.swp
 *~
+
+# Testes (gerados)
+node_modules/
+build/
+coverage/
+test-results/
+playwright-report/

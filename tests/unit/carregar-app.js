@@ -6,7 +6,7 @@ const fs = require("fs");
 const path = require("path");
 const vm = require("vm");
 
-const HTML = fs.readFileSync(path.join(__dirname, "..", "index.html"), "utf8");
+const HTML = fs.readFileSync(path.join(__dirname, "..", "..", "index.html"), "utf8");
 const JS = [...HTML.matchAll(/<script>([\s\S]*?)<\/script>/g)].pop()[1];
 
 // Recorta `function nome(...){...}` (ou async) contando chaves a partir da 1ª `{` do corpo.

@@ -1,0 +1,7 @@
+{
+  "all": true,
+  "include": ["build/index.app.js", "sw.js", "proxy/**/*.js"],
+  "reporter": ["text", "html", "json-summary", "lcov"],
+  "report-dir": "coverage",
+  "check-coverage": false
+}

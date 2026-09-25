@@ -1,5 +1,5 @@
 // Testes dos três fluxos: reinício embaralhado após erro, regenerar exercícios e
-// prompt do texto de estudo. Rodar com:  node --test tests/
+// prompt do texto de estudo. Rodar com:  npm run test:unit
 "use strict";
 const test = require("node:test");
 const assert = require("node:assert/strict");
