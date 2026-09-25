@@ -112,6 +112,7 @@ Legenda dos tipos:
 | Aluno ou visitante não consegue regenerar | S, E | `professor-regenerar-exercicios` › "permissão: …"; `seguranca-autorizacao`; `jornadas-seguranca` |
 | **Regenerar conteúdo** altera só o resumo; exercícios intactos | I, E | `professor-regenerar-conteudo` › "sucesso grava SÓ…"; `jornadas-professor` |
 | Contexto do resumo e estrutura didática objetiva (títulos, ≥2 exemplos, "Cuidado!", tamanho, idioma, sem respostas) | U, C, I | `fluxos` › "prompt do texto de estudo…"; `material-prompts` › "montarPromptResumo…"; `professor-regenerar-conteudo` › "contexto enviado…" |
+| Texto de estudo validado antes de gravar (aluno e professor): títulos, ≥2 exemplos, 60 palavras até limite×1,5, português, sem HTML; 1 nova tentativa; recusado → nada gravado | U, I | `resumo-validacao` (unit, 5) › "validarResumoIA: …"; `resumo-validacao` (integração, 9) › "aluno: …", "professor: …" |
 | Conteúdo anterior mantido em erro (429, 503, rede, vazio, timeout, falha de gravação) | I, R, E | `professor-regenerar-conteudo` (6 testes + "falha ao gravar… NÃO mostra sucesso"); `jornadas-seguranca` › "limite de uso (429)…" |
 | Cancelar a regeneração de conteúdo | I, E | `professor-regenerar-conteudo` › "cancelar a confirmação…"; `jornadas-professor` › "cancela a regeneração…" |
 
@@ -192,10 +193,10 @@ Legenda dos tipos:
 
 | Suíte | Testes | Resultado |
 |---|---|---|
-| Unitários + contrato + backend + SW (`tests/unit`, 9 arquivos) | 118 | 118 ✔ |
-| Integração/componente/segurança (`tests/integration`, 36 arquivos) | 368 | 368 ✔ |
+| Unitários + contrato + backend + SW (`tests/unit`, 10 arquivos) | 123 | 123 ✔ |
+| Integração/componente/segurança (`tests/integration`, 37 arquivos) | 378 | 378 ✔ |
 | E2E Playwright (`tests/e2e`, 3 arquivos) | 17 | 17 ✔ |
-| **Total** | **503** | 0 falhas, 0 skip/todo |
+| **Total** | **518** | 0 falhas, 0 skip/todo |
 
 Os testes node rodaram duas vezes seguidas com resultado idêntico. O E2E passou em três
 execuções completas.
@@ -205,7 +206,7 @@ e funções ≥ 97%; branches ≥ 75%.
 
 | Arquivo | Linhas | Branches | Funções |
 |---|---|---|---|
-| `index.html` (script → `build/index.app.js`) | 98,26% | 77,58% | 98,83% |
+| `index.html` (script → `build/index.app.js`) | 98,27% | 77,81% | 98,83% |
 | `sw.js` | 100% | 100% | 100% |
 | `proxy/cloudflare-worker.js` | 100% | 100% | 100% |
 
@@ -250,7 +251,7 @@ mínimas e estão no `index.html`.
 | **Sessão local sem token/expiração** | A sessão é só `{tipo,id}` no localStorage; quem souber o id de outro aluno entra na conta dele. Não existe "sessão expirada" | Alto (mesma mitigação) |
 | Firestore real e emulador | Os testes usam um fake fiel ao subconjunto usado. Não há teste contra o emulador (exige Java e firebase-tools; com as regras abertas, não haveria o que validar) | Médio: diferenças sutis de semântica do SDK |
 | OpenAI real | Nunca chamada nos testes comuns. A suíte opcional `tests/opcional` roda só com `OPENAI_API_KEY_TESTE` | Baixo/médio: mudança de formato da API |
-| Qualidade do texto gerado | Validamos requisitos objetivos (prompt e estrutura), não qualidade subjetiva. O resumo regenerado hoje só é validado como "não vazio" (lacuna de requisito, ver §8) | Médio |
+| Qualidade do texto gerado | Validamos requisitos objetivos: `validarResumoIA` confere títulos, ≥2 exemplos, tamanho por idade, português e ausência de HTML antes de gravar. A qualidade pedagógica em si não é avaliada, e não checamos se o texto revela respostas (daria falso positivo com os termos do tema) | Baixo/médio |
 | Layout, rolagem, animações, confete, áudio audível | jsdom não faz layout nem fala; o E2E verifica o fluxo, não a aparência | Baixo |
 | Streaming SSE no navegador real | O E2E responde em JSON; o SSE é coberto no jsdom (`contrato-ia`) e no proxy | Baixo |
 | `esc()` não escapa `'` | Valores interpolados em `onclick="App.x('…')"` são ids do Firestore ou turmas de lista fixa (A–F); uma turma legada com `'` quebraria o clique | Baixo (observação, sem correção) |
@@ -265,7 +266,5 @@ Sem ela, os testes não são registrados (não aparecem como skip). Comando: `np
 - As 27 lições de exemplo semeadas no 1º acesso não têm `ano`/`turma`. Com o filtro estrito
   de visibilidade (decisão do projeto: sem curinga), **nenhum aluno as vê**, só o professor.
 
-- O resumo regenerado é persistido após checar apenas que não está vazio. Validar estrutura,
-  exemplos e tamanho antes de gravar seria um requisito novo de produto.
 - Os avisos de lint (22) são código morto legado (funções e constantes sem uso). Não foram
   removidos para não mexer em produção fora do escopo.

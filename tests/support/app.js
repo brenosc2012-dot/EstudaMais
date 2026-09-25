@@ -10,7 +10,7 @@
 "use strict";
 const fs = require("fs");
 const vm = require("vm");
-const { webcrypto } = require("crypto");
+const { webcrypto, createHash } = require("crypto");
 const { TextDecoder, TextEncoder } = require("util");
 const { JSDOM, VirtualConsole } = require("jsdom");
 const { pathToFileURL } = require("url");
@@ -134,7 +134,22 @@ async function abrirApp(o) {
   w.Math.random = random;
   w.fetch = ia.fetch;
   w.TextDecoder = TextDecoder; w.TextEncoder = TextEncoder;
-  Object.defineProperty(w, "crypto", { value: webcrypto, configurable: true });
+  // SHA-256 idêntico ao do navegador, mas calculado na hora: o webcrypto real roda no pool de
+  // threads do Node e, com a máquina carregada, podia não terminar dentro de h.estabilizar()
+  // (teste instável no login/cadastro). Assim o hash resolve numa microtarefa, sempre.
+  const cryptoDeterministico = {
+    getRandomValues: a => webcrypto.getRandomValues(a),
+    randomUUID: () => webcrypto.randomUUID(),
+    subtle: {
+      async digest(alg, dados) {
+        const nome = String(alg && alg.name || alg).replace("-", "").toLowerCase();
+        const bytes = dados instanceof ArrayBuffer ? new Uint8Array(dados) : new Uint8Array(dados.buffer, dados.byteOffset, dados.byteLength);
+        const b = createHash(nome).update(bytes).digest();
+        return b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength);
+      },
+    },
+  };
+  Object.defineProperty(w, "crypto", { value: cryptoDeterministico, configurable: true });
   w.confirm = msg => { confirmacoes.push(String(msg)); return typeof respostaConfirm === "function" ? respostaConfirm(String(msg)) : respostaConfirm; };
   w.alert = msg => { alertas.push(String(msg)); };
   w.prompt = msg => { confirmacoes.push(String(msg)); return typeof respostaPrompt === "function" ? respostaPrompt(String(msg)) : respostaPrompt; };

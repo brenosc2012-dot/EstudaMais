@@ -11,7 +11,7 @@ const CHAVE = process.env.OPENAI_API_KEY_TESTE;
 const SUBJ = { mat: { id: "mat", nome: "Matemática" } };
 const PURAS = ["norm", "uid", "tipoLabel", "nivelDificuldadeLabel", "contarPorDificuldade", "normalizarNivelDif", "acharIndiceCorreto",
   "sanitizarControlesJson", "jsonParseTolerante", "parseExerciciosIA", "similaridadeEnunciados", "validarExerciciosRegenerados",
-  "ehLinguaEstrangeira", "blocoLinguaEstrangeira", "montarPromptResumo", "montarPromptRegenerarExercicios"];
+  "ehLinguaEstrangeira", "blocoLinguaEstrangeira", "limitePalavrasResumo", "montarPromptResumo", "montarPromptRegenerarExercicios"];
 
 async function chamar(prompt) {
   const r = await fetch("https://api.openai.com/v1/chat/completions", {

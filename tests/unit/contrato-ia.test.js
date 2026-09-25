@@ -106,19 +106,26 @@ test("clique repetido no teste não dispara 2 chamadas (botão some durante o te
   h.fechar();
 });
 
-test("conteúdo inseguro devolvido pela IA é exibido como texto (resumo de estudo do aluno)", async () => {
+test("conteúdo inseguro devolvido pela IA no resumo é recusado; texto válido é exibido como texto", async () => {
   // ao abrir a lição o app também pré-gera explicações em segundo plano: responde pelo tipo de prompt
   const ia = criarIAFake().padrao(ch => (/TEXTO DE ESTUDO/.test(ch.prompt)
-    ? "## Oi <img src=x onerror=\"window.__xss=1\">\n<script>window.__xss=2</script> **ok**" : "Explicação."));
+    ? F.RESUMO_DIDATICO + "\n## Oi <img src=x onerror=\"window.__xss=1\">\n<script>window.__xss=2</script> **ok**" : "Explicação."));
   const h = await abrirApp({ seed: F.banco(), local: F.LOCAL_BASE, sessao: { tipo: "aluno", id: "a1" }, ia });
   h.App.openSubject("mat"); await h.estabilizar();
   h.App.openLesson("L1"); await h.estabilizar();
-  assert.match(h.texto(), /<img src=x onerror=/);
+  assert.doesNotMatch(h.texto(), /<img src=x onerror=/, "recusado pela validação (tags HTML)");
   assert.equal(h.document.querySelector("#app img[src=x]"), null);
   assert.equal(h.document.querySelector("#app script"), null);
   assert.equal(h.window.__xss, undefined);
-  assert.ok(h.document.querySelector("#app .resumo-box b"), "negrito permitido");
   h.fechar();
+  // texto válido: marcação ** vira negrito, o resto é escapado
+  const ia2 = criarIAFake().padrao(ch => (/TEXTO DE ESTUDO/.test(ch.prompt) ? F.RESUMO_DIDATICO + "\nCompare: 2 < 3 & 4 > 1." : "Explicação."));
+  const h2 = await abrirApp({ seed: F.banco(), local: F.LOCAL_BASE, sessao: { tipo: "aluno", id: "a1" }, ia: ia2 });
+  h2.App.openSubject("mat"); await h2.estabilizar();
+  h2.App.openLesson("L1"); await h2.estabilizar();
+  assert.ok(h2.html().includes("2 &lt; 3 &amp; 4 &gt; 1"));
+  assert.ok(h2.document.querySelector("#app .resumo-box b"), "negrito permitido");
+  h2.fechar();
 });
 
 // ---------------- lerStreamIA isolado (formato SSE e inatividade) ----------------

@@ -142,13 +142,25 @@ for (const [nome, item, avanco] of [["erro 500", { status: 500 }], ["rede", { re
   });
 }
 
-test("conteúdo inseguro vindo da IA é escapado (sem HTML/script injetado)", async () => {
-  const h = await A.entrarAluno({ rotas: { resumo: "## <img src=x onerror=alert(1)>\n<script>window.__xss=1</script> **<b>oi</b>**" } });
+test("conteúdo inseguro vindo da IA (HTML/script) é recusado pela validação: nada injetado nem gravado", async () => {
+  const malicioso = A.F.RESUMO_DIDATICO + "\n## <img src=x onerror=alert(1)>\n<script>window.__xss=1</script> **<b>oi</b>**";
+  const h = await A.entrarAluno({ rotas: { resumo: malicioso } });
   await A.abrirLicao(h);
+  assert.equal(A.chamadasResumo(h.ia), 2, "fora do padrão → pede mais uma vez");
   assert.equal(h.document.querySelector("#app img"), null);
   assert.equal(h.document.querySelector("#app script"), null);
-  assert.ok(h.html().includes("&lt;img src=x onerror=alert(1)&gt;"));
   assert.equal(h.window.__xss, undefined);
+  assert.match(h.texto(), /Somar é juntar quantidades/, "cai no conteúdo do professor");
+  assert.equal((h.store.dados.licoes_geradas || {}).L1, undefined, "texto recusado não é gravado");
+  h.fechar();
+});
+
+test("sinais < e > legítimos no texto da IA (ex.: 3 < 5) aparecem escapados", async () => {
+  const h = await A.entrarAluno({ rotas: { resumo: A.F.RESUMO_DIDATICO + "\nLembre: 3 < 5 e 7 > 2, então x<y e y>z." } });
+  await A.abrirLicao(h);
+  assert.ok(h.html().includes("3 &lt; 5 e 7 &gt; 2"));
+  assert.ok(h.html().includes("x&lt;y e y&gt;z"));
+  assert.ok(h.store.dados.licoes_geradas.L1.resumo.includes("x<y"), "passou na validação e foi gravado");
   h.fechar();
 });
 

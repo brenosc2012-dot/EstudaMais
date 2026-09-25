@@ -2382,8 +2382,8 @@ async function openLesson(lid){
   const materialAluno = (l.materialTexto||"").trim();
   const prompt = montarPromptResumo(l, { ano:pub.ano, nivelNome:pub.nivel, idade:pub.idade, frase:pub.frase }, State.subj);
   try{
-    const texto = await chamarIA(prompt, timeoutComMaterial(25000, materialAluno));
-    if(!texto.trim()) throw new Error("vazio");
+    // só grava/mostra como "gerado por IA" se passar na validação (senão cai no fallback)
+    const texto = await gerarResumoValidado(prompt, pub.idade, timeoutComMaterial(25000, materialAluno));
     resumoCache[lid]=texto;
     salvarLicaoGerada(lid, { resumo:texto, exercicios:l.exercicios });
     if(ativo()){ State.estudo={ status:"ok", texto }; render(); }
@@ -4843,8 +4843,7 @@ async function regenerarConteudoIA(){
   const prompt = montarPromptResumo(Object.assign({}, L, { texto:conteudo }),
     { ano:pub.ano, nivelNome:nomeNivel(pub.nivelId), idade:pub.idade, frase:pub.frase }, Teacher.subj);
   try{
-    const texto=await chamarIA(prompt, timeoutComMaterial(25000, material));
-    if(!texto.trim()) throw new Error("A IA retornou um resumo vazio. Tente novamente.");
+    const texto=await gerarResumoValidado(prompt, pub.idade, timeoutComMaterial(25000, material));
     // grava SÓ o resumo (os exercícios do editor podem não estar salvos) e espera a
     // confirmação antes de anunciar sucesso
     await salvarLicaoGerada(L.id, { resumo:texto });
@@ -4856,6 +4855,42 @@ async function regenerarConteudoIA(){
     Teacher.iaErro = mensagemErroIA(err);
     render();
   }
+}
+
+// ----- Validação do TEXTO DE ESTUDO gerado pela IA (antes de gravar/mostrar) -----
+// Confere requisitos OBJETIVOS do que o prompt pede — não avalia "qualidade" do texto.
+// (Não checa se revelou respostas: o texto precisa usar os termos do tema, que muitas
+// vezes são a própria resposta de uma lacuna — daria falso positivo.)
+function limitePalavrasResumo(idade){ return idade<=8 ? 350 : (idade<=11 ? 450 : 550); }
+const RESUMO_MIN_PALAVRAS = 60;
+const RESUMO_FOLGA_TAMANHO = 1.5; // a IA costuma passar um pouco do limite pedido
+const RESUMO_TENTATIVAS = 2;      // fora do padrão → pede mais uma vez
+const PALAVRAS_PT = new Set(["de","que","para","com","você","voce","não","nao","uma","um","os","as","é","são","do","da","no","na","se","mais","por","como"]);
+function validarResumoIA(texto, idade){
+  const t = String(texto||"").trim();
+  if(!t) return { ok:false, erro:"resposta vazia" };
+  // tags HTML conhecidas (e não qualquer "<...>": "x<y e y>z" é conteúdo de Matemática)
+  if(/```|<\/?(?:script|style|iframe|object|embed|img|svg|video|audio|a|b|i|u|p|div|span|br|hr|ul|ol|li|table|tr|td|h[1-6]|html|body|form|input|button)(?=[\s>\/])[^>]*>/i.test(t)) return { ok:false, erro:"veio com HTML ou bloco de código" };
+  if((t.match(/^#{1,3}\s+\S/gm)||[]).length < 2) return { ok:false, erro:"sem títulos de seção" };
+  if((t.match(/exemplo/gi)||[]).length < 2) return { ok:false, erro:"menos de 2 exemplos" };
+  const palavras = t.toLowerCase().split(/[^0-9a-zà-ÿ]+/i).filter(Boolean);
+  if(palavras.length < RESUMO_MIN_PALAVRAS) return { ok:false, erro:`curto demais (${palavras.length} palavras)` };
+  const max = Math.round(limitePalavrasResumo(idade) * RESUMO_FOLGA_TAMANHO);
+  if(palavras.length > max) return { ok:false, erro:`longo demais (${palavras.length} palavras; máximo ${max})` };
+  const pt = palavras.filter(w=>PALAVRAS_PT.has(w)).length;
+  if(pt < Math.max(5, palavras.length*0.08)) return { ok:false, erro:"não parece estar em português" };
+  return { ok:true, erro:"" };
+}
+// Gera o texto de estudo e só o devolve se passar em validarResumoIA. Erros de rede/timeout
+// da IA sobem direto (sem nova tentativa); resposta fora do padrão é pedida mais uma vez.
+async function gerarResumoValidado(prompt, idade, timeoutMs){
+  let v = { erro:"" };
+  for(let t=0; t<RESUMO_TENTATIVAS; t++){
+    const texto = await chamarIA(prompt, timeoutMs);
+    v = validarResumoIA(texto, idade);
+    if(v.ok) return String(texto).trim();
+  }
+  throw new Error("A IA devolveu um texto de estudo fora do padrão ("+v.erro+"). O resumo anterior foi mantido.");
 }
 
 // Prompt do TEXTO DE ESTUDO mostrado antes dos exercícios. Um único lugar para as regras
@@ -4876,7 +4911,7 @@ function montarPromptResumo(l, pub, subjId){
     ? `\n- É uma aula de língua ${LINGUAS_ESTRANGEIRAS[subjId]}: explique em português e mostre as palavras/frases no idioma com a tradução ao lado.`
     : "";
   // textos mais curtos para os menores (evita texto longo demais)
-  const limite = pub.idade<=8 ? 350 : (pub.idade<=11 ? 450 : 550);
+  const limite = limitePalavrasResumo(pub.idade);
   return `Você é um professor experiente, didático e acolhedor. Escreva o TEXTO DE ESTUDO que o aluno vai ler ANTES de resolver os exercícios desta lição.
 
 SOBRE A LIÇÃO

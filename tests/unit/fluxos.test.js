@@ -9,7 +9,7 @@ const PURAS = ["norm", "esc", "uid", "fmtInline", "formatResumo", "linhasTexto",
   "tipoLabel", "nivelDificuldadeLabel", "contarPorDificuldade", "normalizarNivelDif", "acharIndiceCorreto",
   "sanitizarControlesJson", "jsonParseTolerante", "parseExerciciosIA", "similaridadeEnunciados",
   "validarExerciciosRegenerados", "ehLinguaEstrangeira", "blocoLinguaEstrangeira", "timeoutComMaterial",
-  "mensagemErroIA", "montarPromptResumo", "montarPromptRegenerarExercicios"];
+  "mensagemErroIA", "limitePalavrasResumo", "montarPromptResumo", "montarPromptRegenerarExercicios"];
 const CONSTS = ["REGEN_SIMILAR_ANTIGA", "REGEN_SIMILAR_NOVA", "REGEN_EX_TENTATIVAS", "LINGUAS_ESTRANGEIRAS"];
 const SUBJ = { mat: { id: "mat", nome: "Matemática" }, ing: { id: "ing", nome: "Inglês" } };
 

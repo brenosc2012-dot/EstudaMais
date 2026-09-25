@@ -45,7 +45,9 @@ test("XSS: resumo e explicação vindos da IA são escapados (inclusive dentro d
   h.App.openSubject("mat"); await h.estabilizar();
   await h.App.openLesson("L1"); await h.estabilizar();
   semXss(h, "resumo IA");
-  assert.ok(h.texto().includes("<img src=x"));
+  // texto da IA com tags HTML é recusado pela validação: cai no conteúdo do professor e não é gravado
+  assert.ok(!h.texto().includes("<img src=x"));
+  assert.equal((h.store.dados.licoes_geradas || {}).L1, undefined);
   h.App.iniciarModoClassico(); await h.estabilizar();
   h.App.selectOpt(1); h.App.checkAnswer(); await h.avancar(2000);
   assert.match(h.texto(), /Explicação/);

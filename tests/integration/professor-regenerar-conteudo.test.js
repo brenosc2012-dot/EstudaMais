@@ -87,11 +87,11 @@ for (const [nome, item, re] of [
   ["503 indisponível", { status: 503, mensagem: "overloaded" }, /Erro 503 — overloaded/],
   ["rede", { rede: true }, /Falha na chamada à OpenAI/],
   ["resposta vazia (stream)", "   ", /respondeu vazio/],
-  ["resposta vazia (JSON)", { json: true, texto: "" }, /retornou um resumo vazio/],
+  ["resposta vazia (JSON)", { json: true, texto: "" }, /fora do padrão \(resposta vazia\)/],
 ]) {
   test(`regenerar conteúdo: ${nome} → mensagem e resumo anterior mantido`, async () => {
     const h = await abrirProfessor({ seed: seedComCache(), editar: "L1" });
-    h.ia.fila(item);
+    h.ia.fila(item, item); // resposta fora do padrão é pedida 2x
     await h.clicar(/Regenerar conteúdo com IA/);
     assert.match(erroIA(h), re);
     assert.equal(h.store.doc("licoes_geradas", "L1").resumo, "RESUMO ANTIGO");
@@ -131,15 +131,19 @@ test("regenerar conteúdo: o aluno em outro aparelho recebe o novo resumo pronto
   aluno.fechar(); h.fechar();
 });
 
-test("regenerar conteúdo: conteúdo da IA com HTML é exibido escapado para o aluno", async () => {
+test("regenerar conteúdo: texto da IA com HTML é recusado; o aluno segue com o resumo anterior", async () => {
   const h = await abrirProfessor({ seed: seedComCache(), editar: "L1" });
-  h.ia.fila('## Título <img src=x onerror="alert(1)">\nTexto <script>alert(2)</script> **forte**');
+  const malicioso = F.RESUMO_DIDATICO + '\n## Título <img src=x onerror="alert(1)">\nTexto <script>alert(2)</script> **forte**';
+  h.ia.fila(malicioso, malicioso);
   await h.clicar(/Regenerar conteúdo com IA/);
+  assert.equal(h.ia.chamadas.length, 2, "fora do padrão → uma nova tentativa");
+  assert.match(erroIA(h), /fora do padrão \(veio com HTML ou bloco de código\).*resumo anterior foi mantido/);
+  assert.equal(h.store.doc("licoes_geradas", "L1").resumo, "RESUMO ANTIGO");
   const aluno = await abrirApp({ store: h.firebase, relogio: h.relogio, local: F.LOCAL_BASE, sessao: { tipo: "aluno", id: "a1" } });
   aluno.App.openSubject("mat"); aluno.App.openLesson("L1"); await aluno.estabilizar();
   assert.equal(aluno.document.querySelector(".resumo-box img"), null);
   assert.equal(aluno.document.querySelector(".resumo-box script"), null);
-  assert.match(aluno.texto(), /<script>alert\(2\)<\/script>/);
+  assert.match(aluno.texto(), /RESUMO ANTIGO/);
   aluno.fechar(); h.fechar();
 });
 

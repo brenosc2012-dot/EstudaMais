@@ -262,6 +262,11 @@ Regras necessárias em `firestore.rules` (ponto de partida; ver arquivo no repo)
   `regenerarConteudoIA`): tema, disciplina, ano/idade, dificuldade/tipos e enunciados dos
   exercícios (sem respostas), conhecimentos prévios, idioma; pede ≥2 exemplos passo a passo,
   "Cuidado!" com erros comuns, sem revelar respostas; limite 350/450/550 palavras por idade.
+- **Validação antes de gravar/mostrar** (`gerarResumoValidado` → `validarResumoIA`): ≥2 títulos,
+  ≥2 "exemplo", entre `RESUMO_MIN_PALAVRAS` (60) e `limitePalavrasResumo(idade)`×1,5 palavras,
+  português, sem tags HTML/cerca de código. Fora do padrão → pede 1 vez mais; falhou de novo →
+  aluno vê o conteúdo do professor e o professor vê o erro (nada é gravado). Erro de rede/timeout
+  não repete. Resumos já em cache não são revalidados (compatibilidade).
 - Formato: `## Título`, `- tópico`, `**destaque**` — renderizados por `formatResumo`/
   `formatResumoLeitor` (`fmtInline`); `paragrafosTexto` remove a marcação para a voz
   (mesmos índices de `linhasTexto`). Resumos antigos em cache continuam funcionando.

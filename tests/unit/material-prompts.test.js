@@ -49,7 +49,7 @@ test("dividirBlocosMaterial: reconstrói cada documento, inclusive nomes repetid
 // ---------------- prompts ----------------
 const SUBJ = { mat: { id: "mat", nome: "Matemática" }, ing: { id: "ing", nome: "Inglês" }, por: { id: "por", nome: "Português" } };
 const prompts = () => carregar({
-  funcoes: ["tipoLabel", "nivelDificuldadeLabel", "contarPorDificuldade", "ehLinguaEstrangeira", "blocoLinguaEstrangeira", "montarPromptResumo", "montarPromptRegenerarExercicios"],
+  funcoes: ["tipoLabel", "nivelDificuldadeLabel", "contarPorDificuldade", "ehLinguaEstrangeira", "blocoLinguaEstrangeira", "limitePalavrasResumo", "montarPromptResumo", "montarPromptRegenerarExercicios"],
   constantes: ["LINGUAS_ESTRANGEIRAS"],
   stubs: {
     subjById: id => SUBJ[id], nomeNivel: () => "Ensino Fundamental I",
