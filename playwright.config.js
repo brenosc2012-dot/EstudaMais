@@ -9,7 +9,8 @@ module.exports = defineConfig({
   forbidOnly: true,            // test.only quebra a execução (local e CI)
   retries: 0,                  // sem retry: teste instável deve falhar, não ser mascarado
   fullyParallel: true,
-  workers: process.env.CI ? 2 : undefined,
+  workers: process.env.CI ? 2 : 4,
+  timeout: 60000,              // vários navegadores em paralelo deixam as jornadas mais lentas
   reporter: process.env.CI ? [["list"], ["html", { open: "never" }]] : [["list"]],
   use: {
     baseURL: "http://localhost:4173",

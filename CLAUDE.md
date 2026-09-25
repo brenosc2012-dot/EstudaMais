@@ -31,13 +31,22 @@ via CDN, **PDF.js** e **mammoth.js** para extrair texto de documentos anexados �
   navegador costuma servir a versão em cache do arquivo.
 - **Requer internet** para carregar o Firebase (CDN) e as lições do Firestore. Os
   recursos de IA também exigem rede. O resto (gamificação/progresso) é local.
-- Não há passo de compilação. Testes automatizados: `node --test` (só módulos embutidos
-  do Node, sem dependências). `tests/carregar-app.js` extrai as funções **reais** do
-  `index.html` pelo nome e as roda num `vm` com stubs de Firestore/IA; `tests/fluxos.test.js`
-  cobre reinício após erro, regenerar exercícios e o prompt/formatação do texto de estudo.
-  Ao renomear uma função testada, ajuste a lista no teste.
+- O app não tem build. Há um `package.json` **só para ferramentas de teste** (devDependencies);
+  o app continua sem dependências. Referência completa em **`docs/TESTES.md`**.
+  - `npm run test:unit` / `test:integration` / `test:e2e` / `npm test` / `npm run coverage` / `npm run lint` /
+    `npm run check` / `npm run ci`.
+  - Integração: `tests/support/app.js` carrega o **index.html real** no jsdom com Firestore falso
+    (`fake-firebase.js`), OpenAI falsa (`fake-ia.js`), relógio e `Math.random` controláveis.
+    E2E: Playwright (`tests/e2e/base.js` intercepta Firebase/CDNs/OpenAI).
+  - `tests/unit/carregar-app.js` extrai funções pelo nome — ao renomear uma função testada,
+    ajuste a lista no teste.
+  - Ao corrigir um bug, adicione um teste de regressão (`tests/integration/regressoes.test.js`
+    ou no arquivo da área) e registre em `docs/TESTES.md` §5.
 
 ## Validar alterações no JavaScript
+
+Atalho: `npm run check` (sintaxe + constantes órfãs + `App.x()` inexistentes) e `npm run lint`.
+Os comandos manuais abaixo continuam valendo sem instalar nada:
 
 O JS fica embutido no **último** bloco `<script>...</script>` (há também 2 `<script src>`
 do Firebase, sem conteúdo inline). Para checar a sintaxe sem abrir o navegador:

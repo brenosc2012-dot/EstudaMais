@@ -1795,7 +1795,7 @@ function render(){
     case "explain":   renderExplain(); break;
     case "done":      renderDone(); break;
     case "profile":   renderProfile(); break;
-    case "teacher":   renderTeacher(); break;
+    case "teacher":   if(PROFESSOR) renderTeacher(); else renderLanding(); break; // sem login de professor não abre
     default: renderLanding();
   }
   atualizarBotoesFala(); // reflete o estado atual da leitura nos botões recém-criados
@@ -2081,6 +2081,7 @@ function toggleAnoCad(a){
   render();
 }
 async function submitCadastroProf(){
+  syncProfForm(); // preserva nome/e-mail/senha se a validação re-renderizar a tela
   const nome=val('cpNome').trim(), email=val('cpEmail').trim().toLowerCase(), senha=val('cpSenha');
   const turmas=(Form.turmas||[]).slice().sort();
   const anos=(Form.anos||[]).slice();
@@ -2145,6 +2146,7 @@ function renderAdmin(){
 }
 // Testa a chave/conexão fazendo uma chamada mínima (usa proxy se houver).
 async function testarChaveIA(){
+  if(!State.adminAuth) return;
   const p = val('admProxy').trim(); if(p!==null) IA.proxyUrl = p; // usa o que está nos campos (em memória)
   const k = val('admKey').trim(); if(k) IA.apiKey = k;
   if(!iaConfigurada()){ State.authErro="Informe a URL do proxy ou a chave antes de testar."; render(); return; }
@@ -2160,6 +2162,7 @@ function submitAdminSenha(){
   render();
 }
 async function salvarChaveOpenAI(){
+  if(!State.adminAuth){ State.tela="admin"; render(); return; } // só depois da senha de admin
   const k=val('admKey').trim();
   const proxy=val('admProxy').trim();
   State.authBusy=true; State.authErro=""; render();
@@ -2313,13 +2316,15 @@ async function getLicaoGerada(licaoId){
   try{ const d=await db.collection("licoes_geradas").doc(licaoId).get(); return d.exists ? d.data() : null; }
   catch(e){ return null; }
 }
+// Devolve a Promise da gravação: quem precisa confirmar (regenerar conteúdo) faz await;
+// os demais seguem best-effort (o .catch evita rejeição não tratada = faixa de erro).
 function salvarLicaoGerada(licaoId, dados){
-  if(DEMO || !db || !licaoId) return;
-  try{
-    db.collection("licoes_geradas").doc(licaoId).set(Object.assign({
-      licaoId, geradoEm: firebase.firestore.FieldValue.serverTimestamp(), geradoPor: deviceId()
-    }, dados), { merge:true });
-  }catch(e){ /* best-effort */ }
+  if(DEMO || !db || !licaoId) return Promise.resolve();
+  const p = db.collection("licoes_geradas").doc(licaoId).set(Object.assign({
+    licaoId, geradoEm: firebase.firestore.FieldValue.serverTimestamp(), geradoPor: deviceId()
+  }, dados), { merge:true });
+  p.catch(function(){});
+  return p;
 }
 function limparLicaoGerada(licaoId){
   if(!db || !licaoId) return;
@@ -2677,6 +2682,7 @@ function onFillInput(){
 }
 
 function checkAnswer(){
+  if(!Sess || Sess.respondido) return; // 2º disparo na mesma questão contaria o acerto/erro de novo
   const ex=Sess.exercicios[Sess.idx];
   let ok=false;
   if(ex.tipo==="fill"){
@@ -2727,6 +2733,8 @@ function checkAnswer(){
 }
 
 function nextExercise(){
+  // só avança a partir de uma questão já respondida (evita concluir a lição 2x — XP em dobro)
+  if(!Sess || State.tela!=="exercise" || !Sess.respondido) return;
   if(Sess.idx < Sess.total-1){
     Sess.idx++; Sess.respondido=false; Sess.acertouAtual=false; Sess.selecionado=null; Sess.respAluno="";
     // volta a tela para "exercise" (vinha de "explain"); senão a próxima geração
@@ -2797,7 +2805,8 @@ ${pub.frase}`;
       l.explicacoes = l.explicacoes || {};
       l.explicacoes[exId] = final;
       const upd={}; upd["explicacoes."+exId]=final;
-      try{ db.collection("licoes").doc(myLesson).update(upd); }catch(_){}
+      // best-effort: sem .catch a rejeição (lição apagada/offline) viraria erro visível na tela
+      try{ db.collection("licoes").doc(myLesson).update(upd).catch(function(){}); }catch(_){}
     }
     if(aindaValido()) mostrarExplicacao(final, respCorreta);
   }catch(e){
@@ -2908,6 +2917,7 @@ function finishLesson(){
 
 // Grava o desempenho do aluno na lição (doc {alunoId}_{licaoId}) para o painel do professor.
 async function salvarProgresso(subjId, lessonId, sess, modo){
+  if(DEMO) return; // modo demo: nenhuma escrita no Firestore
   if(!db || !ALUNO || !ALUNO.id || !lessonId){ console.warn('salvarProgresso: sem db/aluno/lição — progresso não gravado.'); return; }
   const total = sess.total||0;
   const percentualAcertos = total>0 ? Math.round(sess.acertos/total*100) : 0;
@@ -3017,14 +3027,14 @@ async function getHistoriaGerada(licaoId){
   catch(e){ return null; }
 }
 function salvarHistoriaGerada(licaoId, h){
-  if(DEMO || !db || !licaoId || !h) return;
-  try{
-    db.collection("historias_geradas").doc(licaoId).set({
-      titulo:h.titulo, cenario:h.cenario, protagonista:h.protagonista, capitulos:h.capitulos,
-      desfecho_heroi:h.desfecho_heroi, desfecho_aprendiz:h.desfecho_aprendiz,
-      geradoEm: firebase.firestore.FieldValue.serverTimestamp(), geradoPor: deviceId()
-    }, { merge:true });
-  }catch(e){ /* best-effort */ }
+  if(DEMO || !db || !licaoId || !h) return Promise.resolve();
+  const p = db.collection("historias_geradas").doc(licaoId).set({
+    titulo:h.titulo, cenario:h.cenario, protagonista:h.protagonista, capitulos:h.capitulos,
+    desfecho_heroi:h.desfecho_heroi, desfecho_aprendiz:h.desfecho_aprendiz,
+    geradoEm: firebase.firestore.FieldValue.serverTimestamp(), geradoPor: deviceId()
+  }, { merge:true });
+  p.catch(function(){}); // idem salvarLicaoGerada
+  return p;
 }
 function limparHistoriaGerada(licaoId){
   if(!db || !licaoId) return;
@@ -3340,7 +3350,7 @@ Explique em no máximo 60 palavras, de forma simples e acolhedora, por que a res
     if(txt && txt.trim() && ex.id && l){
       l.explicacoes = l.explicacoes||{}; l.explicacoes[ex.id]=final;
       const upd={}; upd["explicacoes."+ex.id]=final;
-      try{ db.collection("licoes").doc(l.id).update(upd); }catch(_){}
+      try{ db.collection("licoes").doc(l.id).update(upd).catch(function(){}); }catch(_){}
     }
     return final;
   }catch(e){ return padrao; }
@@ -3868,7 +3878,7 @@ function resetProgress(){
   if(confirm("Tem certeza que deseja zerar TODO o seu progresso (XP, níveis, ofensiva)? Sua conta será mantida.")){
     // zera apenas a gamificação, preservando a identidade (nome, idade, ano, turma, senha)
     const g=novaGamificacao();
-    ["xpTotal","streak","ultimoDia","medalhas","premiacoes","disciplinas","licoesConcluidas"].forEach(k=> ALUNO[k]=g[k]);
+    ["xpTotal","streak","ultimoDia","medalhas","premiacoes","disciplinas","licoesConcluidas","historiasCompletas"].forEach(k=> ALUNO[k]=g[k]);
     saveProfile(); toast("Progresso zerado."); goHome();
   }
 }
@@ -4025,7 +4035,11 @@ function editLesson(id){
   if(id) getHistoriaGerada(id).then(h=>{ if(h && Teacher.editingLesson && Teacher.editingLesson.id===id){ Teacher.hist.preview=h; if(Teacher.tab==="novo") render(); } });
   Teacher.tab="novo"; render();
 }
+// Guarda das ações de professor (defesa em profundidade: as regras do Firestore estão
+// abertas, então isto só impede o disparo pelo app/console sem login de professor).
+function exigirProfessor(){ if(PROFESSOR && PROFESSOR.id) return true; toast("Ação restrita ao professor."); return false; }
 async function deleteLesson(id){
+  if(!exigirProfessor()) return;
   if(!confirm("Excluir esta lição e todos os seus exercícios?")) return;
   if(ehModoDemo()){ removeLicaoLocal(id); toast("Lição removida (modo demo)."); render(); return; }
   toast("Excluindo...");
@@ -4691,7 +4705,7 @@ async function regenerarHistoriaProf(){
   try{
     const h = await gerarHistoriaIA(L);
     const norm = normalizarHistoria(h, L.exercicios.length);
-    salvarHistoriaGerada(L.id, norm);
+    await salvarHistoriaGerada(L.id, norm); // só anuncia "salva" se gravou de fato
     delete historiaCache[L.id];
     Teacher.hist.gerando=false; Teacher.hist.preview=norm; render();
     toast("História criada e salva! 📖✅");
@@ -4831,8 +4845,10 @@ async function regenerarConteudoIA(){
   try{
     const texto=await chamarIA(prompt, timeoutComMaterial(25000, material));
     if(!texto.trim()) throw new Error("A IA retornou um resumo vazio. Tente novamente.");
+    // grava SÓ o resumo (os exercícios do editor podem não estar salvos) e espera a
+    // confirmação antes de anunciar sucesso
+    await salvarLicaoGerada(L.id, { resumo:texto });
     delete resumoCache[L.id];
-    salvarLicaoGerada(L.id, { resumo:texto, exercicios:L.exercicios });
     Teacher.regenerando=false; render();
     toast("Resumo regenerado e salvo no cache! ✅");
   }catch(err){
@@ -5084,6 +5100,7 @@ misturar inglês e português conforme o objetivo.`;
 }
 
 async function gerarExerciciosIA(){
+  if(!exigirProfessor() || !Teacher.editingLesson) return;
   syncTextInputs();
   const L=Teacher.editingLesson;
   const conteudo=(L.texto||"").trim();
@@ -5510,6 +5527,7 @@ function removeOpt(i,j){
 }
 
 async function saveLesson(){
+  if(!exigirProfessor() || !Teacher.editingLesson) return;
   syncTextInputs();
   const L=Teacher.editingLesson;
   if(Teacher.regenerandoEx){ toast("Aguarde a regeneração dos exercícios terminar."); return; }
@@ -5717,8 +5735,10 @@ function recarregarRendimento(){ Teacher.prog.carregada=false; carregarRendiment
 
 // --- Gestão de alunos (professor): redefinir senha / remover ---
 async function redefinirSenhaAluno(id){
+  if(!exigirProfessor()) return;
   if(DEMO){ toast("Indisponível no modo demo."); return; }
   const aluno=(Teacher.prog.alunos||[]).find(a=>a.id===id);
+  if(!aluno || !alunoNoEscopo(aluno, PROFESSOR)){ toast("Você só pode alterar alunos das suas turmas."); return; }
   const nome = aluno ? aluno.nome : "o aluno";
   const nova = prompt(`Nova senha para ${nome}:`);
   if(nova===null) return; // cancelou
@@ -5731,13 +5751,17 @@ async function redefinirSenhaAluno(id){
   }catch(e){ toast("Erro ao redefinir a senha. Verifique a conexão."); }
 }
 async function removerAluno(id){
+  if(!exigirProfessor()) return;
   if(DEMO){ toast("Indisponível no modo demo."); return; }
   const aluno=(Teacher.prog.alunos||[]).find(a=>a.id===id);
+  if(!aluno || !alunoNoEscopo(aluno, PROFESSOR)){ toast("Você só pode remover alunos das suas turmas."); return; }
   const nome = aluno ? aluno.nome : "este aluno";
   if(!confirm(`Remover ${nome}? A conta e o histórico de progresso dele serão excluídos. Esta ação não pode ser desfeita.`)) return;
   try{
     // remove os registros de progresso do aluno (best-effort) e a conta
     try{ const snap=await db.collection("progresso").where("alunoId","==",id).get(); await Promise.all(snap.docs.map(d=>d.ref.delete())); }catch(_){}
+    // e as conquistas dele (como em zerarProgressoAluno), para não deixar registros órfãos
+    try{ const sp=await db.collection("premiacoes_alunos").where("alunoId","==",id).get(); await Promise.all(sp.docs.map(d=>d.ref.delete())); }catch(_){}
     await db.collection("alunos").doc(id).delete();
     Teacher.prog.alunos = (Teacher.prog.alunos||[]).filter(a=>a.id!==id);
     Teacher.prog.progresso = (Teacher.prog.progresso||[]).filter(p=>p.alunoId!==id);
@@ -5997,6 +6021,7 @@ function setPremCriterio(v){
   f.criterio=v; render();
 }
 async function criarPremiacao(){
+  if(!exigirProfessor()) return;
   const nome=val('pmNome').trim(), descricao=val('pmDesc').trim(), icone=(val('pmIcone').trim()||"🏆");
   const criterio=val('pmCriterio')||premForm().criterio, valorMinimo=Number(val('pmValor'))||0;
   const turma=val('pmTurma'), expira=val('pmExpira');
@@ -6017,6 +6042,7 @@ async function criarPremiacao(){
   }catch(e){ Teacher.prem.salvando=false; toast("Erro ao salvar premiação."); render(); }
 }
 async function excluirPremiacao(id){
+  if(!exigirProfessor()) return;
   if(!confirm("Excluir esta premiação?")) return;
   if(DEMO){ Teacher.prem.lista=Teacher.prem.lista.filter(p=>p.id!==id); toast("Premiação excluída (modo demo)."); render(); return; }
   try{
@@ -6523,7 +6549,7 @@ async function corrigirProva(){
     if(res.questoesIncorretas>0 && temIA){
       C._fbLoading=true;
       gerarFeedbackCorrecao(res, C.meta).then(function(){ C._fbLoading=false; if(Teacher.tab==="corretor" && C.view==="result") render(); });
-    } else if(res.questoesIncorretas>0){ gerarFeedbackCorrecao(res, C.meta); }
+    } else if(res.questoesIncorretas>0){ gerarFeedbackCorrecao(res, C.meta).then(function(){ if(Teacher.tab==="corretor" && C.view==="result") render(); }); } // feedback padrão aparece na tela
     return;
   }
 
