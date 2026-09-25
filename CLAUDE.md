@@ -31,7 +31,11 @@ via CDN, **PDF.js** e **mammoth.js** para extrair texto de documentos anexados �
   navegador costuma servir a versão em cache do arquivo.
 - **Requer internet** para carregar o Firebase (CDN) e as lições do Firestore. Os
   recursos de IA também exigem rede. O resto (gamificação/progresso) é local.
-- Não há testes automatizados nem passo de compilação.
+- Não há passo de compilação. Testes automatizados: `node --test` (só módulos embutidos
+  do Node, sem dependências). `tests/carregar-app.js` extrai as funções **reais** do
+  `index.html` pelo nome e as roda num `vm` com stubs de Firestore/IA; `tests/fluxos.test.js`
+  cobre reinício após erro, regenerar exercícios e o prompt/formatação do texto de estudo.
+  Ao renomear uma função testada, ajuste a lista no teste.
 
 ## Validar alterações no JavaScript
 
@@ -222,9 +226,40 @@ Regras necessárias em `firestore.rules` (ponto de partida; ver arquivo no repo)
   `PROFILE.historiasCompletas`). Professor: painel por lição com toggle
   `historiaHabilitada`, botão gerar/regenerar (`regenerarHistoriaProf`) e preview.
 
+### Reinício após erro (Modo Clássico)
+- Errou → explicação da IA (tela `explain`, como antes) → "Entendi, recomeçar" chama
+  `reiniciarTentativaAposErro()`: nova `Sess` zerada (`novaSessao`) na 1ª questão, com as
+  questões embaralhadas por `embaralharTentativa(exs, anterior)` (cópia; ordem sempre
+  diferente da anterior quando há 2+). A lição/Firestore mantém a ordem original.
+  `continuarAposExplicacao` só age se `State.tela==="explain"` (clique duplo é ignorado).
+- Consequência: concluir a lição = acertar tudo em sequência; o "game over" por vidas não
+  ocorre mais no Clássico. O Modo História não reinicia (capítulos seguem a ordem natural).
+
+### Regenerar exercícios (professor)
+- Botão "🔁 Regenerar exercícios" no `iaPanel` (lição já salva e com exercícios), separado
+  de "Regenerar conteúdo" (resumo). `regenerarExerciciosIA()`: confirma → `montarPromptRegenerarExercicios`
+  (mesma quantidade/dificuldade/tipos, lista as questões atuais para não repetir, usa o
+  texto de estudo em cache) → `parseExerciciosIA(texto,{estrito:true})` → `validarExerciciosRegenerados`
+  (quantidade, alternativas completas/distintas, 1 correta, lacuna com `___`, `explicacao`
+  presente, sem duplicadas e sem repetir as atuais via `similaridadeEnunciados`) — 1 nova
+  tentativa se inválido. Só então `gravarExerciciosRegenerados` faz um **batch atômico**:
+  `licoes` (exercicios + explicacoes novas + `exerciciosVersao` +1), `licoes_geradas.exercicios`
+  (resumo intacto) e apaga `historias_geradas/{id}`. Falha em qualquer etapa → nada muda.
+- `progresso` guarda só totais por lição (+ `exerciciosVersao`), então o histórico continua
+  válido. `licaoTemExercicio` impede gravar explicação para id de questão que não existe mais.
+
+### Texto de estudo (resumo por IA)
+- Prompt único em `montarPromptResumo(l, pub, subjId)` (usado por `openLesson` e
+  `regenerarConteudoIA`): tema, disciplina, ano/idade, dificuldade/tipos e enunciados dos
+  exercícios (sem respostas), conhecimentos prévios, idioma; pede ≥2 exemplos passo a passo,
+  "Cuidado!" com erros comuns, sem revelar respostas; limite 350/450/550 palavras por idade.
+- Formato: `## Título`, `- tópico`, `**destaque**` — renderizados por `formatResumo`/
+  `formatResumoLeitor` (`fmtInline`); `paragrafosTexto` remove a marcação para a voz
+  (mesmos índices de `linhasTexto`). Resumos antigos em cache continuam funcionando.
+
 ### Gamificação
 - `XP_POR_NIVEL=50`, `XP_POR_ACERTO=10`, `XP_BONUS_LICAO=20`.
-- 3 vidas (corações) por sessão; zerar → tela de "game over".
+- 3 vidas (corações) por sessão; no Modo História zerar → "game over" (no Clássico o erro reinicia a tentativa).
 - Streak diário baseado em `Date`. Medalhas em `ACHIEVEMENTS` desbloqueiam ao concluir
   lições (`verificarMedalhas`).
 

@@ -329,6 +329,7 @@ label{ display:block; font-weight:700; font-size:14px; margin-bottom:6px; color:
 .resumo-box{ background:#fff; border:2px solid var(--gray); border-radius:16px; padding:16px; font-size:17px; }
 .resumo-topico{ display:flex; align-items:flex-start; gap:10px; background:#fffef6; border-radius:10px; padding:8px 10px; margin:6px 0; line-height:1.5; }
 .resumo-topico .rt-ic{ flex-shrink:0; font-size:18px; }
+.resumo-titulo{ font-weight:800; font-size:18px; margin:14px 0 4px; color:#3c3c3c; }
 
 /* Tela de explicação do erro */
 .explic-resp{ background:#d7ffb8; border:2px solid var(--green); border-radius:12px; padding:12px; text-align:center; margin-bottom:14px; color:var(--green-d); }
@@ -907,7 +908,8 @@ function licaoDeDoc(id, d){
     textoGerado: d.textoGerado || "",
     tituloTexto: d.tituloTexto || "",
     generoTextual: d.generoTextual || "",
-    tema: d.tema || ""
+    tema: d.tema || "",
+    exerciciosVersao: d.exerciciosVersao || 0 // +1 a cada "Regenerar exercícios"
   };
 }
 function removeLicaoLocal(id){ SUBJECTS.forEach(s=>{ DATA[s.id]=(DATA[s.id]||[]).filter(l=>l.id!==id); }); }
@@ -2373,15 +2375,9 @@ async function openLesson(lid){
   // 4) gera o resumo pela IA e salva no cache compartilhado (licoes_geradas)
   const pub = descreverPublico(ALUNO);
   const materialAluno = (l.materialTexto||"").trim();
-  const blocoMaterialAluno = materialAluno ? `\nMATERIAL ANEXADO: ${materialAluno}` : "";
-  const prompt =
-`Crie um resumo didático para uma criança de aproximadamente ${pub.idade} anos (${pub.ano} do ${pub.nivel}) baseado no material abaixo.
-Use linguagem simples e animada, exemplos do cotidiano e destaque os pontos principais em tópicos.
-O resumo deve ter no máximo 300 palavras e terminar com uma dica de memorização.
-${pub.frase}
-CONTEÚDO DA LIÇÃO: ${l.texto}${blocoMaterialAluno}`;
+  const prompt = montarPromptResumo(l, { ano:pub.ano, nivelNome:pub.nivel, idade:pub.idade, frase:pub.frase }, State.subj);
   try{
-    const texto = await chamarIA(prompt, timeoutComMaterial(20000, materialAluno));
+    const texto = await chamarIA(prompt, timeoutComMaterial(25000, materialAluno));
     if(!texto.trim()) throw new Error("vazio");
     resumoCache[lid]=texto;
     salvarLicaoGerada(lid, { resumo:texto, exercicios:l.exercicios });
@@ -2460,11 +2456,13 @@ function renderStudy(){
 // Como formatResumo, mas cada parágrafo/tópico vira um bloco com id (spar-i) para leitura+destaque.
 // Os índices batem com paragrafosTexto(), usado pela leitura em voz alta.
 function formatResumoLeitor(txt){
-  const paras=paragrafosTexto(txt);
+  const paras=linhasTexto(txt);
   if(!paras.length) return formatResumo(txt);
   return paras.map((p,i)=>{
+    const h=p.match(/^#{1,6}\s+(.*)$/);
+    if(h) return `<div class="leitor-par resumo-titulo" id="spar-${i}">${fmtInline(h[1])}</div>`;
     const m=p.match(/^[-•*]\s+(.*)$/);
-    const inner = m ? `<span class="rt-ic">⭐</span><span>${esc(m[1])}</span>` : `<span>${esc(p)}</span>`;
+    const inner = m ? `<span class="rt-ic">⭐</span><span>${fmtInline(m[1])}</span>` : `<span>${fmtInline(p)}</span>`;
     const extra = m ? ' resumo-topico' : '';
     return `<div class="leitor-par${extra}" id="spar-${i}">${inner}</div>`;
   }).join("");
@@ -2520,11 +2518,15 @@ function formatResumo(txt){
   return String(txt||"").split("\n").map(raw=>{
     const t=raw.trim();
     if(!t) return `<div style="height:8px"></div>`;
+    const h=t.match(/^#{1,6}\s+(.*)$/);
+    if(h) return `<div class="resumo-titulo">${fmtInline(h[1])}</div>`;
     const m=t.match(/^[-•*]\s+(.*)$/);
-    if(m) return `<div class="resumo-topico"><span class="rt-ic">⭐</span><span>${esc(m[1])}</span></div>`;
-    return `<p style="margin:8px 0;line-height:1.6">${esc(t)}</p>`;
+    if(m) return `<div class="resumo-topico"><span class="rt-ic">⭐</span><span>${fmtInline(m[1])}</span></div>`;
+    return `<p style="margin:8px 0;line-height:1.6">${fmtInline(t)}</p>`;
   }).join("");
 }
+// Escapa e converte **destaque** em negrito (única marcação inline aceita no texto da IA).
+function fmtInline(t){ return esc(t).replace(/\*\*([^*]+?)\*\*/g, "<b>$1</b>"); }
 
 // ----- EXERCÍCIOS -----
 function startExercises(){
@@ -2535,12 +2537,45 @@ function startExercises(){
   const modo = State.modo || "classico";
   // história: ordem natural (alinha com os capítulos gerados); clássico: por dificuldade
   const exs = (modo==="historia") ? l.exercicios.slice() : ordenarPorDificuldade(l.exercicios);
-  Sess = { idx:0, vidas:3, acertos:0, erros:0, xpGanho:0, respondido:false, acertouAtual:false,
-           selecionado:null, respAluno:"", total:exs.length, exercicios:exs, revisao:[],
-           modo:modo, historia:(modo==="historia"?State._historia:null), xpMult:(modo==="historia"?1.5:1), feedback:null };
+  Sess = novaSessao(exs, modo);
   State.tela = (modo==="historia") ? "historia" : "exercise";
   render();
   if(modo!=="historia") agendarAutoLeitura();
+}
+// Estado zerado de uma tentativa (usado ao iniciar e ao reiniciar após um erro).
+function novaSessao(exs, modo){
+  return { idx:0, vidas:3, acertos:0, erros:0, xpGanho:0, respondido:false, acertouAtual:false,
+           selecionado:null, respAluno:"", total:exs.length, exercicios:exs, revisao:[],
+           modo:modo, historia:(modo==="historia"?State._historia:null), xpMult:(modo==="historia"?1.5:1), feedback:null };
+}
+// Embaralha (Fisher–Yates) uma CÓPIA das questões — a ordem vale só para esta tentativa;
+// a lição (e o Firestore) continuam com a ordem original. Sempre que há 2+ questões,
+// garante uma ordem diferente de `anterior` (compara por id, ou pelo próprio objeto).
+function embaralharTentativa(exs, anterior){
+  const out=(exs||[]).slice();
+  if(out.length<2) return out;
+  const mesma=(a,b)=> a===b || !!(a && b && a.id && a.id===b.id);
+  const igualAnterior=arr=> !!anterior && anterior.length===arr.length && arr.every((e,i)=>mesma(e, anterior[i]));
+  for(let t=0;t<10;t++){
+    for(let i=out.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); const x=out[i]; out[i]=out[j]; out[j]=x; }
+    if(!igualAnterior(out)) return out;
+  }
+  const x=out[0]; out[0]=out[1]; out[1]=x; // azar repetido: troca as duas primeiras
+  return out;
+}
+// Modo Clássico: depois de ver a explicação do erro, a atividade recomeça da 1ª questão,
+// com progresso/respostas zerados e as questões em nova ordem. Usa os exercícios ATUAIS
+// da lição (se o professor regenerou no meio, a nova tentativa já pega a versão nova).
+function reiniciarTentativaAposErro(){
+  const l=getLesson();
+  if(!l || !l.exercicios.length){ openSubject(State.subj); return; }
+  const anterior = Sess ? Sess.exercicios : null;
+  Sess = novaSessao(embaralharTentativa(l.exercicios, anterior), "classico");
+  State.explic = null;
+  State.tela = "exercise";
+  render();
+  agendarAutoLeitura();
+  toast(Sess.total>1 ? "🔀 Nova tentativa: as questões estão em outra ordem!" : "🔁 Nova tentativa!");
 }
 // Auto-leitura opcional: 1s após a questão aparecer, lê o enunciado (se ativado no perfil).
 let autoLerTimer = null;
@@ -2757,7 +2792,8 @@ ${pub.frase}`;
     const txt = await chamarIA(prompt, IA_EXPLIC_TIMEOUT);
     const final = (txt && txt.trim()) || padrao;
     // persiste a explicação no Firestore (compartilha com os outros dispositivos)
-    if(txt && txt.trim() && exId){
+    // (só se a questão ainda existe na lição — se o professor regenerou, não cria órfã)
+    if(txt && txt.trim() && exId && licaoTemExercicio(myLesson, exId)){
       l.explicacoes = l.explicacoes || {};
       l.explicacoes[exId] = final;
       const upd={}; upd["explicacoes."+exId]=final;
@@ -2770,6 +2806,16 @@ ${pub.frase}`;
   }finally{
     explicacaoEmAndamento = false;
   }
+}
+
+// A questão ainda faz parte da versão atual da lição? (após "Regenerar exercícios" os
+// ids antigos somem; gravar explicação para eles deixaria entradas órfãs no Firestore)
+function licaoTemExercicio(licaoId, exId){
+  for(const k in DATA){
+    const x=(DATA[k]||[]).find(y=>y.id===licaoId);
+    if(x) return (x.exercicios||[]).some(e=>e.id===exId);
+  }
+  return false;
 }
 
 function mostrarExplicacao(texto, respCorreta){
@@ -2810,7 +2856,7 @@ ${pub.frase}`;
       try{
         const txt = await chamarIA(prompt, 12000);
         const final = (txt||"").trim();
-        if(final){
+        if(final && licaoTemExercicio(l.id, ex.id)){
           l.explicacoes[ex.id] = final;
           const upd={}; upd["explicacoes."+ex.id]=final;
           try{ await db.collection("licoes").doc(l.id).update(upd); }catch(_){}
@@ -2822,8 +2868,9 @@ ${pub.frase}`;
 
 function renderExplain(){
   const e = State.explic || { texto:"", respCorreta:"" };
-  const fim = Sess.vidas<=0;
-  const btnLabel = fim ? "Entendi 💪" : "Entendi, próxima pergunta!";
+  const aviso = (Sess && Sess.total>1)
+    ? "Revise a explicação e tente novamente. A atividade será reiniciada com uma nova ordem de questões."
+    : "Revise a explicação e tente novamente. A atividade será reiniciada.";
   app.innerHTML = `<div class="screen active">
     <div class="content" style="background:#fffbe6">
       <div style="text-align:center">${mascot('')}</div>
@@ -2831,33 +2878,19 @@ function renderExplain(){
       <div class="explic-resp">✅ Resposta certa: <b>${esc(e.respCorreta)}</b></div>
       <div class="resumo-box" style="font-size:17px">${formatResumo(e.texto)}</div>
       <div style="text-align:center;margin-top:12px">${botaoFala('lerExplicacao','Ouvir a explicação')}</div>
+      <div style="margin-top:14px;background:#eaf6ff;border:2px solid #1cb0f6;color:#1a5d8a;border-radius:12px;padding:10px 12px;font-size:14px;font-weight:700;line-height:1.4">🔁 ${aviso}</div>
     </div>
     <div style="padding:16px;border-top:2px solid var(--gray);background:#fff">
-      <button class="btn" onclick="App.continuarAposExplicacao()">✅ ${btnLabel}</button>
+      <button class="btn" onclick="App.continuarAposExplicacao()">🔁 Entendi, recomeçar a atividade</button>
     </div>
   </div>`;
 }
 
+// Só age a partir da tela de explicação: um 2º clique (a tela já mudou) é ignorado,
+// evitando reinício duplo ou avanço para a próxima questão.
 function continuarAposExplicacao(){
-  if(Sess.vidas<=0){ gameOver(); return; }
-  nextExercise();
-}
-
-function gameOver(){
-  const s=subjById(State.subj);
-  Sound.wrong();
-  app.innerHTML = `<div class="screen active">
-    <div class="celebrate">
-      <div style="font-size:70px">💔</div>
-      <h1 style="color:var(--red)">Acabaram os corações!</h1>
-      <p style="color:#777;margin:8px 0 20px">Não desista! Revise o conteúdo e tente novamente. Você consegue! 💪</p>
-      ${mascot('')}
-      <div style="width:100%;margin-top:24px">
-        <button class="btn" style="background:${s.cor};box-shadow:0 4px 0 rgba(0,0,0,.2)" onclick="App.startExercises()">🔁 Tentar de novo</button>
-        <button class="btn gray" style="margin-top:10px" onclick="App.openSubject('${s.id}')">Voltar às lições</button>
-      </div>
-    </div>
-  </div>`;
+  if(!Sess || State.tela!=="explain") return;
+  reiniciarTentativaAposErro();
 }
 
 function finishLesson(){
@@ -2884,6 +2917,7 @@ async function salvarProgresso(subjId, lessonId, sess, modo){
       turma: ALUNO.turma, ano: ALUNO.ano, nivel: ALUNO.nivel,
       acertos: sess.acertos, erros: sess.erros, xpGanho: sess.xpGanho, total: total,
       percentualAcertos: percentualAcertos, modo: modo||"classico",
+      exerciciosVersao: (getLesson()||{}).exerciciosVersao || 0, // qual versão das questões foi feita
       concluido: true, concluidoEm: firebase.firestore.FieldValue.serverTimestamp()
     }, { merge:true });
     console.log('Progresso salvo:', ALUNO.id+"_"+lessonId, '→', sess.acertos+'/'+total, '('+percentualAcertos+'%)');
@@ -3411,7 +3445,9 @@ function gameOverHistoria(){
    D3) LIÇÃO DE INTERPRETAÇÃO DE TEXTO (fluxo do aluno)
    ============================================================ */
 // Divide o texto gerado em parágrafos (para leitura/destaque).
-function paragrafosTexto(txt){ return String(txt||"").split(/\n+/).map(p=>p.trim()).filter(Boolean); }
+function linhasTexto(txt){ return String(txt||"").split(/\n+/).map(p=>p.trim()).filter(Boolean); }
+// Para a leitura em voz alta: as mesmas linhas (os índices batem), sem "## " e "**".
+function paragrafosTexto(txt){ return linhasTexto(txt).map(p=>p.replace(/^#{1,6}\s+/,"").replace(/\*\*/g,"")); }
 
 // Leitor de texto por parágrafo com destaque, controles e pausa de 0.5s entre trechos.
 // Genérico: funciona no resumo de estudo E no texto de interpretação (ctx define a tela,
@@ -3974,7 +4010,7 @@ function escopoLicaoLabel(l){
 }
 function teacherSelectSubj(v){ Teacher.subj=v; render(); }
 
-function resetIaEstado(){ Teacher.gerando=false; Teacher.regenerando=false; Teacher.previewing=false; Teacher.iaErro=""; Teacher.iaConfigAberta=false; Teacher.iaTeste=null; }
+function resetIaEstado(){ Teacher.gerando=false; Teacher.regenerando=false; Teacher.regenerandoEx=false;Teacher.previewing=false; Teacher.iaErro=""; Teacher.iaConfigAberta=false; Teacher.iaTeste=null; }
 function newLesson(){ Teacher.editingLesson={ id:null, titulo:"", texto:"", exercicios:[], turma:"", nivel:"", ano:"", materialNomes:[], materialTipos:[], materialTexto:"", materialTextos:[], materialCotas:[], historiaHabilitada:true, tipo:"padrao", textoGerado:"", tituloTexto:"", generoTextual:"", tema:"", _tamanho:"", _focos:[], _persistido:false }; resetIaEstado(); Teacher.upload={ ativo:false, nome:"", lendo:false }; Teacher.hist={ gerando:false, preview:null, erro:"" }; Teacher.interp={ gerando:false, erro:"" }; Teacher.tab="novo"; render(); }
 function editLesson(id){
   const l=(DATA[Teacher.subj]||[]).find(x=>x.id===id);
@@ -4673,9 +4709,11 @@ function iaPanel(L){
   const temChave = iaConfigurada();
 
   // estado de carregamento
-  if(Teacher.gerando || Teacher.regenerando){
+  if(Teacher.gerando || Teacher.regenerando || Teacher.regenerandoEx){
+    const acao = Teacher.regenerandoEx ? `Gerando e validando ${L.exercicios.length} exercícios novos`
+      : (Teacher.regenerando ? 'Regenerando conteúdo' : 'Gerando 15 exercícios');
     return `<div class="ia-panel">
-      <div class="ia-loading"><span class="ia-spinner"></span> ${Teacher.regenerando?'Regenerando conteúdo':'Gerando 15 exercícios'} com IA...</div>
+      <div class="ia-loading"><span class="ia-spinner"></span> ${acao} com IA...</div>
       <p style="font-size:12px;color:#777;text-align:center;margin-top:6px">Isso pode levar alguns segundos.</p>
     </div>`;
   }
@@ -4708,6 +4746,12 @@ function iaPanel(L){
       🔄 Regenerar conteúdo com IA (resumo compartilhado)
     </button>
     <p style="font-size:11px;color:#999;margin-top:4px">Recria o resumo de estudo e atualiza o cache (licoes_geradas) para todos os dispositivos.</p>` : ''}
+    ${(L.id && L._persistido) ? `<button class="btn gray small" style="width:100%;margin-top:8px" ${(!temChave||!temTexto||!L.exercicios.length)?'disabled':''} onclick="App.regenerarExerciciosIA()">
+      🔁 Regenerar exercícios com IA (${L.exercicios.length})
+    </button>
+    <p style="font-size:11px;color:#999;margin-top:4px">${L.exercicios.length
+      ? `Troca as ${L.exercicios.length} questões salvas por questões novas (mesmo tema, dificuldade e tipos) e já grava. O resumo de estudo não muda.`
+      : 'Disponível quando a lição tiver exercícios salvos.'}</p>` : ''}
     ${!temChave ? `<p style="font-size:12px;color:#c0392b;text-align:center;margin-top:6px">Chave da IA não configurada. Peça ao Administrador para cadastrá-la (⚙️ na tela inicial).</p>`
       : (!temTexto ? `<p style="font-size:12px;color:#c0392b;text-align:center;margin-top:6px">Escreva o conteúdo da lição primeiro.</p>`:'')}
   </div>`;
@@ -4785,15 +4829,10 @@ async function regenerarConteudoIA(){
   Teacher.regenerando=true; Teacher.iaErro=""; render();
   const pub=descreverPublicoLicao(L);
   const material=(L.materialTexto||"").trim();
-  const blocoMaterial = material ? `\nMATERIAL ANEXADO: ${material}` : "";
-  const prompt =
-`Crie um resumo didático para uma criança de aproximadamente ${pub.idade} anos (${pub.ano} do ${nomeNivel(pub.nivelId)}) baseado no material abaixo.
-Use linguagem simples e animada, exemplos do cotidiano e destaque os pontos principais em tópicos.
-O resumo deve ter no máximo 300 palavras e terminar com uma dica de memorização.
-${pub.frase}
-CONTEÚDO DA LIÇÃO: ${conteudo}${blocoMaterial}`;
+  const prompt = montarPromptResumo(Object.assign({}, L, { texto:conteudo }),
+    { ano:pub.ano, nivelNome:nomeNivel(pub.nivelId), idade:pub.idade, frase:pub.frase }, Teacher.subj);
   try{
-    const texto=await chamarIA(prompt, timeoutComMaterial(20000, material));
+    const texto=await chamarIA(prompt, timeoutComMaterial(25000, material));
     if(!texto.trim()) throw new Error("A IA retornou um resumo vazio. Tente novamente.");
     delete resumoCache[L.id];
     salvarLicaoGerada(L.id, { resumo:texto, exercicios:L.exercicios });
@@ -4804,6 +4843,66 @@ CONTEÚDO DA LIÇÃO: ${conteudo}${blocoMaterial}`;
     Teacher.iaErro = mensagemErroIA(err);
     render();
   }
+}
+
+// Prompt do TEXTO DE ESTUDO mostrado antes dos exercícios. Um único lugar para as regras
+// pedagógicas: usado pelo aluno (openLesson) e pelo professor (regenerarConteudoIA).
+// `pub` = { ano, nivelNome, idade, frase }. Os exercícios entram só como orientação
+// (enunciado + tipo, sem opções/respostas), para o texto preparar sem entregar a resposta.
+function montarPromptResumo(l, pub, subjId){
+  const disc = (subjById(subjId)||{}).nome || "";
+  const exs = (l && l.exercicios) || [];
+  const cont = contarPorDificuldade(exs);
+  const dificuldade = exs.length
+    ? `${cont.facil} fáceis, ${cont.intermediario} intermediárias e ${cont.dificil} difíceis (de ${exs.length} questões)`
+    : "não informado";
+  const tipos = exs.length ? Array.from(new Set(exs.map(e=>tipoLabel(e.tipo)))).join(", ") : "não informado";
+  const listaEx = exs.slice(0,20).map((e,i)=>`${i+1}. [${tipoLabel(e.tipo)}${e.nivel?" • "+nivelDificuldadeLabel(e.nivel):""}] ${String(e.enunciado||"").slice(0,220)}`).join("\n");
+  const material = ((l && l.materialTexto)||"").trim();
+  const lingua = ehLinguaEstrangeira(subjId)
+    ? `\n- É uma aula de língua ${LINGUAS_ESTRANGEIRAS[subjId]}: explique em português e mostre as palavras/frases no idioma com a tradução ao lado.`
+    : "";
+  // textos mais curtos para os menores (evita texto longo demais)
+  const limite = pub.idade<=8 ? 350 : (pub.idade<=11 ? 450 : 550);
+  return `Você é um professor experiente, didático e acolhedor. Escreva o TEXTO DE ESTUDO que o aluno vai ler ANTES de resolver os exercícios desta lição.
+
+SOBRE A LIÇÃO
+- Tema: ${(l && l.titulo) || "(sem título)"}
+- Disciplina: ${disc || "(não informada)"}
+- Aluno: ${pub.ano} do ${pub.nivelNome}, aproximadamente ${pub.idade} anos
+- Objetivo: o aluno entender o tema a ponto de resolver sozinho os exercícios listados no fim
+- Dificuldade dos exercícios: ${dificuldade}
+- Tipos de exercício: ${tipos}
+- Conhecimentos prévios: considere só o que um aluno desse ano normalmente já sabe; se o tema depender de algo anterior, relembre em uma frase
+- Idioma: português do Brasil${lingua}
+${pub.frase}
+
+COMO ESCREVER
+1. Comece pelo básico: o que é o assunto, em palavras simples, e por que ele importa. Avance aos poucos para as ideias mais difíceis.
+2. Linguagem natural, próxima e acolhedora, falando com o aluno ("você"). Termo técnico só se for explicado na hora.
+3. Traga PELO MENOS 2 exemplos práticos resolvidos passo a passo ("Passo 1", "Passo 2"...), explicando o porquê de cada passo. Os exemplos devem ser DIFERENTES das questões dos exercícios.
+4. Relacione com situações do dia a dia do aluno quando fizer sentido.
+5. Destaque os conceitos, regras, fórmulas e pontos importantes.
+6. Inclua uma parte "Cuidado!" com os erros e dúvidas mais comuns sobre o tema.
+7. Termine com uma dica curta para lembrar e uma frase de incentivo.
+8. NÃO resolva nem revele as respostas dos exercícios listados — prepare o aluno para resolvê-los.
+9. Use apenas informações corretas e ligadas ao tema; não invente fatos, datas ou números. Siga o conteúdo do professor.
+10. Nada de texto genérico ou repetitivo: no máximo ${limite} palavras.
+
+FORMATO (texto simples, sem tabelas e sem blocos de código)
+- Títulos curtos em linha própria começando com "## " (ex.: "## O que é?", "## Exemplo 1", "## Cuidado!", "## Dica para lembrar")
+- Parágrafos curtos (2 a 3 frases), cada um em sua linha
+- Listas com "- " no começo da linha
+- Termos importantes entre **asteriscos duplos**
+
+CONTEÚDO DA LIÇÃO (base principal):
+${(l && l.texto) || ""}${material ? `
+
+MATERIAL DE APOIO ANEXADO PELO PROFESSOR:
+${material}` : ""}${listaEx ? `
+
+EXERCÍCIOS QUE O ALUNO VAI RESOLVER (só para orientar o texto — não revele as respostas):
+${listaEx}` : ""}`;
 }
 
 // Chamada genérica à IA. Usa o proxy se configurado (sem chave no cliente);
@@ -5074,8 +5173,13 @@ function jsonParseTolerante(s){
   try{ return JSON.parse(s); }catch(e){}
   try{ return JSON.parse(sanitizarControlesJson(s)); }catch(e){ return undefined; }
 }
-// Converte o JSON retornado pela IA para o formato interno de exercícios
-function parseExerciciosIA(texto){
+// Converte o JSON retornado pela IA para o formato interno de exercícios.
+// opts.estrito (regenerar exercícios): em vez de "adivinhar" (ex.: opção correta
+// não encontrada → índice 0), descarta o item e anota o motivo em opts.rejeitados;
+// também guarda a justificativa da IA em `_explicacao` (removida antes de salvar).
+function parseExerciciosIA(texto, opts){
+  const estrito = !!(opts && opts.estrito);
+  const rejeitar = motivo=>{ if(opts && opts.rejeitados) opts.rejeitados.push(motivo); };
   if(!texto) return [];
   let s = texto.trim();
   // remove cercas de código ```json ... ```
@@ -5087,25 +5191,198 @@ function parseExerciciosIA(texto){
   if(!Array.isArray(arr)) return [];
 
   const out=[];
-  arr.forEach(item=>{
-    if(!item || !item.enunciado) return;
+  arr.forEach((item,k)=>{
+    const q = "questão "+(k+1);
+    if(!item || !item.enunciado){ rejeitar(q+": sem enunciado"); return; }
     const tipo = String(item.tipo||"").toLowerCase();
     const resp = item.resposta_correta;
     const nivel = normalizarNivelDif(item.nivel);
+    let ex;
     if(tipo.indexOf("verdadeiro")>=0 || tipo==="vf"){
       const v = norm(resp);
-      out.push({ id:uid(), tipo:"vf", nivel, enunciado:String(item.enunciado),
-        opcoes:["Verdadeiro","Falso"], correta:(v.charAt(0)==="v"||v==="true"||v==="1")?0:1 });
+      if(estrito && !/^(v|f|true|false)/.test(v)){ rejeitar(q+": V/F sem resposta válida"); return; }
+      ex = { id:uid(), tipo:"vf", nivel, enunciado:String(item.enunciado),
+        opcoes:["Verdadeiro","Falso"], correta:(v.charAt(0)==="v"||v==="true"||v==="1")?0:1 };
     } else if(tipo.indexOf("lacuna")>=0 || tipo.indexOf("completar")>=0 || tipo==="fill"){
-      out.push({ id:uid(), tipo:"fill", nivel, enunciado:String(item.enunciado), resposta:String(resp==null?"":resp) });
+      ex = { id:uid(), tipo:"fill", nivel, enunciado:String(item.enunciado), resposta:String(resp==null?"":resp) };
+      if(estrito && !ex.resposta.trim()){ rejeitar(q+": lacuna sem resposta"); return; }
+      if(estrito && !/_{2,}/.test(ex.enunciado)){ rejeitar(q+": lacuna sem ___ no enunciado"); return; }
     } else { // múltipla escolha (padrão)
       let opcoes = Array.isArray(item.opcoes)? item.opcoes.map(o=>String(o)) : [];
-      if(opcoes.length<2) return;
-      let correta = acharIndiceCorreto(opcoes, resp);
-      out.push({ id:uid(), tipo:"mc", nivel, enunciado:String(item.enunciado), opcoes, correta });
+      if(opcoes.length<2){ rejeitar(q+": alternativas insuficientes"); return; }
+      if(estrito){
+        if(opcoes.length<3 || opcoes.length>6 || opcoes.some(o=>!o.trim())){ rejeitar(q+": alternativas incompletas"); return; }
+        if(new Set(opcoes.map(norm)).size!==opcoes.length){ rejeitar(q+": alternativas repetidas"); return; }
+        // exatamente UMA opção igual à resposta (ou, na falta, uma letra A–F válida)
+        const iguais = opcoes.filter(o=>norm(o)===norm(resp)).length;
+        const letraOk = /^[a-f]$/i.test(String(resp==null?"":resp).trim()) && (String(resp).trim().toUpperCase().charCodeAt(0)-65)<opcoes.length;
+        if(iguais!==1 && !(iguais===0 && letraOk)){ rejeitar(q+": resposta correta ausente ou ambígua"); return; }
+      }
+      ex = { id:uid(), tipo:"mc", nivel, enunciado:String(item.enunciado), opcoes, correta:acharIndiceCorreto(opcoes, resp) };
     }
+    if(estrito) ex._explicacao = String(item.explicacao||"").trim();
+    out.push(ex);
   });
   return out;
+}
+
+// Semelhança entre dois enunciados (Jaccard das palavras com 3+ letras e dos números; 0 a 1).
+// Números contam: em Matemática "3 x 4" e "5 x 6" são questões diferentes.
+function similaridadeEnunciados(a, b){
+  const pal = s=> new Set(norm(s).split(/[^a-z0-9]+/).filter(w=>w.length>=3 || /^\d+$/.test(w)));
+  const A=pal(a), B=pal(b);
+  if(!A.size || !B.size) return norm(a)===norm(b) ? 1 : 0;
+  let inter=0; A.forEach(w=>{ if(B.has(w)) inter++; });
+  return inter/(A.size+B.size-inter);
+}
+const REGEN_SIMILAR_ANTIGA = 0.7; // acima disso a questão nova é "igual" a uma atual
+const REGEN_SIMILAR_NOVA = 0.85;  // entre as novas: acima disso é duplicada
+
+// Valida as questões regeneradas ANTES de substituir as atuais. Recebe o que o parser
+// estrito aceitou e devolve { ok, exercicios, explicacoes, erro }. Só dá ok com
+// exatamente `n` questões completas, sem duplicadas e sem repetir as atuais.
+function validarExerciciosRegenerados(novos, antigos, n, rejeitados){
+  const motivos = (rejeitados||[]).slice();
+  const aceitos = [];
+  (novos||[]).forEach((ex,k)=>{
+    const q = "questão "+(k+1);
+    const enun = String(ex.enunciado||"").trim();
+    if(enun.length<8){ motivos.push(q+": enunciado vazio ou curto demais"); return; }
+    if(["mc","vf","fill"].indexOf(ex.tipo)<0){ motivos.push(q+": tipo não suportado"); return; }
+    if(ex.tipo!=="fill" && !(ex.correta>=0 && ex.correta<(ex.opcoes||[]).length)){ motivos.push(q+": sem resposta correta"); return; }
+    if(String(ex._explicacao||"").length<20){ motivos.push(q+": sem explicação da resposta"); return; }
+    if((antigos||[]).some(a=>similaridadeEnunciados(a.enunciado, enun)>=REGEN_SIMILAR_ANTIGA)){ motivos.push(q+": igual/parecida com uma questão atual"); return; }
+    if(aceitos.some(a=>similaridadeEnunciados(a.enunciado, enun)>=REGEN_SIMILAR_NOVA)){ motivos.push(q+": duplicada"); return; }
+    aceitos.push(ex);
+  });
+  if(aceitos.length<n){
+    const resumo = motivos.slice(0,3).join("; ") + (motivos.length>3 ? `; +${motivos.length-3}` : "");
+    return { ok:false, erro:`${aceitos.length} de ${n} questões válidas${resumo?" — "+resumo:""}` };
+  }
+  const exercicios=[], explicacoes={};
+  aceitos.slice(0,n).forEach(ex=>{
+    const limpo=Object.assign({}, ex); delete limpo._explicacao;
+    exercicios.push(limpo); explicacoes[limpo.id]=ex._explicacao;
+  });
+  return { ok:true, exercicios, explicacoes, erro:"" };
+}
+
+// ----- REGENERAR EXERCÍCIOS (professor) -----
+// Troca as questões de uma lição JÁ SALVA por questões novas, sem mexer no texto de estudo
+// (resumo em licoes_geradas / resumoIA). Ordem segura: gera → valida tudo → grava num
+// batch atômico. Qualquer falha antes do commit deixa os exercícios atuais intactos.
+const REGEN_EX_TENTATIVAS = 2; // se a IA devolver algo inválido, pede mais uma vez
+function montarPromptRegenerarExercicios(L, atuais, n, resumo, subjId){
+  const pub = descreverPublicoLicao(L);
+  const disc = (subjById(subjId)||{}).nome || "";
+  const cont = contarPorDificuldade(atuais);
+  const semNivel = atuais.length - cont.facil - cont.intermediario - cont.dificil;
+  const tipos = { mc:0, vf:0, fill:0 };
+  atuais.forEach(e=>{ if(tipos[e.tipo]!==undefined) tipos[e.tipo]++; });
+  const material = (L.materialTexto||"").trim();
+  const listaAtuais = atuais.map((e,i)=>`${i+1}. ${String(e.enunciado||"").slice(0,220)}`).join("\n");
+  const blocoLingua = blocoLinguaEstrangeira(subjId, L.titulo);
+  return `Você é um professor do ${pub.ano} do ${nomeNivel(pub.nivelId)} (Sistema Positivo).
+Os exercícios atuais da lição "${L.titulo}"${disc?` (${disc})`:""} serão SUBSTITUÍDOS. Crie exatamente ${n} exercícios NOVOS.
+
+MANTENHA:
+- O mesmo tema e objetivo da lição, cobrindo só o que o TEXTO DE ESTUDO e o CONTEÚDO abaixo ensinam
+- A dificuldade: ${cont.facil} fáceis, ${cont.intermediario+semNivel} intermediários e ${cont.dificil} difíceis (nessa ordem)
+- Os tipos: ${tipos.mc} de múltipla escolha, ${tipos.vf} de verdadeiro/falso e ${tipos.fill} de completar lacunas
+${pub.frase}
+Adapte a linguagem para uma criança de aproximadamente ${pub.idade} anos.
+
+AS QUESTÕES DEVEM SER DIFERENTES DAS ATUAIS (listadas no fim): não repita enunciados, não mude só números ou nomes — explore outros aspectos, situações e exemplos do mesmo conteúdo. Não repita questões entre si.
+
+REGRAS DE CADA QUESTÃO:
+- "multipla_escolha": exatamente 4 opções diferentes e completas, com UMA só correta; "resposta_correta" = o TEXTO EXATO da opção correta (nunca a letra A/B/C/D).
+- "verdadeiro_falso": "resposta_correta" = "verdadeiro" ou "falso".
+- "completar_lacunas": o enunciado marca a lacuna com "___"; "resposta_correta" = a palavra ou expressão curta que completa.
+- "explicacao": 1 a 3 frases acolhedoras (até 60 palavras) para o aluno que errar: diga que tudo bem errar e explique por que a resposta correta é a certa.
+- "nivel": exatamente "facil", "intermediario" ou "dificil".
+
+Retorne APENAS um JSON válido (um array), sem comentários, no formato:
+[
+  {"nivel": "facil", "tipo": "multipla_escolha", "enunciado": "...", "opcoes": ["...","...","...","..."], "resposta_correta": "texto exato da opção correta", "explicacao": "..."},
+  {"nivel": "intermediario", "tipo": "verdadeiro_falso", "enunciado": "...", "resposta_correta": "verdadeiro", "explicacao": "..."},
+  {"nivel": "dificil", "tipo": "completar_lacunas", "enunciado": "O ___ é usado quando...", "resposta_correta": "palavra", "explicacao": "..."}
+]${blocoLingua ? `${blocoLingua}
+(Se alguma orientação acima sobre quantidade/distribuição for diferente, valem os ${n} exercícios e a distribuição pedida no início.)` : ""}
+
+EXERCÍCIOS ATUAIS (NÃO repetir):
+${listaAtuais}${resumo ? `
+
+TEXTO DE ESTUDO QUE O ALUNO LÊ ANTES (as questões devem ser coerentes com ele):
+${String(resumo).slice(0,5000)}` : ""}
+
+CONTEÚDO DA LIÇÃO:
+${L.texto||""}${material ? `
+
+MATERIAL DE APOIO ANEXADO (priorize este conteúdo):
+${material}` : ""}`;
+}
+// Grava a nova versão dos exercícios de forma ATÔMICA (batch): exercícios + explicações
+// (as antigas eram indexadas pelos ids antigos → ficariam órfãs) + versão; espelha no
+// cache licoes_geradas (só o campo exercicios — o resumo fica) e apaga a história em
+// cache (os capítulos eram 1 por questão antiga). O progresso dos alunos (progresso/)
+// guarda só totais por lição, então o histórico continua válido.
+async function gravarExerciciosRegenerados(licaoId, disc, exercicios, explicacoes){
+  const local = (DATA[disc]||[]).find(x=>x.id===licaoId);
+  const aplicarLocal = ()=>{
+    if(local){ local.exercicios=exercicios; local.explicacoes=explicacoes; local.exerciciosVersao=(local.exerciciosVersao||0)+1; }
+    delete historiaCache[licaoId];
+  };
+  if(DEMO || ehModoDemo()){ aplicarLocal(); return; } // demo: nada vai ao Firestore
+  if(!db) throw new Error("Sem conexão com o banco. Tente novamente.");
+  const FV = firebase.firestore.FieldValue;
+  const batch = db.batch();
+  batch.update(db.collection("licoes").doc(licaoId), {
+    exercicios: exercicios, explicacoes: explicacoes,
+    exerciciosVersao: FV.increment(1), exerciciosRegeneradosEm: FV.serverTimestamp()
+  });
+  batch.set(db.collection("licoes_geradas").doc(licaoId), { licaoId: licaoId, exercicios: exercicios }, { merge:true });
+  batch.delete(db.collection("historias_geradas").doc(licaoId));
+  await batch.commit();
+  aplicarLocal();
+}
+async function regenerarExerciciosIA(){
+  if(Teacher.regenerandoEx) return; // já está gerando: ignora cliques repetidos
+  syncTextInputs();
+  const L=Teacher.editingLesson;
+  if(!L || !L.id || !L._persistido){ toast("Salve a lição primeiro para regenerar os exercícios."); return; }
+  const atuais=(L.exercicios||[]).slice();
+  const n=atuais.length;
+  if(!n){ Teacher.iaErro="A lição ainda não tem exercícios — use \"Gerar 15 Exercícios com IA\"."; render(); return; }
+  const conteudo=(L.texto||"").trim();
+  if(!conteudo){ Teacher.iaErro="Escreva o conteúdo da lição antes de gerar."; render(); return; }
+  if(!iaConfigurada()){ Teacher.iaErro="IA não configurada (chave ou proxy). Peça ao Administrador (⚙️ na tela inicial)."; render(); return; }
+  if(!confirm("A regeneração substituirá os exercícios atuais por novas questões. As tentativas e respostas relacionadas poderão ser afetadas. Deseja continuar?")) return;
+  Teacher.regenerandoEx=true; Teacher.iaErro=""; render();
+  const licaoId=L.id, disc=Teacher.subj;
+  try{
+    // evita repetir tanto o que está no editor quanto o que está salvo
+    const salva=(DATA[disc]||[]).find(x=>x.id===licaoId);
+    const antigos=atuais.concat((salva && salva.exercicios)||[]);
+    const cache=await getLicaoGerada(licaoId);
+    const resumo=(cache && cache.resumo) || (salva && salva.resumoIA) || resumoCache[licaoId] || "";
+    const prompt=montarPromptRegenerarExercicios(L, atuais, n, resumo, disc);
+    let r=null;
+    for(let t=0; t<REGEN_EX_TENTATIVAS && !(r && r.ok); t++){
+      const texto=await chamarIA(prompt, timeoutComMaterial(45000, L.materialTexto));
+      const rejeitados=[];
+      r=validarExerciciosRegenerados(parseExerciciosIA(texto, { estrito:true, rejeitados }), antigos, n, rejeitados);
+    }
+    if(!r.ok) throw new Error("A IA devolveu questões inválidas ("+r.erro+").");
+    await gravarExerciciosRegenerados(licaoId, disc, r.exercicios, r.explicacoes);
+    // o editor só é atualizado se o professor ainda está nesta lição
+    if(Teacher.editingLesson && Teacher.editingLesson.id===licaoId) Teacher.editingLesson.exercicios=r.exercicios.map(e=>JSON.parse(JSON.stringify(e)));
+    const c=contarPorDificuldade(r.exercicios);
+    toast(`✅ ${r.exercicios.length} exercícios novos salvos (${c.facil}F/${c.intermediario}I/${c.dificil}D)!`);
+  }catch(err){
+    Teacher.iaErro = mensagemErroIA(err)+" Os exercícios atuais foram mantidos.";
+  }finally{
+    Teacher.regenerandoEx=false; render();
+  }
 }
 // Normaliza o nível de dificuldade vindo da IA (ignora acentos/variações).
 function normalizarNivelDif(v){
@@ -5238,6 +5515,7 @@ function removeOpt(i,j){
 async function saveLesson(){
   syncTextInputs();
   const L=Teacher.editingLesson;
+  if(Teacher.regenerandoEx){ toast("Aguarde a regeneração dos exercícios terminar."); return; }
   if(!L.titulo.trim()){ toast("Dê um título à lição."); return; }
   const ehInterp = (L.tipo==="interpretacao_texto");
   if(ehInterp){
@@ -6659,7 +6937,7 @@ window.App = {
   // conta do professor
   toggleContaTurma, toggleContaAno, toggleContaDisc, salvarConta,
   // IA
-  gerarExerciciosIA, toggleIaConfig, setModoIA, regenerarConteudoIA,
+  gerarExerciciosIA, toggleIaConfig, setModoIA, regenerarConteudoIA, regenerarExerciciosIA,
   // corretor de provas por câmera
   onSelecionarFotoProva, removerFotoProva, setCorretorCampo, corrigirProva,
   setGabaritoResp, setNumQuestoes, setRespAluno, setCorretorModo, corretorAvancarGabarito, irCorretor,
