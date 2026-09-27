@@ -4,15 +4,21 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const { abrirProfessor, erroIA, ultimoToast, F } = require("../support/professor-helpers");
 
-const RESP_MISTA = F.json([
-  { nivel: "fácil", tipo: "multipla_escolha", enunciado: "Qual é a vogal?", opcoes: ["B", "C", "A", "D"], resposta_correta: "A" },
-  { nivel: "Intermediário", tipo: "verdadeiro_falso", enunciado: "2+2=4?", resposta_correta: "Verdadeiro" },
-  { nivel: "dificil", tipo: "verdadeiro_falso", enunciado: "3+3=7?", resposta_correta: "falso" },
-  { nivel: "dificil", tipo: "completar_lacunas", enunciado: "O dobro de 4 é ___", resposta_correta: "8" },
-  { nivel: "facil", tipo: "multipla_escolha", enunciado: "Letra da correta", opcoes: ["x", "y", "z", "w"], resposta_correta: "C" },
-  { nivel: "facil", tipo: "multipla_escolha", enunciado: "Opção única", opcoes: ["só uma"], resposta_correta: "só uma" },
+const EXPL = "Tudo bem errar! Veja no conteúdo da lição por que esta é a resposta certa.";
+// 5 itens com formatos variados (tipos, níveis, resposta por texto/letra) + 10 válidos = 15
+const MISTOS = [
+  { nivel: "fácil", tipo: "multipla_escolha", enunciado: "Qual é a vogal?", opcoes: ["B", "C", "A", "D"], resposta_correta: "A", explicacao: EXPL },
+  { nivel: "Intermediário", tipo: "verdadeiro_falso", enunciado: "Dois mais dois é quatro?", resposta_correta: "Verdadeiro", explicacao: EXPL },
+  { nivel: "dificil", tipo: "verdadeiro_falso", enunciado: "Três mais três é sete?", resposta_correta: "falso", explicacao: EXPL },
+  { nivel: "dificil", tipo: "completar_lacunas", enunciado: "O dobro de 4 é ___", resposta_correta: "8", explicacao: EXPL },
+  { nivel: "facil", tipo: "multipla_escolha", enunciado: "Letra da opção correta", opcoes: ["x", "y", "z", "w"], resposta_correta: "C", explicacao: EXPL },
+];
+const RESP_MISTA = F.json(MISTOS.concat(F.questoesIA(10)));
+// geração incompleta: itens inválidos no meio (o antigo parser os descartava e aceitava o resto)
+const RESP_INCOMPLETA = F.json(MISTOS.concat([
+  { nivel: "facil", tipo: "multipla_escolha", enunciado: "Opção única", opcoes: ["só uma"], resposta_correta: "só uma", explicacao: EXPL },
   { tipo: "multipla_escolha", opcoes: ["a", "b"] },
-]);
+]));
 
 function cards(h) { return [...h.document.querySelectorAll(".ex-edit-card")]; }
 
@@ -21,7 +27,7 @@ test("gerar (substituir): troca os exercícios do editor pelos da IA, mapeando t
   h.ia.fila(RESP_MISTA);
   await h.clicar(/Gerar 15 Exercícios com IA/);
   const c = cards(h);
-  assert.equal(c.length, 5, "descarta item sem enunciado e MC com < 2 opções");
+  assert.equal(c.length, 15, "exatamente a quantidade pedida");
   assert.equal(c[0].querySelector("select").value, "mc");
   assert.equal(c[0].querySelectorAll("select")[1].value, "facil");
   const pick = card => [...card.querySelectorAll(".opt-row .pick")].findIndex(b => /58cc02/.test(b.getAttribute("style")));
@@ -31,8 +37,34 @@ test("gerar (substituir): troca os exercícios do editor pelos da IA, mapeando t
   assert.equal(pick(c[2]), 1, "falso → índice 1");
   assert.equal(c[3].querySelector("select").value, "fill");
   assert.equal(pick(c[4]), 2, "letra C → índice 2");
-  assert.match(ultimoToast(h), /5 exercícios \(2F\/1I\/2D\)! Revise e salve\./);
+  assert.match(ultimoToast(h), /15 exercícios \(.*\)! Revise e salve\./);
   assert.equal(h.store.escritas("licoes").length, 0, "não grava até o professor salvar");
+  h.fechar();
+});
+
+test("gerar: geração incompleta (itens inválidos, menos de 15) é recusada 2x e NÃO troca os exercícios atuais", async () => {
+  const h = await abrirProfessor({ editar: "L1" });
+  h.ia.fila(RESP_INCOMPLETA, RESP_INCOMPLETA);
+  await h.clicar(/Gerar 15 Exercícios com IA/);
+  assert.equal(h.ia.chamadas.length, 2, "pede mais uma vez antes de desistir");
+  assert.equal(cards(h).length, 3, "os 3 exercícios atuais continuam");
+  assert.match(erroIA(h), /5 de 15 questões válidas.*alternativas insuficientes.*Os exercícios atuais foram mantidos/);
+  h.fechar();
+});
+
+test("gerar: explicações geradas junto vão ao Firestore ao salvar (só das questões não editadas)", async () => {
+  const h = await abrirProfessor({ editar: "L1" });
+  h.ia.fila(RESP_MISTA);
+  await h.clicar(/Gerar 15 Exercícios com IA/);
+  h.App.setExEnun(0, "Qual destas é uma vogal? (editada)"); // o professor mexe na 1ª
+  await h.clicar(/Salvar lição/);
+  const d = h.store.doc("licoes", "L1");
+  assert.equal(d.exercicios.length, 15);
+  const ids = d.exercicios.map(e => e.id);
+  assert.equal(Object.keys(d.explicacoes).length, 14, "a questão editada fica sem a explicação antiga");
+  assert.equal(d.explicacoes[ids[0]], undefined);
+  assert.equal(d.explicacoes[ids[1]], EXPL);
+  assert.ok(Object.keys(d.explicacoes).every(k => ids.includes(k)), "nenhuma explicação órfã");
   h.fechar();
 });
 
@@ -40,7 +72,7 @@ test("gerar (acumular): soma aos exercícios atuais", async () => {
   const h = await abrirProfessor({ editar: "L1", local: { estudamais_ia_modo_v1: "acumular" } });
   h.ia.fila(RESP_MISTA);
   await h.clicar(/Gerar 15 Exercícios com IA/);
-  assert.equal(cards(h).length, 3 + 5);
+  assert.equal(cards(h).length, 3 + 15);
   h.fechar();
 });
 
@@ -97,8 +129,8 @@ const ERROS = [
   ["429 limite", { status: 429 }, /Erro 429 — Limite de uso atingido/],
   ["503 indisponível", { status: 503, mensagem: "Service Unavailable" }, /Erro 503 — Service Unavailable/],
   ["rede", { rede: true }, /Falha na chamada à OpenAI/],
-  ["JSON malformado", "[{ isto não é json", /não retornou exercícios reconhecíveis/],
-  ["array vazio", "[]", /não retornou exercícios reconhecíveis/],
+  ["JSON malformado", "[{ isto não é json", /questões inválidas \(0 de 15 questões válidas\)/],
+  ["array vazio", "[]", /questões inválidas \(0 de 15 questões válidas\)/],
   ["corpo inválido (JSON quebrado)", { corpoInvalido: true, json: true }, /chegou incompleta/],
   ["stream cortado", { corte: "[{\"enun" }, /interrompida no meio/],
 ];
@@ -137,7 +169,7 @@ test("gerar: sem chave → botão desabilitado e aviso; sem texto → aviso", as
   const h2 = await abrirProfessor({ editar: "L1" });
   await h2.preencher("lTexto", "  ");
   h2.App.gerarExerciciosIA(); await h2.estabilizar();
-  assert.match(erroIA(h2), /Escreva o conteúdo da lição/);
+  assert.match(erroIA(h2), /Escreva o texto explicativo ou importe um documento/);
   assert.equal(h2.ia.chamadas.length, 0);
   h2.fechar();
 });

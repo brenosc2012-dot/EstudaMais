@@ -189,6 +189,11 @@ label{ display:block; font-weight:700; font-size:14px; margin-bottom:6px; color:
 .progress-fill{ height:100%; background:var(--green); border-radius:10px; transition:width .3s; width:0; }
 .hearts{ font-size:20px; letter-spacing:2px; flex-shrink:0; }
 .q-prompt{ font-size:21px; font-weight:800; margin:10px 0 20px; line-height:1.4; }
+/* questão de interpretação: instrução → texto de apoio → pergunta (texto visível ao responder) */
+.q-instrucao{ font-size:15px; font-weight:800; color:#555; margin:8px 0 6px; }
+.q-apoio{ background:#f3f9ff; border:2px solid #cfe8fb; border-left:5px solid var(--blue); border-radius:14px; padding:12px 14px; margin:0 0 4px;
+  font-size:17px; line-height:1.6; white-space:pre-wrap; overflow-wrap:anywhere; max-height:42vh; overflow:auto; }
+.q-apoio + .q-prompt{ margin-top:14px; }
 .opt{
   display:flex; align-items:center; gap:12px;
   border:2px solid var(--gray); border-bottom-width:4px; border-radius:14px;
@@ -319,6 +324,7 @@ label{ display:block; font-weight:700; font-size:14px; margin-bottom:6px; color:
 .ia-head{ display:flex; align-items:center; justify-content:space-between; }
 .ia-head b{ font-size:15px; color:#7d3c98; }
 .ia-erro{ background:#ffdfe0; color:#c0392b; border-radius:10px; padding:10px 12px; font-size:13px; font-weight:600; margin-bottom:10px; }
+.aviso-erro{ background:#ffdfe0; color:#c0392b; border-radius:10px; padding:10px 12px; font-size:13px; font-weight:600; margin-bottom:10px; } /* avisos do editor (≠ erro do painel de IA) */
 .ia-loading{ display:flex; align-items:center; justify-content:center; gap:10px; font-weight:800; color:#7d3c98; padding:14px 0; font-size:16px; }
 .ia-spinner{ width:22px; height:22px; border:3px solid #e3d1f5; border-top-color:#9b59b6; border-radius:50%; display:inline-block; animation:spin .8s linear infinite; }
 @keyframes spin{ to{ transform:rotate(360deg); } }
@@ -1566,6 +1572,9 @@ function segmentosQuestao(ex){
   // frase de abertura da persona (ex.: Professora "Agora veja esta questão:")
   const antes = estiloAtual().antesQuestao;
   const abertura = antes ? [{ texto: antes, pausa: 400 }] : [];
+  // questão de interpretação: lê a instrução e o texto de apoio antes da pergunta
+  if(String(ex.instrucao||"").trim()) abertura.push({ texto: String(ex.instrucao).trim(), pausa: 300 });
+  if(String(ex.textoApoio||"").trim()) abertura.push({ texto: String(ex.textoApoio).trim(), pausa: 800 });
   if(ex.tipo==="fill"){
     // lê o enunciado trocando a lacuna (___) por "lacuna"
     const enun = String(ex.enunciado||"").replace(/_{1,}/g, " lacuna ");
@@ -2377,6 +2386,9 @@ async function openLesson(lid){
   // 3) sem chave neste aparelho → resumo pré-cadastrado (demo) ou conteúdo do professor
   if(!iaConfigurada()){ if(ativo()){ State.estudo = DEMO ? fallbackDemo() : { status:"fallback", texto:l.texto }; render(); } return; }
 
+  // 3b) sem texto do professor nem documentos → não há base para a IA (evita texto genérico)
+  if(!fontesDaLicao(l).suficiente){ if(ativo()){ State.estudo = DEMO ? fallbackDemo() : { status:"fallback", texto:l.texto || "O professor ainda não adicionou o conteúdo de estudo desta lição." }; render(); } return; }
+
   // 4) gera o resumo pela IA e salva no cache compartilhado (licoes_geradas)
   const pub = descreverPublico(ALUNO);
   const materialAluno = (l.materialTexto||"").trim();
@@ -2540,8 +2552,10 @@ function startExercises(){
   const l=getLesson();
   if(!l || l.exercicios.length===0){ openSubject(State.subj); return; }
   const modo = State.modo || "classico";
+  const visiveis = exerciciosVisiveis(l);
+  if(!visiveis.length){ toast("As questões desta lição precisam de revisão do professor."); openSubject(State.subj); return; }
   // história: ordem natural (alinha com os capítulos gerados); clássico: por dificuldade
-  const exs = (modo==="historia") ? l.exercicios.slice() : ordenarPorDificuldade(l.exercicios);
+  const exs = (modo==="historia") ? visiveis : ordenarPorDificuldade(visiveis);
   Sess = novaSessao(exs, modo);
   State.tela = (modo==="historia") ? "historia" : "exercise";
   render();
@@ -2574,8 +2588,10 @@ function embaralharTentativa(exs, anterior){
 function reiniciarTentativaAposErro(){
   const l=getLesson();
   if(!l || !l.exercicios.length){ openSubject(State.subj); return; }
+  const visiveis = exerciciosVisiveis(l);
+  if(!visiveis.length){ openSubject(State.subj); return; }
   const anterior = Sess ? Sess.exercicios : null;
-  Sess = novaSessao(embaralharTentativa(l.exercicios, anterior), "classico");
+  Sess = novaSessao(embaralharTentativa(visiveis, anterior), "classico");
   State.explic = null;
   State.tela = "exercise";
   render();
@@ -2660,6 +2676,7 @@ function renderExercise(){
         ${(getLesson()&&getLesson().tipo==="interpretacao_texto")?`<button class="btn blue small" style="width:auto;margin-left:auto;padding:6px 10px" onclick="App.abrirTextoInterp()">📖 Ver o texto</button>`:''}
       </div>
       ${Fala.ok()?`<div style="display:flex;justify-content:flex-end;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:6px">${estiloMiniHtml()}${velocidadeMiniHtml()}</div>`:''}
+      ${blocoApoioHtml(ex, State.subj)}
       <div class="q-prompt">${esc(ex.enunciado)}</div>
       ${Fala.ok()?`<div style="text-align:center;margin:-4px 0 14px">${botaoFala('lerQuestao','Ouvir a pergunta')}</div>`:''}
       <div id="optWrap">${body}</div>
@@ -2668,6 +2685,26 @@ function renderExercise(){
   </div>`;
 }
 function tipoLabel(t){ return t==="mc"?"Múltipla escolha":(t==="vf"?"Verdadeiro ou Falso":"Complete a lacuna"); }
+// Instrução + texto de apoio (antes da pergunta). Tudo escapado com esc(); quebras de linha
+// preservadas via CSS (white-space:pre-wrap). Exercício sem texto de apoio → "" (compatível).
+function blocoApoioHtml(ex, subjId){
+  const apoio = String((ex && ex.textoApoio)||"").trim();
+  const ing = ehLinguaEstrangeira(subjId);
+  let instr = String((ex && ex.instrucao)||"").trim();
+  if(!apoio && !instr) return "";
+  if(apoio && !instr) instr = ing ? "Read the text:" : "Leia o texto:";
+  return `<div class="q-instrucao">${esc(instr)}</div>${apoio
+    ? `<div class="q-apoio" role="region" aria-label="${ing?"Text":"Texto de apoio"}"${ing?' lang="en"':''} tabindex="0">${esc(apoio)}</div>`
+    : ""}`;
+}
+// Questões que o aluno consegue responder: uma pergunta que cita "o texto" sem texto de apoio
+// (exercício antigo/incompleto) fica de fora — ele não tem acesso ao documento original.
+// Lições de interpretação (Português) mostram o texto pelo "Ver o texto", então valem todas.
+function exerciciosVisiveis(l){
+  const exs = (l && l.exercicios) || [];
+  if(l && l.tipo==="interpretacao_texto") return exs.slice();
+  return exs.filter(ex=> String(ex.textoApoio||"").trim() || !citaTexto(ex));
+}
 
 function selectOpt(i){
   if(Sess.respondido) return;
@@ -2783,7 +2820,8 @@ async function gerarExplicacao(){
   const prompt =
 `Você é um professor gentil e encorajador do ${pub.ano} do ${pub.nivel}.
 Um aluno de aproximadamente ${pub.idade} anos errou a seguinte questão:
-Enunciado: ${ex.enunciado}
+${String(ex.textoApoio||"").trim() ? `Texto que o aluno leu: ${ex.textoApoio}
+` : ""}Enunciado: ${ex.enunciado}
 Resposta do aluno: ${Sess.respAluno||"(em branco)"}
 Resposta correta: ${respCorreta}
 Conteúdo da lição: ${l.texto}
@@ -2851,7 +2889,8 @@ async function pregerarExplicacoes(l){
       const prompt =
 `Você é um professor gentil e encorajador do ${pub.ano} do ${nomeNivel(pub.nivelId)}.
 Um aluno de aproximadamente ${pub.idade} anos pode errar a seguinte questão:
-Enunciado: ${ex.enunciado}
+${String(ex.textoApoio||"").trim() ? `Texto que o aluno leu: ${ex.textoApoio}
+` : ""}Enunciado: ${ex.enunciado}
 Resposta correta: ${respCorreta}
 Conteúdo da lição: ${l.texto}
 
@@ -3297,6 +3336,7 @@ function renderHistoria(){
         <span class="pill-tag" style="background:${s.cor}">${tipoLabel(ex.tipo)}</span>
         ${ex.nivel?`<span class="pill-tag" style="background:${nivelDificuldadeCor(ex.nivel)}">+${Math.round(xpDaQuestao(ex)*1.5)} XP</span>`:''}
       </div>
+      ${blocoApoioHtml(ex, State.subj)}
       <div class="q-prompt">${esc(ex.enunciado)}</div>
       ${Fala.ok()?`<div style="text-align:center;margin:-4px 0 14px">${botaoFala('lerQuestao','Ouvir a pergunta')}</div>`:''}
       <div id="optWrap">${body}</div>
@@ -4378,6 +4418,7 @@ function renderPreview(){
         <span class="pill-tag" style="background:${s.cor}">${tipoLabel(ex.tipo)}</span>
         ${ex.nivel?`<span class="pill-tag" style="background:${nivelDificuldadeCor(ex.nivel)}">${nivelDificuldadeLabel(ex.nivel)}</span>`:''}
       </div>
+      ${blocoApoioHtml(ex, Teacher.subj)}
       <div style="font-weight:700;margin-bottom:4px">${i+1}. ${esc(ex.enunciado||'(sem enunciado)')}</div>
       ${opc}
     </div>`;
@@ -4405,6 +4446,7 @@ function renderPreview(){
    via visão da OpenAI (base64). NÃO há upload: só o texto (limitado a
    MATERIAL_TEXTO_MAX caracteres) é salvo na lição e usado para gerar exercícios/resumo. */
 const MATERIAL_MAX_BYTES = 10*1024*1024;      // 10 MB por arquivo
+const TEXTO_APOIO_MAX = 4000; // caracteres do texto de apoio de uma questão (digitado pelo professor)
 const MATERIAL_MAX_ARQUIVOS = 15;             // no máximo 15 documentos por lição
 const MATERIAL_TEXTO_MAX = 60000;             // teto do texto COMBINADO enviado à IA
 const MATERIAL_EXT_OK = ["pdf","doc","docx","txt","png","jpg","jpeg"];
@@ -4464,9 +4506,14 @@ async function extrairTextoArquivo(file){
     if(materialEhImagem(tipo, file.name)){
       if(!iaConfigurada()) return ""; // sem chave: imagem fica só como anexo visual
       const dataUrl = await lerComoDataURL(file);
-      return await ocrImagemIA(dataUrl);
+      try{ return await ocrImagemIA(dataUrl); }
+      catch(e){ e.ocr = true; throw e; } // falha da IA ≠ arquivo corrompido (mensagem diferente)
     }
-  }catch(e){ console.warn("Falha ao extrair texto de", file.name, e); }
+  }catch(e){
+    // sobe para quem chama: "arquivo corrompido" é diferente de "sem texto" (PDF escaneado)
+    console.warn("Falha ao extrair texto de", file.name, e);
+    throw e;
+  }
   return "";
 }
 
@@ -4568,6 +4615,7 @@ async function onSelecionarMateriais(fileList){
     if(!materialTipoOk(f)){ toast(`Formato não suportado: "${f.name}". Use PDF, DOC, DOCX, TXT, PNG ou JPG.`); return; }
   }
   let algumErro=false, lidos=0;
+  const falhas=[]; // ficam no painel (o toast some e um sobrescreve o outro)
   const total = arquivos.length;
   for(let k=0;k<total;k++){
     const f = arquivos[k];
@@ -4579,6 +4627,7 @@ async function onSelecionarMateriais(fileList){
       if(!txt){
         // .doc antigo, PDF sem texto selecionável, ou imagem sem chave de IA configurada
         algumErro=true;
+        falhas.push({ nome:f.name, motivo:"nenhum texto encontrado (PDF escaneado, .doc antigo ou imagem sem IA configurada) — use PDF/DOCX/TXT com texto selecionável" });
         toast(`Não foi possível extrair texto de "${f.name}". Tente um PDF/DOCX/TXT com texto selecionável.`);
         continue;
       }
@@ -4588,12 +4637,17 @@ async function onSelecionarMateriais(fileList){
     }catch(e){
       algumErro=true;
       console.warn("Falha ao ler material", f.name, e);
+      falhas.push({ nome:f.name, motivo: e && e.ocr
+        ? "a IA não conseguiu ler a imagem (" + mensagemErroIA(e) + ")"
+        : "arquivo corrompido ou ilegível — verifique o arquivo e tente de novo" });
       toast(`Erro ao ler "${f.name}". Verifique o arquivo e tente novamente.`);
     }
   }
   recomporMaterial(L); // só estado local; vai ao Firestore ao Salvar a lição
   Teacher.upload={ ativo:false, nome:"", lendo:false, atual:0, total:0 };
+  L._materialFalhas = falhas;
   render();
+  if(falhas.length>1) toast(`${falhas.length} documentos não puderam ser lidos — veja os motivos no painel.`);
   if(lidos && !algumErro){
     toast(`✅ ${lidos} documento${lidos>1?"s":""} lido${lidos>1?"s":""}! ${L.materialTexto.length} caracteres no material.`);
   }
@@ -4660,6 +4714,7 @@ function materialApoioPanel(L){
     <div class="ia-head"><b>📄 Material de Apoio</b></div>
     <p style="font-size:12px;color:#777;margin-bottom:8px">O texto dos documentos será usado pela IA para gerar exercícios mais precisos baseados no seu material. Aceita PDF, DOC, DOCX, TXT, PNG e JPG (até 10MB cada, ${MATERIAL_MAX_ARQUIVOS} por lição) e você pode selecionar vários de uma vez. O texto é extraído no seu navegador — nada é enviado para a nuvem além do texto. Se os documentos somarem mais de ${MATERIAL_TEXTO_MAX.toLocaleString("pt-BR")} caracteres, cada um é reduzido proporcionalmente para que <b>todos</b> apareçam no material enviado à IA.</p>
     <div id="materialLista">${lista}</div>
+    ${(L._materialFalhas||[]).length ? `<div class="aviso-erro" style="margin-top:8px"><b>Não foram usados:</b>${L._materialFalhas.map(f=>`<div>❌ ${esc(f.nome)}: ${esc(f.motivo)}</div>`).join("")}</div>` : ''}
     ${preview}
     ${progresso}
     <label class="btn blue" style="margin-top:8px;display:block;text-align:center;cursor:pointer;${(cheio||lendo)?'opacity:.5;pointer-events:none':''}">
@@ -4716,7 +4771,7 @@ async function regenerarHistoriaProf(){
 
 // ---- PAINEL DE GERAÇÃO POR IA (OpenAI / gpt-4o-mini; chave compartilhada via Admin) ----
 function iaPanel(L){
-  const temTexto = (L.texto||"").trim().length>0;
+  const temTexto = fontesDaLicao(L).suficiente; // texto explicativo OU documentos importados
   const temChave = iaConfigurada();
 
   // estado de carregamento
@@ -4764,7 +4819,7 @@ function iaPanel(L){
       ? `Troca as ${L.exercicios.length} questões salvas por questões novas (mesmo tema, dificuldade e tipos) e já grava. O resumo de estudo não muda.`
       : 'Disponível quando a lição tiver exercícios salvos.'}</p>` : ''}
     ${!temChave ? `<p style="font-size:12px;color:#c0392b;text-align:center;margin-top:6px">Chave da IA não configurada. Peça ao Administrador para cadastrá-la (⚙️ na tela inicial).</p>`
-      : (!temTexto ? `<p style="font-size:12px;color:#c0392b;text-align:center;margin-top:6px">Escreva o conteúdo da lição primeiro.</p>`:'')}
+      : (!temTexto ? `<p style="font-size:12px;color:#c0392b;text-align:center;margin-top:6px">${MSG_SEM_FONTES}</p>`:'')}
   </div>`;
 }
 function toggleIaConfig(){ syncTextInputs(); Teacher.iaConfigAberta=!Teacher.iaConfigAberta; render(); }
@@ -4834,7 +4889,7 @@ async function regenerarConteudoIA(){
   const L=Teacher.editingLesson;
   if(!L || !L.id){ toast("Salve a lição primeiro para gerar o conteúdo compartilhado."); return; }
   const conteudo=(L.texto||"").trim();
-  if(!conteudo){ Teacher.iaErro="Escreva o conteúdo da lição antes de gerar."; render(); return; }
+  if(!fontesDaLicao(L).suficiente){ Teacher.iaErro=MSG_SEM_FONTES; render(); return; }
   if(!iaConfigurada()){ Teacher.iaErro="IA não configurada (chave ou proxy). Peça ao Administrador (⚙️ na tela inicial)."; render(); return; }
   if(!confirm("Regenerar o resumo de estudo desta lição com IA? Isso substitui o resumo em cache para todos os dispositivos.")) return;
   Teacher.regenerando=true; Teacher.iaErro=""; render();
@@ -4869,6 +4924,8 @@ const PALAVRAS_PT = new Set(["de","que","para","com","você","voce","não","nao"
 function validarResumoIA(texto, idade){
   const t = String(texto||"").trim();
   if(!t) return { ok:false, erro:"resposta vazia" };
+  const semBase = motivoSemContexto(t);
+  if(semBase!==null) return { ok:false, erro:"fontes insuficientes: "+semBase, definitivo:true };
   // tags HTML conhecidas (e não qualquer "<...>": "x<y e y>z" é conteúdo de Matemática)
   if(/```|<\/?(?:script|style|iframe|object|embed|img|svg|video|audio|a|b|i|u|p|div|span|br|hr|ul|ol|li|table|tr|td|h[1-6]|html|body|form|input|button)(?=[\s>\/])[^>]*>/i.test(t)) return { ok:false, erro:"veio com HTML ou bloco de código" };
   if((t.match(/^#{1,3}\s+\S/gm)||[]).length < 2) return { ok:false, erro:"sem títulos de seção" };
@@ -4889,8 +4946,116 @@ async function gerarResumoValidado(prompt, idade, timeoutMs){
     const texto = await chamarIA(prompt, timeoutMs);
     v = validarResumoIA(texto, idade);
     if(v.ok) return String(texto).trim();
+    // a IA disse que falta base: pedir de novo não resolve
+    if(v.definitivo) throw new Error(`O texto explicativo e os documentos não têm informação suficiente para o texto de estudo (${v.erro.replace("fontes insuficientes: ","")}). Complete o texto explicativo ou importe um documento. O resumo anterior foi mantido.`);
   }
   throw new Error("A IA devolveu um texto de estudo fora do padrão ("+v.erro+"). O resumo anterior foi mantido.");
+}
+
+// ----- FONTES DA LIÇÃO: texto do professor + documentos importados -----
+// Montagem ÚNICA das fontes para todos os prompts (texto de estudo, gerar e regenerar
+// exercícios): a IA recebe as mesmas fontes, com a mesma prioridade, em todo lugar.
+// Prioridade em caso de divergência: TEXTO DO PROFESSOR > documentos importados.
+const FONTES_MIN_CHARS = 10; // só barra fonte vazia; "pouco conteúdo" quem decide é a IA (CONTEXTO_INSUFICIENTE)
+const CONTEXTO_INSUFICIENTE = "CONTEXTO_INSUFICIENTE"; // resposta controlada da IA quando falta base
+function fontesDaLicao(l){
+  const texto = String((l && l.texto) || "").trim();
+  const material = String((l && l.materialTexto) || "").trim();
+  return { texto, material, suficiente: (texto.length + material.length) >= FONTES_MIN_CHARS };
+}
+const MSG_SEM_FONTES = "Escreva o texto explicativo ou importe um documento antes de gerar.";
+function blocoFontesIA(f){
+  return `FONTES DA LIÇÃO (use SOMENTE estas fontes)
+[TEXTO DO PROFESSOR — fonte principal]
+${f.texto || "(o professor não escreveu texto explicativo: use os documentos)"}
+
+[DOCUMENTOS IMPORTADOS PELO PROFESSOR — cada um começa com [nome do arquivo]; documentos longos podem vir resumidos]
+${f.material || "(nenhum documento importado)"}`;
+}
+function regrasFidelidadeIA(subjId){
+  const lingua = ehLinguaEstrangeira(subjId) ? LINGUAS_ESTRANGEIRAS[subjId] : "";
+  return `REGRAS DE FIDELIDADE ÀS FONTES
+- Baseie-se nas FONTES DA LIÇÃO: conceitos, exemplos, nomes, personagens e dados devem vir delas.
+- Complemente só o mínimo necessário para ficar compreensível (ex.: uma definição básica), sem contradizer as fontes.
+- NÃO invente fatos, regras, personagens, datas, números ou assuntos que não estejam nas fontes.
+- Se o texto do professor e um documento divergirem, siga o TEXTO DO PROFESSOR e não misture as duas versões.
+- Não junte trechos de documentos diferentes de um jeito que mude o sentido original.
+- Idioma: ${lingua
+    ? `explicações e enunciados podem ser em português, mas textos, frases e vocabulário da língua ${lingua} ficam em inglês (salvo em exercícios de tradução)`
+    : "português do Brasil; se um documento estiver em outro idioma, traduza/adapte para o português sem mudar o sentido"}.`;
+}
+// Tamanho máximo (palavras) do texto de apoio de uma questão, pela idade.
+function limitePalavrasApoio(idade){ return idade<=8 ? 80 : (idade<=11 ? 150 : 250); }
+function regrasInterpretacaoIA(subjId, idade){
+  const ing = ehLinguaEstrangeira(subjId);
+  return `QUESTÕES DE INTERPRETAÇÃO (quando a pergunta depende de um texto)
+- Se as fontes trazem textos de leitura (com ou sem perguntas), crie questões com "tipo": "interpretacao".
+- O aluno NÃO vê os documentos: toda pergunta que depende de um texto DEVE trazer o trecho em "texto_apoio".
+- "texto_apoio": até ${limitePalavrasApoio(idade)} palavras, com TODAS as informações necessárias para responder; pode ser extraído e adaptado das fontes sem mudar o sentido${ing ? ", em inglês" : ""}.
+- Nunca escreva "de acordo com o texto" / "according to the text" sem o texto em "texto_apoio".
+- "instrucao": instrução curta (ex.: "${ing ? "Read the text and answer the question." : "Leia o texto e responda."}"); "enunciado": só a pergunta.
+- Várias perguntas podem usar o mesmo texto: repita o mesmo "texto_apoio" em cada uma.
+- A resposta não pode aparecer na instrução nem no enunciado.
+- Questões que não dependem de texto: omita "texto_apoio".`;
+}
+// "CONTEXTO_INSUFICIENTE: motivo" (ou {"erro":"CONTEXTO_INSUFICIENTE","motivo":"..."}) → motivo; senão null.
+function motivoSemContexto(texto){
+  const t = String(texto||"");
+  if(t.indexOf(CONTEXTO_INSUFICIENTE)<0 || t.length>800) return null;
+  const m = t.match(/"motivo"\s*:\s*"([^"]*)"/) || t.match(/CONTEXTO_INSUFICIENTE\s*[:\-]\s*([^\n"]+)/);
+  return (m && m[1].trim()) || "sem detalhes";
+}
+
+// ----- Idioma e texto de apoio das questões -----
+const PALAVRAS_EN = new Set(["the","and","is","are","was","were","of","to","in","on","at","with","she","he","they","it","his","her","does","do","did","what","how","where","who","when","why","which","an","has","have","every","from","for","this","that","you","your","my","not","then","there"]);
+const PALAVRAS_VAZIAS = new Set(["texto","trecho","text","passage","question","pergunta","according","acordo","which","what","qual","quais","como","onde","quando","porque","sobre","segundo","answer","responda","leia","read","about"]);
+function palavrasDe(t){ return String(t||"").toLowerCase().split(/[^0-9a-zà-ÿ]+/i).filter(Boolean); }
+// "pt" | "en" | "?" pela contagem de palavras funcionais (heurística, não detector completo)
+function idiomaProvavel(t){
+  let pt=0, en=0;
+  palavrasDe(t).forEach(w=>{ if(PALAVRAS_PT.has(w)) pt++; if(PALAVRAS_EN.has(w)) en++; });
+  if(pt+en<2) return "?";
+  if(en>pt*1.5) return "en";
+  if(pt>en*1.5) return "pt";
+  return "?";
+}
+// Duas partes compartilham ao menos uma palavra de conteúdo (4+ letras; compara os 5 primeiros
+// caracteres para tolerar plural/conjugação: walk/walks, casa/casas).
+function compartilhaConteudo(a, b){
+  const conteudo = t => palavrasDe(t).filter(w=>w.length>=4 && !PALAVRAS_PT.has(w) && !PALAVRAS_EN.has(w) && !PALAVRAS_VAZIAS.has(w)).map(w=>w.slice(0,5));
+  const B = new Set(conteudo(b));
+  return conteudo(a).some(w=>B.has(w));
+}
+// A pergunta cita um texto ("the text", "o texto", "de acordo com"...)? Então precisa de texto de apoio.
+const REF_TEXTO = /\b(the (text|passage|story|paragraph|article|letter|dialogue|poem)|according to|in the text|read the)\b|\b(o|do|no|pelo|ao|este|deste|nesse|neste) (texto|trecho|poema|di[aá]logo|par[aá]grafo)\b|\bde acordo com o\b|\bsegundo o (texto|trecho)\b|\bleia o\b|\b(texto|trecho) acima\b/i;
+function citaTexto(ex){ return REF_TEXTO.test(String((ex && ex.enunciado)||"")+" "+String((ex && ex.instrucao)||"")); }
+// Problema com o texto de apoio da questão ("" = ok). ctx: { subjId, idade }.
+function problemaTextoApoio(ex, ctx){
+  ctx = ctx || {};
+  const apoio = String(ex.textoApoio||"").trim();
+  if(!apoio) return (ex._exigeApoio || citaTexto(ex)) ? "a pergunta depende de um texto que não veio (texto_apoio vazio)" : "";
+  const pal = palavrasDe(apoio);
+  if(pal.length < 8) return "texto de apoio curto demais";
+  const max = Math.round(limitePalavrasApoio(ctx.idade||10) * RESUMO_FOLGA_TAMANHO);
+  if(pal.length > max) return `texto de apoio longo demais (${pal.length} palavras; máximo ${max})`;
+  const traducao = /tradu|translat/i.test(String(ex.enunciado||"")+" "+String(ex.instrucao||""));
+  const esperado = ehLinguaEstrangeira(ctx.subjId) ? "en" : "pt";
+  const idioma = idiomaProvavel(apoio);
+  if(!traducao && idioma!=="?" && idioma!==esperado) return "texto de apoio fora do idioma esperado";
+  if(!ehLinguaEstrangeira(ctx.subjId) && idiomaProvavel(ex.enunciado)==="en") return "pergunta fora do idioma esperado";
+  const alternativas = (ex.opcoes||[]).join(" ")+" "+(ex.resposta||"");
+  // (tradução: texto e pergunta em idiomas diferentes de propósito — não dá para comparar palavras)
+  if(!traducao && !compartilhaConteudo(String(ex.enunciado||"")+" "+alternativas, apoio)) return "pergunta sem relação com o texto de apoio";
+  const certa = ex.tipo==="fill" ? ex.resposta : (ex.tipo==="mc" ? (ex.opcoes||[])[ex.correta] : "");
+  if(certa && norm(certa).length>=3 && norm(ex.instrucao||"").indexOf(norm(certa))>=0) return "a instrução entrega a resposta";
+  return "";
+}
+// A questão tem relação com as fontes da lição? Heurística léxica — não se aplica a Matemática
+// (problemas com números raramente repetem palavras da teoria) nem a língua estrangeira
+// (enunciado bilíngue), e só quando as fontes têm tamanho suficiente para comparar.
+function relacionadaAsFontes(ex, ctx){
+  if(!ctx || !ctx.fontes || ctx.fontes.length<200 || ctx.subjId==="mat" || ehLinguaEstrangeira(ctx.subjId)) return true;
+  return compartilhaConteudo([ex.enunciado, ex.textoApoio, (ex.opcoes||[]).join(" "), ex.resposta].join(" "), ctx.fontes);
 }
 
 // Prompt do TEXTO DE ESTUDO mostrado antes dos exercícios. Um único lugar para as regras
@@ -4905,8 +5070,9 @@ function montarPromptResumo(l, pub, subjId){
     ? `${cont.facil} fáceis, ${cont.intermediario} intermediárias e ${cont.dificil} difíceis (de ${exs.length} questões)`
     : "não informado";
   const tipos = exs.length ? Array.from(new Set(exs.map(e=>tipoLabel(e.tipo)))).join(", ") : "não informado";
-  const listaEx = exs.slice(0,20).map((e,i)=>`${i+1}. [${tipoLabel(e.tipo)}${e.nivel?" • "+nivelDificuldadeLabel(e.nivel):""}] ${String(e.enunciado||"").slice(0,220)}`).join("\n");
-  const material = ((l && l.materialTexto)||"").trim();
+  const listaEx = exs.slice(0,20).map((e,i)=>`${i+1}. [${tipoLabel(e.tipo)}${e.nivel?" • "+nivelDificuldadeLabel(e.nivel):""}${String(e.textoApoio||"").trim()?" • interpretação de texto":""}] ${String(e.enunciado||"").slice(0,220)}`).join("\n");
+  const temInterp = exs.some(e=>String(e.textoApoio||"").trim());
+  const fontes = fontesDaLicao(l);
   const lingua = ehLinguaEstrangeira(subjId)
     ? `\n- É uma aula de língua ${LINGUAS_ESTRANGEIRAS[subjId]}: explique em português e mostre as palavras/frases no idioma com a tradução ao lado.`
     : "";
@@ -4934,8 +5100,13 @@ COMO ESCREVER
 6. Inclua uma parte "Cuidado!" com os erros e dúvidas mais comuns sobre o tema.
 7. Termine com uma dica curta para lembrar e uma frase de incentivo.
 8. NÃO resolva nem revele as respostas dos exercícios listados — prepare o aluno para resolvê-los.
-9. Use apenas informações corretas e ligadas ao tema; não invente fatos, datas ou números. Siga o conteúdo do professor.
-10. Nada de texto genérico ou repetitivo: no máximo ${limite} palavras.
+9. Explique e organize o conteúdo das FONTES DA LIÇÃO; os exemplos devem usar o que está nelas. Nada de conteúdo genérico fora das fontes.
+10. Não copie documentos longos: explique com suas palavras e cite só trechos curtos.${temInterp ? `
+11. Algumas questões são de interpretação de texto: ensine como localizar informações num texto (sem usar os textos das questões).` : ""}
+- Nada de texto genérico ou repetitivo: no máximo ${limite} palavras.
+
+${regrasFidelidadeIA(subjId)}
+- Se as fontes não tiverem informação suficiente para um texto de estudo sobre o tema, responda APENAS: ${CONTEXTO_INSUFICIENTE}: <motivo em uma frase>
 
 FORMATO (texto simples, sem tabelas e sem blocos de código)
 - Títulos curtos em linha própria começando com "## " (ex.: "## O que é?", "## Exemplo 1", "## Cuidado!", "## Dica para lembrar")
@@ -4943,11 +5114,7 @@ FORMATO (texto simples, sem tabelas e sem blocos de código)
 - Listas com "- " no começo da linha
 - Termos importantes entre **asteriscos duplos**
 
-CONTEÚDO DA LIÇÃO (base principal):
-${(l && l.texto) || ""}${material ? `
-
-MATERIAL DE APOIO ANEXADO PELO PROFESSOR:
-${material}` : ""}${listaEx ? `
+${blocoFontesIA(fontes)}${listaEx ? `
 
 EXERCÍCIOS QUE O ALUNO VAI RESOLVER (só para orientar o texto — não revele as respostas):
 ${listaEx}` : ""}`;
@@ -5134,57 +5301,57 @@ O enunciado dos exercícios pode ser em português, mas as opções e respostas 
 misturar inglês e português conforme o objetivo.`;
 }
 
+const GERAR_EX_QTD = 15;
 async function gerarExerciciosIA(){
   if(!exigirProfessor() || !Teacher.editingLesson) return;
   syncTextInputs();
   const L=Teacher.editingLesson;
-  const conteudo=(L.texto||"").trim();
-  if(!conteudo){ Teacher.iaErro="Escreva o conteúdo da lição antes de gerar."; render(); return; }
+  const fontes=fontesDaLicao(L);
+  if(!fontes.suficiente){ Teacher.iaErro=MSG_SEM_FONTES; render(); return; }
   if(!iaConfigurada()){ Teacher.iaErro="IA não configurada (chave ou proxy). Peça ao Administrador (⚙️ na tela inicial)."; render(); return; }
 
   Teacher.gerando=true; Teacher.iaErro=""; render();
 
   const pub = descreverPublicoLicao(L);
-  const material = (L.materialTexto||"").trim();
-  const blocoMaterial = material
-    ? `\n\nMATERIAL DE APOIO ANEXADO (priorize este conteúdo):\n${material}`
-    : "";
   const blocoLingua = blocoLinguaEstrangeira(Teacher.subj, L.titulo);
+  const disc = (subjById(Teacher.subj)||{}).nome || "";
   const prompt =
 `Você é um professor do ${pub.ano} do ${nomeNivel(pub.nivelId)} (Sistema Positivo).
-Com base no material abaixo, gere exatamente 15 exercícios divididos em:
+Com base nas FONTES DA LIÇÃO "${L.titulo||""}"${disc?` (${disc})`:""}, gere exatamente ${GERAR_EX_QTD} exercícios divididos em:
 - 5 questões fáceis (conceitos básicos, linguagem simples)
 - 5 questões intermediárias (aplicação do conceito)
 - 5 questões difíceis (raciocínio, interpretação e análise)
 
 ${pub.frase}
 Adapte a linguagem para uma criança de aproximadamente ${pub.idade} anos.
-${material ? "Priorize o conteúdo do material anexado pelo professor." : ""}
 
-Tipos permitidos: múltipla escolha (4 opções), verdadeiro/falso, completar lacunas.
+Tipos permitidos: "multipla_escolha" (4 opções), "verdadeiro_falso", "completar_lacunas" e "interpretacao".
 
-REGRA IMPORTANTE sobre "resposta_correta": ela deve conter o TEXTO EXATO da opção
-correta (o conteúdo), NUNCA a letra/rótulo (A, B, C, D). Copie a resposta exatamente
-como aparece dentro de "opcoes".
-Exemplo correto (repare que a resposta é o conteúdo "A", não o rótulo da posição):
-  {"enunciado": "Qual destas letras é uma vogal?", "opcoes": ["B","C","A","D"], "resposta_correta": "A"}
+REGRAS DE CADA QUESTÃO:
+- "multipla_escolha": exatamente 4 opções diferentes e completas, com UMA só correta; "resposta_correta" = o TEXTO EXATO da opção correta, NUNCA a letra/rótulo (A, B, C, D).
+  Exemplo correto (a resposta é o conteúdo "A", não o rótulo da posição): {"enunciado": "Qual destas letras é uma vogal?", "opcoes": ["B","C","A","D"], "resposta_correta": "A"}
+- "verdadeiro_falso": "resposta_correta" = "verdadeiro" ou "falso".
+- "completar_lacunas": o enunciado marca a lacuna com "___"; "resposta_correta" = a palavra ou expressão curta que completa.
+- "explicacao": 1 a 3 frases acolhedoras (até 60 palavras) para o aluno que errar, explicando por que a resposta correta é a certa com base nas fontes.
+- "nivel": exatamente "facil", "intermediario" ou "dificil".
 
-Retorne APENAS um JSON válido, sem explicações, no formato:
-[
-  {"nivel": "facil", "tipo": "multipla_escolha", "enunciado": "...", "opcoes": ["texto opção 1","texto opção 2","texto opção 3","texto opção 4"], "resposta_correta": "texto exato da opção correta"},
-  {"nivel": "intermediario", "tipo": "verdadeiro_falso", "enunciado": "...", "resposta_correta": "verdadeiro"},
-  {"nivel": "dificil", "tipo": "completar_lacunas", "enunciado": "O ___ é usado quando...", "resposta_correta": "palavra correta"}
-]
-O campo "nivel" deve ser exatamente "facil", "intermediario" ou "dificil".${blocoLingua}
+${regrasInterpretacaoIA(Teacher.subj, pub.idade)}
 
-CONTEÚDO DA LIÇÃO:
-${conteudo}${blocoMaterial}`;
+${regrasFidelidadeIA(Teacher.subj)}
+- Não crie exercícios sobre assuntos que não estejam nas fontes. Se as fontes não tiverem conteúdo suficiente para ${GERAR_EX_QTD} exercícios, responda APENAS: {"erro":"${CONTEXTO_INSUFICIENTE}","motivo":"<motivo em uma frase>"}
+
+Retorne APENAS um JSON válido (um array), sem explicações, no formato:
+${exemploJsonExercicios(Teacher.subj)}${blocoLingua}
+
+${blocoFontesIA(fontes)}`;
 
   try{
-    const texto = await chamarIA(prompt, timeoutComMaterial(45000, material));
-    const novos = parseExerciciosIA(texto);
-    if(!novos.length) throw new Error("A IA não retornou exercícios reconhecíveis. Tente novamente.");
-
+    // acumular: as novas não podem repetir as que já estão no editor
+    const antigos = IA.modo==="acumular" ? L.exercicios : [];
+    const r = await gerarExerciciosValidados(prompt, GERAR_EX_QTD, antigos, ctxValidacaoLicao(L, Teacher.subj), timeoutComMaterial(45000, fontes.material));
+    const novos = r.exercicios;
+    // explicações geradas junto: vão ao Firestore no Salvar (só as de questões não alteradas)
+    L._explicacoesNovas = Object.assign(IA.modo==="acumular" ? (L._explicacoesNovas||{}) : {}, assinarExplicacoes(novos, r.explicacoes));
     if(IA.modo==="acumular") L.exercicios = L.exercicios.concat(novos);
     else L.exercicios = novos;
 
@@ -5193,10 +5360,24 @@ ${conteudo}${blocoMaterial}`;
     const cont = contarPorDificuldade(novos);
     toast(`✨ ${novos.length} exercícios (${cont.facil}F/${cont.intermediario}I/${cont.dificil}D)! Revise e salve.`);
   }catch(err){
+    // nada muda no editor: exercícios válidos não são trocados por uma geração incompleta
     Teacher.gerando=false;
-    Teacher.iaErro = mensagemErroIA(err);
+    Teacher.iaErro = mensagemErroIA(err) + " Os exercícios atuais foram mantidos.";
     render();
   }
+}
+// "Assinatura" do exercício: se o professor editar a questão depois de gerar, a explicação
+// da IA pode não valer mais — então ela não é salva.
+function assinaturaExercicio(ex){ return JSON.stringify([ex.tipo, ex.enunciado, ex.opcoes||null, ex.correta, ex.resposta||null, ex.textoApoio||""]); }
+function assinarExplicacoes(exs, explicacoes){
+  const out={};
+  (exs||[]).forEach(ex=>{ if(explicacoes && explicacoes[ex.id]) out[ex.id]={ texto:explicacoes[ex.id], assinatura:assinaturaExercicio(ex) }; });
+  return out;
+}
+function explicacoesParaSalvar(L){
+  const out={}, pend=L._explicacoesNovas||{};
+  (L.exercicios||[]).forEach(ex=>{ const p=pend[ex.id]; if(p && p.assinatura===assinaturaExercicio(ex)) out[ex.id]=p.texto; });
+  return out;
 }
 
 // Escapa quebras de linha/controles CRUS dentro de strings JSON (a IA às vezes devolve
@@ -5242,8 +5423,19 @@ function parseExerciciosIA(texto, opts){
   const out=[];
   arr.forEach((item,k)=>{
     const q = "questão "+(k+1);
-    if(!item || !item.enunciado){ rejeitar(q+": sem enunciado"); return; }
-    const tipo = String(item.tipo||"").toLowerCase();
+    const enunciado = item && (item.enunciado || item.pergunta || item.question);
+    if(!item || !enunciado){ rejeitar(q+": sem enunciado"); return; }
+    item = Object.assign({}, item, { enunciado,
+      opcoes: item.opcoes || item.options,
+      resposta_correta: item.resposta_correta!=null ? item.resposta_correta : item.correctAnswer,
+      explicacao: item.explicacao || item.explanation });
+    let tipo = String(item.tipo||item.type||"").toLowerCase();
+    // interpretação: a pergunta depende do texto de apoio; o formato (mc/vf/lacuna) vem dos campos
+    const interp = /interpreta|reading|leitura|compreens/.test(tipo);
+    if(interp){
+      tipo = Array.isArray(item.opcoes) && item.opcoes.length>=2 ? "multipla_escolha"
+        : (/^(v|f|verdadeiro|falso|true|false)$/.test(norm(item.resposta_correta)) ? "verdadeiro_falso" : "completar_lacunas"); // palavra inteira: "family" é lacuna
+    }
     const resp = item.resposta_correta;
     const nivel = normalizarNivelDif(item.nivel);
     let ex;
@@ -5269,6 +5461,11 @@ function parseExerciciosIA(texto, opts){
       }
       ex = { id:uid(), tipo:"mc", nivel, enunciado:String(item.enunciado), opcoes, correta:acharIndiceCorreto(opcoes, resp) };
     }
+    const apoio = String(item.texto_apoio || item.textoApoio || item.supportText || "").trim();
+    const instr = String(item.instrucao || item.instruction || "").trim();
+    if(apoio) ex.textoApoio = apoio;
+    if(instr) ex.instrucao = instr;
+    if(interp) ex._exigeApoio = true;
     if(estrito) ex._explicacao = String(item.explicacao||"").trim();
     out.push(ex);
   });
@@ -5290,7 +5487,9 @@ const REGEN_SIMILAR_NOVA = 0.85;  // entre as novas: acima disso é duplicada
 // Valida as questões regeneradas ANTES de substituir as atuais. Recebe o que o parser
 // estrito aceitou e devolve { ok, exercicios, explicacoes, erro }. Só dá ok com
 // exatamente `n` questões completas, sem duplicadas e sem repetir as atuais.
-function validarExerciciosRegenerados(novos, antigos, n, rejeitados){
+// opts: { subjId, idade, fontes (texto das fontes), exigirExplicacao (padrão true) }
+function validarExerciciosRegenerados(novos, antigos, n, rejeitados, opts){
+  opts = opts || {};
   const motivos = (rejeitados||[]).slice();
   const aceitos = [];
   (novos||[]).forEach((ex,k)=>{
@@ -5299,7 +5498,10 @@ function validarExerciciosRegenerados(novos, antigos, n, rejeitados){
     if(enun.length<8){ motivos.push(q+": enunciado vazio ou curto demais"); return; }
     if(["mc","vf","fill"].indexOf(ex.tipo)<0){ motivos.push(q+": tipo não suportado"); return; }
     if(ex.tipo!=="fill" && !(ex.correta>=0 && ex.correta<(ex.opcoes||[]).length)){ motivos.push(q+": sem resposta correta"); return; }
-    if(String(ex._explicacao||"").length<20){ motivos.push(q+": sem explicação da resposta"); return; }
+    if(opts.exigirExplicacao!==false && String(ex._explicacao||"").length<20){ motivos.push(q+": sem explicação da resposta"); return; }
+    const pa = problemaTextoApoio(ex, opts);
+    if(pa){ motivos.push(q+": "+pa); return; }
+    if(!relacionadaAsFontes(ex, opts)){ motivos.push(q+": sem relação com as fontes da lição"); return; }
     if((antigos||[]).some(a=>similaridadeEnunciados(a.enunciado, enun)>=REGEN_SIMILAR_ANTIGA)){ motivos.push(q+": igual/parecida com uma questão atual"); return; }
     if(aceitos.some(a=>similaridadeEnunciados(a.enunciado, enun)>=REGEN_SIMILAR_NOVA)){ motivos.push(q+": duplicada"); return; }
     aceitos.push(ex);
@@ -5310,8 +5512,8 @@ function validarExerciciosRegenerados(novos, antigos, n, rejeitados){
   }
   const exercicios=[], explicacoes={};
   aceitos.slice(0,n).forEach(ex=>{
-    const limpo=Object.assign({}, ex); delete limpo._explicacao;
-    exercicios.push(limpo); explicacoes[limpo.id]=ex._explicacao;
+    const limpo=Object.assign({}, ex); delete limpo._explicacao; delete limpo._exigeApoio;
+    exercicios.push(limpo); if(ex._explicacao) explicacoes[limpo.id]=ex._explicacao;
   });
   return { ok:true, exercicios, explicacoes, erro:"" };
 }
@@ -5321,6 +5523,38 @@ function validarExerciciosRegenerados(novos, antigos, n, rejeitados){
 // (resumo em licoes_geradas / resumoIA). Ordem segura: gera → valida tudo → grava num
 // batch atômico. Qualquer falha antes do commit deixa os exercícios atuais intactos.
 const REGEN_EX_TENTATIVAS = 2; // se a IA devolver algo inválido, pede mais uma vez
+// Contexto da validação (idioma, idade, fontes) de uma lição em edição.
+function ctxValidacaoLicao(L, subjId){
+  const f = fontesDaLicao(L);
+  return { subjId, idade: descreverPublicoLicao(L).idade, fontes: [L.titulo, f.texto, f.material].join("\n") };
+}
+// Chama a IA e só devolve exercícios que passaram na validação estrita (usado por GERAR e
+// REGENERAR). Fora do padrão → pede mais uma vez; "contexto insuficiente" → para na hora.
+async function gerarExerciciosValidados(prompt, n, antigos, ctx, timeoutMs){
+  let r = null;
+  for(let t=0; t<REGEN_EX_TENTATIVAS && !(r && r.ok); t++){
+    const texto = await chamarIA(prompt, timeoutMs);
+    const semBase = motivoSemContexto(texto);
+    if(semBase!==null) throw new Error(`O texto explicativo e os documentos não têm conteúdo suficiente para gerar os exercícios (${semBase}). Complete o texto explicativo ou importe um documento.`);
+    const rejeitados = [];
+    r = validarExerciciosRegenerados(parseExerciciosIA(texto, { estrito:true, rejeitados }), antigos, n, rejeitados, ctx);
+  }
+  if(!r.ok) throw new Error("A IA devolveu questões inválidas ("+r.erro+").");
+  return r;
+}
+// JSON de exemplo comum aos prompts de exercícios (inclui a questão de interpretação).
+function exemploJsonExercicios(subjId){
+  const ing = ehLinguaEstrangeira(subjId);
+  const interp = ing
+    ? `{"nivel": "intermediario", "tipo": "interpretacao", "instrucao": "Read the text and answer the question.", "texto_apoio": "Anna wakes up early every morning. She has breakfast with her family and then walks to school. Her favorite subject is Science.", "enunciado": "How does Anna go to school?", "opcoes": ["By bus","By car","On foot","By bicycle"], "resposta_correta": "On foot", "explicacao": "..."}`
+    : `{"nivel": "intermediario", "tipo": "interpretacao", "instrucao": "Leia o texto e responda.", "texto_apoio": "trecho retirado/adaptado das fontes, com tudo o que é preciso para responder", "enunciado": "...", "opcoes": ["...","...","...","..."], "resposta_correta": "texto exato da opção correta", "explicacao": "..."}`;
+  return `[
+  {"nivel": "facil", "tipo": "multipla_escolha", "enunciado": "...", "opcoes": ["...","...","...","..."], "resposta_correta": "texto exato da opção correta", "explicacao": "..."},
+  {"nivel": "intermediario", "tipo": "verdadeiro_falso", "enunciado": "...", "resposta_correta": "verdadeiro", "explicacao": "..."},
+  {"nivel": "dificil", "tipo": "completar_lacunas", "enunciado": "O ___ é usado quando...", "resposta_correta": "palavra", "explicacao": "..."},
+  ${interp}
+]`;
+}
 function montarPromptRegenerarExercicios(L, atuais, n, resumo, subjId){
   const pub = descreverPublicoLicao(L);
   const disc = (subjById(subjId)||{}).nome || "";
@@ -5328,16 +5562,17 @@ function montarPromptRegenerarExercicios(L, atuais, n, resumo, subjId){
   const semNivel = atuais.length - cont.facil - cont.intermediario - cont.dificil;
   const tipos = { mc:0, vf:0, fill:0 };
   atuais.forEach(e=>{ if(tipos[e.tipo]!==undefined) tipos[e.tipo]++; });
-  const material = (L.materialTexto||"").trim();
+  const nInterp = atuais.filter(e=>String(e.textoApoio||"").trim()).length;
   const listaAtuais = atuais.map((e,i)=>`${i+1}. ${String(e.enunciado||"").slice(0,220)}`).join("\n");
   const blocoLingua = blocoLinguaEstrangeira(subjId, L.titulo);
   return `Você é um professor do ${pub.ano} do ${nomeNivel(pub.nivelId)} (Sistema Positivo).
 Os exercícios atuais da lição "${L.titulo}"${disc?` (${disc})`:""} serão SUBSTITUÍDOS. Crie exatamente ${n} exercícios NOVOS.
 
 MANTENHA:
-- O mesmo tema e objetivo da lição, cobrindo só o que o TEXTO DE ESTUDO e o CONTEÚDO abaixo ensinam
+- O mesmo tema e objetivo da lição, cobrindo só o que as FONTES DA LIÇÃO e o TEXTO DE ESTUDO ensinam
 - A dificuldade: ${cont.facil} fáceis, ${cont.intermediario+semNivel} intermediários e ${cont.dificil} difíceis (nessa ordem)
-- Os tipos: ${tipos.mc} de múltipla escolha, ${tipos.vf} de verdadeiro/falso e ${tipos.fill} de completar lacunas
+- Os tipos: ${tipos.mc} de múltipla escolha, ${tipos.vf} de verdadeiro/falso e ${tipos.fill} de completar lacunas${nInterp ? `
+- Destas, ${nInterp} de interpretação de texto (com "texto_apoio")` : ""}
 ${pub.frase}
 Adapte a linguagem para uma criança de aproximadamente ${pub.idade} anos.
 
@@ -5350,12 +5585,13 @@ REGRAS DE CADA QUESTÃO:
 - "explicacao": 1 a 3 frases acolhedoras (até 60 palavras) para o aluno que errar: diga que tudo bem errar e explique por que a resposta correta é a certa.
 - "nivel": exatamente "facil", "intermediario" ou "dificil".
 
+${regrasInterpretacaoIA(subjId, pub.idade)}
+
+${regrasFidelidadeIA(subjId)}
+- Não crie exercícios sobre assuntos que não estejam nas fontes. Se as fontes não tiverem conteúdo suficiente para ${n} exercícios, responda APENAS: {"erro":"${CONTEXTO_INSUFICIENTE}","motivo":"<motivo em uma frase>"}
+
 Retorne APENAS um JSON válido (um array), sem comentários, no formato:
-[
-  {"nivel": "facil", "tipo": "multipla_escolha", "enunciado": "...", "opcoes": ["...","...","...","..."], "resposta_correta": "texto exato da opção correta", "explicacao": "..."},
-  {"nivel": "intermediario", "tipo": "verdadeiro_falso", "enunciado": "...", "resposta_correta": "verdadeiro", "explicacao": "..."},
-  {"nivel": "dificil", "tipo": "completar_lacunas", "enunciado": "O ___ é usado quando...", "resposta_correta": "palavra", "explicacao": "..."}
-]${blocoLingua ? `${blocoLingua}
+${exemploJsonExercicios(subjId)}${blocoLingua ? `${blocoLingua}
 (Se alguma orientação acima sobre quantidade/distribuição for diferente, valem os ${n} exercícios e a distribuição pedida no início.)` : ""}
 
 EXERCÍCIOS ATUAIS (NÃO repetir):
@@ -5364,11 +5600,7 @@ ${listaAtuais}${resumo ? `
 TEXTO DE ESTUDO QUE O ALUNO LÊ ANTES (as questões devem ser coerentes com ele):
 ${String(resumo).slice(0,5000)}` : ""}
 
-CONTEÚDO DA LIÇÃO:
-${L.texto||""}${material ? `
-
-MATERIAL DE APOIO ANEXADO (priorize este conteúdo):
-${material}` : ""}`;
+${blocoFontesIA(fontesDaLicao(L))}`;
 }
 // Grava a nova versão dos exercícios de forma ATÔMICA (batch): exercícios + explicações
 // (as antigas eram indexadas pelos ids antigos → ficariam órfãs) + versão; espelha no
@@ -5402,8 +5634,7 @@ async function regenerarExerciciosIA(){
   const atuais=(L.exercicios||[]).slice();
   const n=atuais.length;
   if(!n){ Teacher.iaErro="A lição ainda não tem exercícios — use \"Gerar 15 Exercícios com IA\"."; render(); return; }
-  const conteudo=(L.texto||"").trim();
-  if(!conteudo){ Teacher.iaErro="Escreva o conteúdo da lição antes de gerar."; render(); return; }
+  if(!fontesDaLicao(L).suficiente){ Teacher.iaErro=MSG_SEM_FONTES; render(); return; }
   if(!iaConfigurada()){ Teacher.iaErro="IA não configurada (chave ou proxy). Peça ao Administrador (⚙️ na tela inicial)."; render(); return; }
   if(!confirm("A regeneração substituirá os exercícios atuais por novas questões. As tentativas e respostas relacionadas poderão ser afetadas. Deseja continuar?")) return;
   Teacher.regenerandoEx=true; Teacher.iaErro=""; render();
@@ -5415,13 +5646,7 @@ async function regenerarExerciciosIA(){
     const cache=await getLicaoGerada(licaoId);
     const resumo=(cache && cache.resumo) || (salva && salva.resumoIA) || resumoCache[licaoId] || "";
     const prompt=montarPromptRegenerarExercicios(L, atuais, n, resumo, disc);
-    let r=null;
-    for(let t=0; t<REGEN_EX_TENTATIVAS && !(r && r.ok); t++){
-      const texto=await chamarIA(prompt, timeoutComMaterial(45000, L.materialTexto));
-      const rejeitados=[];
-      r=validarExerciciosRegenerados(parseExerciciosIA(texto, { estrito:true, rejeitados }), antigos, n, rejeitados);
-    }
-    if(!r.ok) throw new Error("A IA devolveu questões inválidas ("+r.erro+").");
+    const r=await gerarExerciciosValidados(prompt, n, antigos, ctxValidacaoLicao(L, disc), timeoutComMaterial(45000, L.materialTexto));
     await gravarExerciciosRegenerados(licaoId, disc, r.exercicios, r.explicacoes);
     // o editor só é atualizado se o professor ainda está nesta lição
     if(Teacher.editingLesson && Teacher.editingLesson.id===licaoId) Teacher.editingLesson.exercicios=r.exercicios.map(e=>JSON.parse(JSON.stringify(e)));
@@ -5504,8 +5729,14 @@ function exEditorCard(ex,i){
       <div style="flex:1"><label>Tipo</label>${tipoSel}</div>
       <div style="flex:1"><label>Dificuldade</label>${nivelSel}</div>
     </div>
+    <label>Instrução (opcional)</label>
+    <input value="${esc(ex.instrucao||'')}" placeholder="Ex.: Read the text and answer the question." oninput="App.setExInstrucao(${i},this.value)">
+    <label>Texto de apoio (obrigatório se a pergunta citar um texto)</label>
+    <textarea rows="3" placeholder="Trecho que o aluno lê antes de responder (aparece acima da pergunta)" oninput="App.setExApoio(${i},this.value)">${esc(ex.textoApoio||'')}</textarea>
     <label>Enunciado</label>
     <input value="${esc(ex.enunciado||'')}" placeholder="Escreva a pergunta" oninput="App.setExEnun(${i},this.value)">
+    ${(Teacher.editingLesson && Teacher.editingLesson.tipo!=="interpretacao_texto" && !String(ex.textoApoio||"").trim() && citaTexto(ex))
+      ? `<p class="aviso-erro" style="margin-top:6px">⚠️ A pergunta cita um texto: preencha o "Texto de apoio". Sem ele o aluno não recebe esta questão.</p>` : ''}
     ${corpo}
   </div>`;
 }
@@ -5548,6 +5779,8 @@ function setExType(i,t){
   render();
 }
 function setExEnun(i,v){ Teacher.editingLesson.exercicios[i].enunciado=v; }
+function setExApoio(i,v){ Teacher.editingLesson.exercicios[i].textoApoio=v; }
+function setExInstrucao(i,v){ Teacher.editingLesson.exercicios[i].instrucao=v; }
 function setExResp(i,v){ Teacher.editingLesson.exercicios[i].resposta=v; }
 function setExNivel(i,v){ syncTextInputs(); Teacher.editingLesson.exercicios[i].nivel=v; render(); }
 function setOpt(i,j,v){ Teacher.editingLesson.exercicios[i].opcoes[j]=v; }
@@ -5576,6 +5809,9 @@ async function saveLesson(){
   for(let k=0;k<L.exercicios.length;k++){
     const ex=L.exercicios[k];
     if(!ex.enunciado.trim()){ toast(`Exercício ${k+1}: falta o enunciado.`); return; }
+    const apoio=String(ex.textoApoio||"").trim();
+    if(!ehInterp && !apoio && citaTexto(ex)){ toast(`Exercício ${k+1}: a pergunta cita um texto — preencha o "Texto de apoio".`); return; }
+    if(apoio.length>TEXTO_APOIO_MAX){ toast(`Exercício ${k+1}: texto de apoio muito longo (máx. ${TEXTO_APOIO_MAX} caracteres).`); return; }
     if(ex.tipo==="fill"){
       if(!ex.resposta || !ex.resposta.trim()){ toast(`Exercício ${k+1}: informe a resposta.`); return; }
     } else {
@@ -5584,6 +5820,14 @@ async function saveLesson(){
   }
 
   const disc = Teacher.subj;
+  // texto de apoio/instrução: aparados; vazios não são gravados (exercício antigo continua igual)
+  L.exercicios = L.exercicios.map(ex=>{
+    const c=Object.assign({}, ex);
+    ["textoApoio","instrucao"].forEach(k=>{ if(k in c){ c[k]=String(c[k]==null?"":c[k]).trim(); if(!c[k]) delete c[k]; } });
+    return c;
+  });
+  const explicNovas = explicacoesParaSalvar(L); // explicações da IA das questões não alteradas
+  const temExplic = Object.keys(explicNovas).length>0;
   const turmaN=(L.turma||"").trim().toUpperCase(), anoN=(L.ano||"").trim(), nivelN=(L.nivel||"").trim();
   const materialNomes=L.materialNomes||[], materialTipos=L.materialTipos||[], materialTexto=L.materialTexto||"";
   const historiaHabilitada = L.historiaHabilitada!==false;
@@ -5639,14 +5883,16 @@ async function saveLesson(){
     // `L.id` pode já existir numa lição NOVA (id gerado ao anexar material) — por isso
     // usamos `_persistido` (e não a presença de id) para decidir criar vs. editar.
     if(L._persistido && L.id){ // editar existente — invalida o conteúdo de IA (o material pode ter mudado)
-      await db.collection("licoes").doc(L.id).set({
-        ...payload,
-        resumoIA: "",
-        explicacoes: firebase.firestore.FieldValue.delete()
-      }, { merge:true });
+      const ref = db.collection("licoes").doc(L.id);
+      const dados = { ...payload, resumoIA: "", explicacoes: firebase.firestore.FieldValue.delete() };
+      if(temExplic){
+        // apaga as explicações antigas e grava as da nova geração no mesmo batch (atômico)
+        const b = db.batch(); b.set(ref, dados, { merge:true }); b.update(ref, { explicacoes: explicNovas }); await b.commit();
+      } else await ref.set(dados, { merge:true });
       console.log("Lição atualizada no Firestore. ID:", L.id);
     } else { // nova (grava no id pré-gerado, se houver, senão cria um novo)
       payload.resumoIA = "";
+      if(temExplic) payload.explicacoes = explicNovas;
       payload.criadoEm = firebase.firestore.FieldValue.serverTimestamp();
       if(L.id){ await db.collection("licoes").doc(L.id).set(payload); console.log("Lição salva no Firestore (id pré-gerado). ID:", L.id); }
       else { const ref = await db.collection("licoes").add(payload); L.id = ref.id; console.log("Lição salva com ID:", ref.id); }
@@ -5659,7 +5905,7 @@ async function saveLesson(){
     // atualiza o estado local (remove de onde estava e re-adiciona na disciplina atual)
     removeLicaoLocal(L.id);
     if(!DATA[disc]) DATA[disc]=[];
-    DATA[disc].push({ id:L.id, titulo:L.titulo, texto:conteudo, exercicios:L.exercicios, resumoIA:"", explicacoes:{}, turma:turmaN, ano:anoN, nivel:nivelN, materialNomes:materialNomes, materialTipos:materialTipos, materialTexto:materialTexto, historiaHabilitada:historiaHabilitada, tipo:tipo, textoGerado:payload.textoGerado, tituloTexto:payload.tituloTexto, generoTextual:payload.generoTextual, tema:payload.tema });
+    DATA[disc].push({ id:L.id, titulo:L.titulo, texto:conteudo, exercicios:L.exercicios, resumoIA:"", explicacoes:explicNovas, turma:turmaN, ano:anoN, nivel:nivelN, materialNomes:materialNomes, materialTipos:materialTipos, materialTexto:materialTexto, historiaHabilitada:historiaHabilitada, tipo:tipo, textoGerado:payload.textoGerado, tituloTexto:payload.tituloTexto, generoTextual:payload.generoTextual, tema:payload.tema });
 
     Teacher.editingLesson=null; Teacher.tab="licoes";
     toast("✅ Lição salva com sucesso!");
@@ -6978,7 +7224,7 @@ window.App = {
   // professor
   teacherTab, teacherSelectSubj, onLessonNivel,
   newLesson, editLesson, deleteLesson, addExercise, removeExercise, setExType,
-  setExEnun, setExResp, setExNivel, setOpt, setCorrect, addOpt, removeOpt, saveLesson,
+  setExEnun, setExResp, setExNivel, setExApoio, setExInstrucao, setOpt, setCorrect, addOpt, removeOpt, saveLesson,
   previewLesson, fecharPreview,
   // material de apoio (upload/remoção de documentos)
   onSelecionarMateriais, removerMaterial, cancelarEdicaoLicao,

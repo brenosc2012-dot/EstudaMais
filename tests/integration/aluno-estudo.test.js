@@ -197,7 +197,7 @@ test("material de apoio: nomes dos documentos listados na tela de estudo", async
   assert.match(h.texto(), /📚 Material de Apoio \(2\)/);
   assert.match(h.texto(), /apostila\.pdf/);
   assert.ok(h.html().includes("&lt;b&gt;x&lt;/b&gt;.txt"), "nome escapado");
-  assert.match(h.ia.chamadas.find(c => /TEXTO DE ESTUDO/.test(c.prompt)).prompt, /MATERIAL DE APOIO ANEXADO PELO PROFESSOR:\n\[apostila\.pdf\]/);
+  assert.match(h.ia.chamadas.find(c => /TEXTO DE ESTUDO/.test(c.prompt)).prompt, /\[DOCUMENTOS IMPORTADOS PELO PROFESSOR[^\n]*\]\n\[apostila\.pdf\]\nconteúdo/);
   h.fechar();
 });
 

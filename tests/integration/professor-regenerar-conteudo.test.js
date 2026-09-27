@@ -112,7 +112,7 @@ test("regenerar conteúdo: sem chave → botão desabilitado e nenhuma chamada",
 test("regenerar conteúdo: lição sem texto → aviso e nenhuma chamada", async () => {
   const h = await abrirProfessor({ extraSeed: { licoes: { L1: F.licao({ conteudo: "" }) } }, editar: "L1" });
   h.App.regenerarConteudoIA(); await h.estabilizar();
-  assert.match(erroIA(h), /Escreva o conteúdo da lição/);
+  assert.match(erroIA(h), /Escreva o texto explicativo ou importe um documento/);
   assert.equal(h.confirmacoes.length, 0);
   h.fechar();
 });

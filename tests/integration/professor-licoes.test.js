@@ -56,10 +56,10 @@ test("nova lição: cria no Firestore com escopo e exercícios", async () => {
   await h.preencher("lAno", "3º ano");
   await h.preencher("lTurma", "A");
   await h.clicar(/Adicionar exercício/);
-  const inputs = h.document.querySelectorAll("#exList input");
-  inputs[0].value = "Quanto é 5 - 2?"; inputs[0].dispatchEvent(new h.window.Event("input"));
-  inputs[1].value = "3"; inputs[1].dispatchEvent(new h.window.Event("input"));
-  inputs[2].value = "4"; inputs[2].dispatchEvent(new h.window.Event("input"));
+  const digitar = (el, v) => { el.value = v; el.dispatchEvent(new h.window.Event("input")); };
+  digitar(h.document.querySelector('#exList input[oninput*="setExEnun"]'), "Quanto é 5 - 2?");
+  const opcoes = h.document.querySelectorAll("#exList .opt-row input");
+  digitar(opcoes[0], "3"); digitar(opcoes[1], "4");
   await h.clicar(/Salvar lição/);
   const novos = Object.entries(h.store.colecao("licoes")).filter(([id]) => id !== "L1");
   assert.equal(novos.length, 1);

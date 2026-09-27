@@ -122,9 +122,8 @@
       return v;
     }
     // Calcula (sem aplicar) o novo valor do documento. Lança se a operação for inválida.
-    function calcular(op) {
-      const col = store.dados[op.colecao] || {};
-      const atual = col[op.id];
+    // `atual` = valor do doc ANTES desta operação (num batch, já com as operações anteriores aplicadas)
+    function calcular(op, atual) {
       if (op.tipo === "delete") return null;
       if (op.tipo === "update") {
         if (!atual) throw erroFirestore("not-found", `No document to update: ${op.colecao}/${op.id}`);
@@ -147,7 +146,11 @@
       return novo;
     }
     function aplicar(ops) {
-      const novos = ops.map(calcular); // valida tudo antes (atomicidade)
+      // calcula em sequência sobre uma cópia (como o Firestore: set e depois update no mesmo doc
+      // num batch vê o set) e só aplica se TODAS forem válidas (atomicidade)
+      const etapa = {};
+      const atualDe = op => { const k = op.colecao + "/" + op.id; return k in etapa ? (etapa[k] === null ? undefined : etapa[k]) : (store.dados[op.colecao] || {})[op.id]; };
+      const novos = ops.map(op => { const v = calcular(op, atualDe(op)); etapa[op.colecao + "/" + op.id] = v; return v; });
       const tocadas = new Set();
       ops.forEach((op, i) => {
         store.dados[op.colecao] = store.dados[op.colecao] || {};

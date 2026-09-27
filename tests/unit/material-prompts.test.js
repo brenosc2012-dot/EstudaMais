@@ -91,7 +91,8 @@ test("montarPromptRegenerarExercicios: contexto completo, distribuição de difi
   for (const re of [/3º ano do Ensino Fundamental I/, /lição "Contas" \(Matemática\)/, /exatamente 3 exercícios NOVOS/,
     /1 fáceis, 1 intermediários e 1 difíceis/, /1 de múltipla escolha, 1 de verdadeiro\/falso e 1 de completar lacunas/,
     /Adapte para 8 anos\./, /1\. Quanto é 1\+1\?/, /3\. 3 x 3 = ___/, /TEXTO DE ESTUDO QUE O ALUNO LÊ ANTES/, /## Resumo de estudo/,
-    /Conteúdo base da lição/, /MATERIAL DE APOIO ANEXADO[\s\S]*Apostila/, /"explicacao"/, /nunca a letra/])
+    /TEXTO DO PROFESSOR — fonte principal\]\nConteúdo base da lição/, /DOCUMENTOS IMPORTADOS PELO PROFESSOR[^\n]*\]\nApostila/,
+    /"explicacao"/, /nunca a letra/, /REGRAS DE FIDELIDADE ÀS FONTES/, /NÃO invente/, /QUESTÕES DE INTERPRETAÇÃO/, /"texto_apoio"/, /CONTEXTO_INSUFICIENTE/])
     assert.match(p, re);
 });
 

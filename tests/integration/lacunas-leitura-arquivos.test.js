@@ -33,8 +33,10 @@ test("material: falha de leitura de PDF (ArrayBuffer) e de imagem (DataURL) não
       new h.window.File(["PNG"], "foto.png", { type: "image/png" }),
     ]);
     const t = h.toasts.join("|");
-    assert.match(t, /Não foi possível extrair texto de "apostila\.pdf"/);
-    assert.match(t, /Não foi possível extrair texto de "foto\.png"/);
+    assert.match(t, /Erro ao ler "apostila\.pdf"/);
+    assert.match(t, /2 documentos não puderam ser lidos — veja os motivos no painel/);
+    // os motivos ficam no painel (o toast some e um sobrescreve o outro)
+    assert.match(h.texto(), /Não foram usados:.*❌ apostila\.pdf: arquivo corrompido ou ilegível.*❌ foto\.png: arquivo corrompido ou ilegível/);
     assert.deepEqual(nomesMaterial(h), []);
     assert.equal(h.ia.chamadas.length, 0, "sem dataURL não há chamada de OCR");
     assert.deepEqual(h.errosJs(), []);

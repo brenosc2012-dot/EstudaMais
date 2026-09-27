@@ -19,7 +19,7 @@ function seed(extra) {
     progresso: { a1_L1: { alunoId: "a1", licaoId: "L1", acertos: 2, erros: 1, total: 3, concluido: true, percentualAcertos: 67 } },
   }, extra || {}));
 }
-const enunciados = h => [...h.document.querySelectorAll(".ex-edit-card")].map(c => c.querySelector("input").value);
+const enunciados = h => [...h.document.querySelectorAll(".ex-edit-card")].map(c => c.querySelector('input[oninput*="setExEnun"]').value);
 const copia = v => JSON.parse(JSON.stringify(v));
 const docJ = (h, c, id) => { const d = h.store.doc(c, id); return d === undefined ? undefined : copia(d); };
 
@@ -44,7 +44,7 @@ test("botão: aparece só em lição salva; desabilitado sem exercícios, sem te
   h = await abrir({ seed: seed({ licoes: { L1: F.licao({ conteudo: "" }) } }) });
   assert.equal(h.botao(/Regenerar exercícios/).disabled, true);
   h.App.regenerarExerciciosIA(); await h.estabilizar();
-  assert.match(erroIA(h), /Escreva o conteúdo/);
+  assert.match(erroIA(h), /Escreva o texto explicativo ou importe um documento/);
   h.fechar();
 
   h = await abrir({ semChave: true });

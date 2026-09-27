@@ -193,6 +193,33 @@ Regras necessárias em `firestore.rules` (ponto de partida; ver arquivo no repo)
   - `"vf"` (verdadeiro/falso): `opcoes:["Verdadeiro","Falso"]`, `correta:0|1`
   - `"fill"` (completar lacuna): `resposta:"<texto>"` (correção via `norm()`,
     ignora acentos/maiúsculas)
+  - Campos **opcionais** de interpretação (qualquer tipo): `textoApoio` (trecho que o aluno lê
+    antes da pergunta) e `instrucao` (ex.: "Read the text and answer the question."). Só são
+    gravados quando preenchidos — exercício antigo (só enunciado) continua igual, sem migração.
+
+### Fontes da lição e questões com texto de apoio
+- **Fontes** = texto explicativo do professor + documentos importados (`fontesDaLicao`,
+  `blocoFontesIA`). Os TRÊS prompts (texto de estudo, gerar e regenerar exercícios) recebem o
+  mesmo bloco e as mesmas `regrasFidelidadeIA` (não inventar; texto do professor prevalece em
+  divergência; idioma: inglês fica em inglês, demais disciplinas em pt-BR). Lição só com
+  documentos funciona; sem nenhuma fonte (`FONTES_MIN_CHARS`) → `MSG_SEM_FONTES`, sem chamar a IA.
+- Falta de base: a IA responde `CONTEXTO_INSUFICIENTE` (constante de mesmo nome) → `motivoSemContexto`
+  → mensagem clara, **sem** nova tentativa e sem gravar (resumo: `validarResumoIA` com `definitivo`).
+- Geração de exercícios (`gerarExerciciosIA` e `regenerarExerciciosIA`) passa por
+  `gerarExerciciosValidados` → parser estrito + `validarExerciciosRegenerados(…, ctx)`:
+  exige a quantidade pedida (15 no gerar), explicação, e `problemaTextoApoio` (pergunta que cita
+  um texto — `citaTexto`/`REF_TEXTO` — ou `tipo:"interpretacao"` precisa de `texto_apoio`; tamanho
+  por idade `limitePalavrasApoio`; idioma via `idiomaProvavel`; relação pergunta↔texto; resposta
+  fora da instrução) e `relacionadaAsFontes` (heurística, não vale p/ Matemática/Inglês).
+  Inválido → 1 nova tentativa; falhou → nada muda no editor/banco.
+- O gerar agora também traz `explicacao` por questão: fica em `L._explicacoesNovas` com a
+  "assinatura" da questão e vai ao Firestore no Salvar só se a questão não foi editada.
+- Aluno: `blocoApoioHtml` mostra instrução → texto (bloco `.q-apoio`, `pre-wrap`, `lang="en"` em
+  Inglês, escapado) → pergunta → alternativas, no Clássico e no Modo História; o texto fica na
+  tela durante a correção. `exerciciosVisiveis` tira da tentativa a pergunta que cita um texto
+  ausente (lições `interpretacao_texto` ficam intactas). Editor avisa e o Salvar bloqueia.
+- Documentos que falham ficam listados no painel (`L._materialFalhas`): "nenhum texto encontrado"
+  × "arquivo corrompido ou ilegível" × "a IA não conseguiu ler a imagem".
 
 ### Interpretação de Texto (Português)
 - Novo **tipo de lição** (`lesson.tipo="interpretacao_texto"`, seletor só em Português):

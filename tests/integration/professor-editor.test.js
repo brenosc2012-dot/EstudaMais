@@ -9,10 +9,10 @@ function cartoes(h) {
   return [...h.document.querySelectorAll(".ex-edit-card")].map(c => ({
     tipo: c.querySelector("select").value,
     nivel: c.querySelectorAll("select")[1].value,
-    enunciado: c.querySelectorAll("input")[0].value,
+    enunciado: c.querySelector('input[oninput*="setExEnun"]').value,
     opcoes: [...c.querySelectorAll(".opt-row input")].map(i => i.value),
     correta: [...c.querySelectorAll(".opt-row .pick")].findIndex(b => /58cc02/.test(b.getAttribute("style"))),
-    resposta: c.querySelector(".opt-row") ? null : c.querySelectorAll("input")[1] && c.querySelectorAll("input")[1].value,
+    resposta: c.querySelector(".opt-row") ? null : (c.querySelector('input[oninput*="setExResp"]') || {}).value,
     readonly: [...c.querySelectorAll(".opt-row input")].some(i => i.readOnly),
   }));
 }

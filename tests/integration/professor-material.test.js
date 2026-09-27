@@ -42,7 +42,7 @@ test("material entra no prompt de geração de exercícios", async () => {
   await importar(h, [arquivo(h, "aula.txt", "Frações equivalentes são iguais", "text/plain")]);
   h.ia.fila(F.json(F.questoesIA(2)));
   await h.clicar(/Gerar 15 Exercícios com IA/);
-  assert.match(h.ia.ultimoPrompt(), /MATERIAL DE APOIO ANEXADO \(priorize este conteúdo\):\n\[aula\.txt\]\nFrações equivalentes são iguais/);
+  assert.match(h.ia.ultimoPrompt(), /\[DOCUMENTOS IMPORTADOS PELO PROFESSOR[^\n]*\]\n\[aula\.txt\]\nFrações equivalentes são iguais/);
   h.fechar();
 });
 
@@ -73,7 +73,8 @@ test("falha na extração (PDF corrompido) avisa e segue com os demais arquivos"
   const h = await abrirProfessor({ editar: "L1", pdfjsLib: { GlobalWorkerOptions: {}, getDocument: () => ({ promise: Promise.reject(new Error("PDF corrompido")) }) } });
   await importar(h, [arquivo(h, "ruim.pdf", "x", "application/pdf"), arquivo(h, "bom.txt", "ok", "text/plain")]);
   assert.deepEqual(itensLista(h), ["bom.txt"]);
-  assert.ok(h.toasts.some(t => /Não foi possível extrair texto de "ruim\.pdf"/.test(t)));
+  assert.ok(h.toasts.some(t => /Erro ao ler "ruim\.pdf"/.test(t)));
+  assert.match(h.texto(), /Não foram usados:.*❌ ruim\.pdf: arquivo corrompido ou ilegível/, "motivo fica no painel");
   assert.ok(!h.toasts.some(t => /documentos? lidos?/.test(t)), "sem mensagem de sucesso total quando algo falhou");
   h.fechar();
 });

@@ -65,7 +65,8 @@ test("material: falha do FileReader ao ler um TXT avisa, não anexa e não quebr
     input.dispatchEvent(new h.window.Event("change"));
     await h.estabilizar(60);
     // a falha de leitura é tratada como "sem texto extraível" (a mensagem orienta o professor)
-    assert.match(h.toasts.join("|"), /Não foi possível extrair texto de "quebrado\.txt"/);
+    assert.match(h.toasts.join("|"), /Erro ao ler "quebrado\.txt"/);
+    assert.match(h.texto(), /❌ quebrado\.txt: arquivo corrompido ou ilegível/);
     const nomes = [...h.document.querySelectorAll("#materialLista .t-lesson-row .t")].map(e => e.textContent);
     assert.deepEqual(nomes, ["bom.txt"]);
     assert.doesNotMatch(h.toasts.join("|"), /✅ .*lido/, "com falha em algum arquivo não anuncia sucesso geral");

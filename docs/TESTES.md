@@ -112,6 +112,12 @@ Legenda dos tipos:
 | Aluno ou visitante não consegue regenerar | S, E | `professor-regenerar-exercicios` › "permissão: …"; `seguranca-autorizacao`; `jornadas-seguranca` |
 | **Regenerar conteúdo** altera só o resumo; exercícios intactos | I, E | `professor-regenerar-conteudo` › "sucesso grava SÓ…"; `jornadas-professor` |
 | Contexto do resumo e estrutura didática objetiva (títulos, ≥2 exemplos, "Cuidado!", tamanho, idioma, sem respostas) | U, C, I | `fluxos` › "prompt do texto de estudo…"; `material-prompts` › "montarPromptResumo…"; `professor-regenerar-conteudo` › "contexto enviado…" |
+| Fontes da lição (texto do professor + documentos) nos 3 prompts; lição só com documentos; sem fontes → não chama a IA; CONTEXTO_INSUFICIENTE controlado | U, I | `texto-apoio` (unit) › "fontesDaLicao…", "motivoSemContexto…"; `fontes-texto-apoio` › "gerar exercícios: o texto explicativo E os documentos…", "lição só com documentos…", "regenerar exercícios e regenerar conteúdo usam as MESMAS fontes…", "contexto insuficiente…", "texto de estudo do aluno: …" (2) |
+| Interpretação com texto de apoio: geração, várias perguntas no mesmo texto, recusa sem texto / idioma / tamanho / sem relação / resposta na instrução / duplicadas | U, I | `texto-apoio` › "problemaTextoApoio…", "parseExerciciosIA…", "validarExerciciosRegenerados…", "citaTexto…"; `fontes-texto-apoio` › "gerar: questões de interpretação…", "gerar: pergunta 'According to the text'…", "validação da interpretação: …" (6) |
+| Tela do aluno: instrução → texto → pergunta → alternativas; texto visível na correção; quebras de linha; HTML seguro; Modo História; voz lê o texto antes | I, E | `fontes-texto-apoio` › "aluno: …" (4), "Modo História também mostra…"; `jornadas-interpretacao` (E2E celular 360px e desktop 1280px) |
+| Compatibilidade: exercícios antigos sem texto de apoio; pergunta que cita texto ausente fica fora da tentativa; editor avisa e bloqueia o Salvar | U, I | `texto-apoio` › "exerciciosVisiveis…"; `fontes-texto-apoio` › "compatibilidade…", "editor: …" |
+| Documentos com falha (vazio, corrompido, OCR) → motivo no painel | I | `fontes-texto-apoio` › "documento corrompido…"; `professor-material`; `lacunas-leitura-arquivos`; `lacunas-erros` |
+| Gerar exercícios: exige 15 válidas com explicação; geração incompleta não troca os atuais; explicações salvas só das questões não editadas | I | `professor-gerar-ia` › "gerar: geração incompleta…", "gerar: explicações geradas junto…" |
 | Texto de estudo validado antes de gravar (aluno e professor): títulos, ≥2 exemplos, 60 palavras até limite×1,5, português, sem HTML; 1 nova tentativa; recusado → nada gravado | U, I | `resumo-validacao` (unit, 5) › "validarResumoIA: …"; `resumo-validacao` (integração, 9) › "aluno: …", "professor: …" |
 | Conteúdo anterior mantido em erro (429, 503, rede, vazio, timeout, falha de gravação) | I, R, E | `professor-regenerar-conteudo` (6 testes + "falha ao gravar… NÃO mostra sucesso"); `jornadas-seguranca` › "limite de uso (429)…" |
 | Cancelar a regeneração de conteúdo | I, E | `professor-regenerar-conteudo` › "cancelar a confirmação…"; `jornadas-professor` › "cancela a regeneração…" |
@@ -193,10 +199,10 @@ Legenda dos tipos:
 
 | Suíte | Testes | Resultado |
 |---|---|---|
-| Unitários + contrato + backend + SW (`tests/unit`, 10 arquivos) | 123 | 123 ✔ |
-| Integração/componente/segurança (`tests/integration`, 37 arquivos) | 378 | 378 ✔ |
-| E2E Playwright (`tests/e2e`, 3 arquivos) | 17 | 17 ✔ |
-| **Total** | **518** | 0 falhas, 0 skip/todo |
+| Unitários + contrato + backend + SW (`tests/unit`, 11 arquivos) | 133 | 133 ✔ |
+| Integração/componente/segurança (`tests/integration`, 38 arquivos) | 402 | 402 ✔ |
+| E2E Playwright (`tests/e2e`, 4 arquivos) | 19 | 19 ✔ |
+| **Total** | **554** | 0 falhas, 0 skip/todo |
 
 Os testes node rodaram duas vezes seguidas com resultado idêntico. O E2E passou em três
 execuções completas.
@@ -206,7 +212,7 @@ e funções ≥ 97%; branches ≥ 75%.
 
 | Arquivo | Linhas | Branches | Funções |
 |---|---|---|---|
-| `index.html` (script → `build/index.app.js`) | 98,27% | 77,81% | 98,83% |
+| `index.html` (script → `build/index.app.js`) | 98,36% | 78,10% | 98,88% |
 | `sw.js` | 100% | 100% | 100% |
 | `proxy/cloudflare-worker.js` | 100% | 100% | 100% |
 
@@ -239,6 +245,9 @@ mínimas e estão no `index.html`.
 | 13 | "Zerar progresso" não zerava `historiasCompletas`: a medalha "Contador de Histórias" voltava na aventura seguinte | incluído na lista | `regressoes` › "zerar progresso também zera as aventuras…" |
 | 14 | `update()` da explicação sem `.catch`: falha offline virava a faixa vermelha de erro | `.catch(()=>{})` (best-effort) | `regressoes` › "falha ao salvar a explicação…" |
 | 15 | Chaves duplicadas `hist`/`interp` no objeto `Teacher` (lint `no-dupe-keys`) | removida a duplicata idêntica | `npm run lint` |
+| 16 | Documento corrompido aparecia como "nenhum texto encontrado (PDF escaneado…)": `extrairTextoArquivo` engolia a exceção | o erro sobe; o painel distingue corrompido × sem texto × falha do OCR | `fontes-texto-apoio` › "documento corrompido…" |
+| 17 | (código novo, pego pelo teste antes de publicar) interpretação com lacuna cuja resposta começa com "f"/"v" (ex.: "family") virava V/F | comparação da palavra inteira | `texto-apoio` › "parseExerciciosIA…" |
+| 18 | Firestore falso: batch com duas operações no mesmo documento não via a anterior (o real vê) | cálculo sequencial dentro do batch | `professor-gerar-ia` › "gerar: explicações geradas junto…" |
 
 **Falhas preexistentes:** a suíte existente antes deste trabalho (`tests/unit/fluxos.test.js`,
 14 testes) passava 14/14. Não havia outras suítes, lint nem CI.
@@ -254,6 +263,7 @@ mínimas e estão no `index.html`.
 | Qualidade do texto gerado | Validamos requisitos objetivos: `validarResumoIA` confere títulos, ≥2 exemplos, tamanho por idade, português e ausência de HTML antes de gravar. A qualidade pedagógica em si não é avaliada, e não checamos se o texto revela respostas (daria falso positivo com os termos do tema) | Baixo/médio |
 | Layout, rolagem, animações, confete, áudio audível | jsdom não faz layout nem fala; o E2E verifica o fluxo, não a aparência | Baixo |
 | Streaming SSE no navegador real | O E2E responde em JSON; o SSE é coberto no jsdom (`contrato-ia`) e no proxy | Baixo |
+| Heurísticas de validação das questões | "Pergunta respondível pelo texto", "relacionada às fontes" e idioma são verificados por palavras em comum e palavras funcionais — não entendem o sentido. A relação com as fontes não se aplica a Matemática nem a Inglês. A resposta correta não é conferida contra o texto (ex.: "On foot" × "walks") | Médio: a IA ainda pode gerar uma questão plausível mas errada; o professor revisa antes de salvar |
 | `esc()` não escapa `'` | Valores interpolados em `onclick="App.x('…')"` são ids do Firestore ou turmas de lista fixa (A–F); uma turma legada com `'` quebraria o clique | Baixo (observação, sem correção) |
 
 ## 7. Suíte opcional com a IA real
