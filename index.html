@@ -923,6 +923,15 @@ function removeLicaoLocal(id){ SUBJECTS.forEach(s=>{ DATA[s.id]=(DATA[s.id]||[])
 let licoesUnsub = null;
 
 // Reconstrói DATA (agrupado por disciplina) a partir de um snapshot do Firestore.
+// Id da disciplina a partir do valor gravado (id, nome com/sem acento, maiúsculas, espaços ou
+// "English"). Valor desconhecido fica como está — não é "adivinhado" para outra disciplina.
+const ALIASES_DISCIPLINA = { english:"ing", ingles:"ing" };
+function normalizarDisciplina(v){
+  const n = norm(v);
+  if(!n) return "";
+  const s = SUBJECTS.find(x=> norm(x.id)===n || norm(x.nome)===n);
+  return s ? s.id : (ALIASES_DISCIPLINA[n] || String(v).trim());
+}
 function construirDATA(snap){
   SUBJECTS.forEach(s=> DATA[s.id]=[]);
   const docs=[];
@@ -931,7 +940,7 @@ function construirDATA(snap){
   docs.sort((a,b)=> ((a.d.criadoEm&&a.d.criadoEm.seconds)||0) - ((b.d.criadoEm&&b.d.criadoEm.seconds)||0));
   docs.forEach(({id,d})=>{
     if(d.isDemo && !DEMO) return; // lições demo NÃO aparecem para usuários reais
-    const disc = d.disciplina;
+    const disc = normalizarDisciplina(d.disciplina); // "Inglês"/"English"/" ing " → "ing"
     if(!DATA[disc]) DATA[disc]=[]; // disciplina fora da lista padrão também é aceita
     DATA[disc].push(licaoDeDoc(id, d));
   });
@@ -4058,7 +4067,15 @@ function escopoLicaoLabel(l){
 function teacherSelectSubj(v){ Teacher.subj=v; render(); }
 
 function resetIaEstado(){ Teacher.gerando=false; Teacher.regenerando=false; Teacher.regenerandoEx=false;Teacher.previewing=false; Teacher.iaErro=""; Teacher.iaConfigAberta=false; Teacher.iaTeste=null; }
-function newLesson(){ Teacher.editingLesson={ id:null, titulo:"", texto:"", exercicios:[], turma:"", nivel:"", ano:"", materialNomes:[], materialTipos:[], materialTexto:"", materialTextos:[], materialCotas:[], historiaHabilitada:true, tipo:"padrao", textoGerado:"", tituloTexto:"", generoTextual:"", tema:"", _tamanho:"", _focos:[], _persistido:false }; resetIaEstado(); Teacher.upload={ ativo:false, nome:"", lendo:false }; Teacher.hist={ gerando:false, preview:null, erro:"" }; Teacher.interp={ gerando:false, erro:"" }; Teacher.tab="novo"; render(); }
+// Escopo inicial de uma lição nova: se o professor leciona uma única série (ou turma), ela já vem
+// escolhida — evita salvar sem querer para o 1º item da lista (ex.: "1º ano" em vez de "5º ano").
+function escopoInicialNovaLicao(){
+  const e = escopoProfessor(PROFESSOR), out = { nivel:"", ano:"", turma:"" };
+  if(e.anos.length===1){ const n = NIVEIS_ENSINO.find(x=>x.anos.indexOf(e.anos[0])>=0); if(n){ out.nivel=n.id; out.ano=e.anos[0]; } }
+  if(e.turmas.length===1) out.turma = e.turmas[0];
+  return out;
+}
+function newLesson(){ const ini=escopoInicialNovaLicao(); Teacher.editingLesson={ id:null, titulo:"", texto:"", exercicios:[], turma:ini.turma, nivel:ini.nivel, ano:ini.ano, materialNomes:[], materialTipos:[], materialTexto:"", materialTextos:[], materialCotas:[], historiaHabilitada:true, tipo:"padrao", textoGerado:"", tituloTexto:"", generoTextual:"", tema:"", _tamanho:"", _focos:[], _persistido:false }; resetIaEstado(); Teacher.upload={ ativo:false, nome:"", lendo:false }; Teacher.hist={ gerando:false, preview:null, erro:"" }; Teacher.interp={ gerando:false, erro:"" }; Teacher.tab="novo"; render(); }
 function editLesson(id){
   const l=(DATA[Teacher.subj]||[]).find(x=>x.id===id);
   if(!l) return;
@@ -4111,7 +4128,7 @@ function teacherEditorTab(){
 
   // bloco de escopo (turma/ano/nível) — reaproveitado nos dois tipos de lição
   const escopoHtml = `<div class="sec-title">Destinada a (escopo)</div>
-    <p style="font-size:12px;color:#999;margin:-2px 0 8px">Deixe "Todos/Todas" para liberar a lição a qualquer turma/ano.</p>
+    <p style="font-size:12px;color:#999;margin:-2px 0 8px">A lição só aparece para alunos do mesmo ano e da mesma turma (ano e turma são obrigatórios).${escopoCompleto(PROFESSOR) ? ` Suas séries: <b>${esc(escopoProfessor(PROFESSOR).anos.join(", "))}</b> • turmas <b>${esc(escopoProfessor(PROFESSOR).turmas.join(", "))}</b>.` : ""}</p>
     <label>Nível de ensino</label>
     <select id="lNivel" onchange="App.onLessonNivel(this.value)">${nivelOpts}</select>
     <label>Ano</label>
@@ -5800,6 +5817,15 @@ async function saveLesson(){
   const L=Teacher.editingLesson;
   if(Teacher.regenerandoEx){ toast("Aguarde a regeneração dos exercícios terminar."); return; }
   if(!L.titulo.trim()){ toast("Dê um título à lição."); return; }
+  // escopo: a visibilidade do aluno exige ano E turma iguais (licaoVisivelPara) — sem eles a lição
+  // ficaria salva mas invisível para todos; fora das séries do professor ela some da lista dele
+  const anoEsc=(L.ano||"").trim(), turmaEsc=(L.turma||"").trim().toUpperCase();
+  if(!anoEsc || !turmaEsc){ toast("Escolha o ano e a turma da lição — sem eles nenhum aluno a verá."); return; }
+  const foraDoEscopo = escopoCompleto(PROFESSOR) && !licaoNoEscopoProfessor({ ano:anoEsc, turma:turmaEsc }, PROFESSOR);
+  if(foraDoEscopo){
+    const e = escopoProfessor(PROFESSOR);
+    if(!confirm(`Você leciona para ${e.anos.join(", ")} (turmas ${e.turmas.join(", ")}), mas esta lição está marcada para ${anoEsc} • Turma ${turmaEsc}.\n\nOs alunos das suas turmas não vão vê-la, e ela não aparecerá na sua lista de lições. Salvar mesmo assim?`)) return;
+  }
   const ehInterp = (L.tipo==="interpretacao_texto");
   if(ehInterp){
     if(!(L.textoGerado||"").trim()){ toast("Gere o texto de interpretação antes de publicar."); return; }
@@ -5908,7 +5934,9 @@ async function saveLesson(){
     DATA[disc].push({ id:L.id, titulo:L.titulo, texto:conteudo, exercicios:L.exercicios, resumoIA:"", explicacoes:explicNovas, turma:turmaN, ano:anoN, nivel:nivelN, materialNomes:materialNomes, materialTipos:materialTipos, materialTexto:materialTexto, historiaHabilitada:historiaHabilitada, tipo:tipo, textoGerado:payload.textoGerado, tituloTexto:payload.tituloTexto, generoTextual:payload.generoTextual, tema:payload.tema });
 
     Teacher.editingLesson=null; Teacher.tab="licoes";
-    toast("✅ Lição salva com sucesso!");
+    toast(foraDoEscopo
+      ? `✅ Lição salva para ${anoEsc} • Turma ${turmaEsc} (fora das suas séries — não aparece na sua lista).`
+      : "✅ Lição salva com sucesso!");
     render();
   }catch(e){
     console.error("Erro ao salvar lição:", e);

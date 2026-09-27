@@ -158,7 +158,7 @@ best-effort para cache offline).
 
 | Coleção | Conteúdo |
 |---|---|
-| `licoes` | Lições (agora com `turma`, `ano`, `nivel` de escopo) |
+| `licoes` | Lições (agora com `turma`, `ano`, `nivel` de escopo — **ano e turma obrigatórios** ao salvar: o aluno só vê lição com ano E turma iguais aos dele, `licaoVisivelPara`; fora das séries do professor pede confirmação) |
 | `licoes_geradas` | Cache de conteúdo IA por lição: `{licaoId, resumo, exercicios, geradoEm, geradoPor}` |
 | `alunos` | Conta + progresso do aluno (nome, idade, ano, nível, turma, senha hash, XP, medalhas, premiações, disciplinas…) |
 | `professores` | Conta do professor (nome, email, senha hash, turmas[] (letras A–F), anos[] (séries que leciona), disciplinas[]) |
