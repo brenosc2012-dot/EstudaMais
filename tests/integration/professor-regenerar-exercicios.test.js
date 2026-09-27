@@ -124,7 +124,10 @@ test("contexto enviado à IA: tema, disciplina, série, idade, dificuldade, tipo
     /aproximadamente 8 anos/, /1 fáceis, 1 intermediários e 1 difíceis/, /1 de múltipla escolha, 1 de verdadeiro\/falso e 1 de completar lacunas/,
     /EXERCÍCIOS ATUAIS \(NÃO repetir\):\n1\. Quanto é 1 \+ 1\?/, /Afirmação número 2/, /Complete a lacuna 3/,
     /TEXTO DE ESTUDO QUE O ALUNO LÊ ANTES[^\n]*\n## Resumo salvo/, /Somar é juntar quantidades/, /Material X/, /"explicacao"/]) assert.match(p, re);
-  assert.doesNotMatch(p, /\bdez\b/, "não precisa mandar as respostas atuais");
+  // as questões atuais vão resumidas: enunciado + resposta (para a IA não repetir o que já é cobrado)
+  assert.match(p, /1\. Quanto é 1 \+ 1\? → resposta: 2\n2\. Afirmação número 2 é verdadeira\? → resposta: verdadeiro\n3\. Complete a lacuna 3: ___ → resposta: dez/);
+  for (const re of [/VARIEDADE E QUANTIDADE/, /Gere EXATAMENTE 3 questões/, /Trocar só nomes, números, a ordem das alternativas ou algumas palavras NÃO cria uma questão nova/,
+    /conceito, trecho, exemplo ou habilidade DIFERENTE/, /o mesmo tema pode se repetir se a informação cobrada for outra/]) assert.match(p, re);
   const tipos = docJ(h, "licoes", "L1").exercicios.map(e => e.tipo);
   assert.deepEqual(tipos, ["mc", "vf", "fill"], "tipos suportados preservados");
   h.fechar();
@@ -142,34 +145,35 @@ test("texto de estudo: sem cache em licoes_geradas usa o resumoIA legado da liç
 
 // ---------- validação / rejeição ----------
 const base3 = () => F.questoesIA(3);
+// (a mesma resposta volta nas 3 tentativas: as válidas dela passam a ser repetição das já aprovadas)
 const INVALIDAS = [
-  ["JSON malformado", "[{ \"enunciado\": ", /0 de 3 questões válidas/],
-  ["resposta vazia", { json: true, texto: "" }, /0 de 3 questões válidas/],
-  ["quantidade menor", F.json(F.questoesIA(2)), /2 de 3 questões válidas/],
-  ["duplicadas entre si", F.json([base3()[0], base3()[0], base3()[1]]), /duplicada/],
-  ["igual a uma questão atual", F.json([Object.assign(base3()[0], { enunciado: "Quanto é 1 + 1?" }), base3()[1], base3()[2]]), /parecida com uma questão atual/],
-  ["alternativa vazia", F.json([Object.assign(base3()[0], { opcoes: ["30", "", "29", "40"] }), base3()[1], base3()[2]]), /alternativas incompletas/],
-  ["alternativas repetidas", F.json([Object.assign(base3()[0], { opcoes: ["30", "30", "29", "40"] }), base3()[1], base3()[2]]), /alternativas repetidas/],
-  ["correta ausente", F.json([Object.assign(base3()[0], { resposta_correta: "999" }), base3()[1], base3()[2]]), /ausente ou ambígua/],
-  ["tipo não suportado", F.json([{ nivel: "facil", tipo: "dissertativa", enunciado: "Explique o que é somar com suas palavras.", resposta_correta: "livre", explicacao: "Tudo bem errar! Somar é juntar quantidades." }, base3()[1], base3()[2]]), /alternativas insuficientes/],
-  ["lacuna sem ___", F.json([{ nivel: "facil", tipo: "completar_lacunas", enunciado: "Complete: dois mais dois é", resposta_correta: "4", explicacao: "Tudo bem errar! Dois mais dois é quatro." }, base3()[1], base3()[2]]), /lacuna sem ___/],
-  ["sem explicação", F.json([Object.assign(base3()[0], { explicacao: "" }), base3()[1], base3()[2]]), /sem explicação/],
-  ["enunciado curto", F.json([Object.assign(base3()[0], { enunciado: "Soma?" }), base3()[1], base3()[2]]), /enunciado vazio ou curto/],
-  ["V/F sem resposta válida", F.json([{ nivel: "facil", tipo: "verdadeiro_falso", enunciado: "Somar 2 e 2 dá quatro inteiros?", resposta_correta: "talvez", explicacao: "Tudo bem errar! Dois mais dois é quatro." }, base3()[1], base3()[2]]), /V\/F sem resposta válida/],
+  ["JSON malformado", "[{ \"enunciado\": ", /\(0 aprovadas\).*a IA enviou 3 questões a menos que o pedido/],
+  ["resposta vazia", { json: true, texto: "" }, /\(0 aprovadas\).*a IA enviou 3 questões a menos que o pedido/],
+  ["quantidade menor", F.json(F.questoesIA(2)), /\(2 aprovadas\).*Tentativa 1 \(3 pedidas, 2 aprovadas\): a IA enviou 1 questão a menos que o pedido\. Tentativa 2 \(1 pedidas, 0 aprovadas\): foram rejeitadas 2 questões: questões 1 e 2 por repetição entre as novas questões\./],
+  ["duplicadas entre si", F.json([base3()[0], base3()[0], base3()[1]]), /\(2 aprovadas\).*repetição entre as novas questões/],
+  ["igual a uma questão atual", F.json([Object.assign(base3()[0], { enunciado: "Quanto é 1 + 1?", opcoes: ["2", "3", "4", "5"], resposta_correta: "2" }), base3()[1], base3()[2]]), /questão 1 por semelhança com exercícios atuais/],
+  ["alternativa vazia", F.json([Object.assign(base3()[0], { opcoes: ["30", "", "29", "40"] }), base3()[1], base3()[2]]), /questão 1 por resposta ou alternativas inválidas/],
+  ["alternativas repetidas", F.json([Object.assign(base3()[0], { opcoes: ["30", "30", "29", "40"] }), base3()[1], base3()[2]]), /questão 1 por resposta ou alternativas inválidas/],
+  ["correta ausente", F.json([Object.assign(base3()[0], { resposta_correta: "999" }), base3()[1], base3()[2]]), /questão 1 por resposta ou alternativas inválidas/],
+  ["tipo não suportado", F.json([{ nivel: "facil", tipo: "dissertativa", enunciado: "Explique o que é somar com suas palavras.", resposta_correta: "livre", explicacao: "Tudo bem errar! Somar é juntar quantidades." }, base3()[1], base3()[2]]), /questão 1 por resposta ou alternativas inválidas/],
+  ["lacuna sem ___", F.json([{ nivel: "facil", tipo: "completar_lacunas", enunciado: "Complete: dois mais dois é", resposta_correta: "4", explicacao: "Tudo bem errar! Dois mais dois é quatro." }, base3()[1], base3()[2]]), /questão 1 por formato inválido/],
+  ["sem explicação", F.json([Object.assign(base3()[0], { explicacao: "" }), base3()[1], base3()[2]]), /questão 1 por falta de explicação/],
+  ["enunciado curto", F.json([Object.assign(base3()[0], { enunciado: "Soma?" }), base3()[1], base3()[2]]), /questão 1 por enunciado inválido/],
+  ["V/F sem resposta válida", F.json([{ nivel: "facil", tipo: "verdadeiro_falso", enunciado: "Somar 2 e 2 dá quatro inteiros?", resposta_correta: "talvez", explicacao: "Tudo bem errar! Dois mais dois é quatro." }, base3()[1], base3()[2]]), /questão 1 por resposta ou alternativas inválidas/],
 ];
 for (const [nome, resposta, re] of INVALIDAS) {
-  test(`validação: ${nome} → rejeita (após 1 nova tentativa) e mantém os exercícios atuais`, async () => {
+  test(`validação: ${nome} → rejeita (3 tentativas, as seguintes só com o que falta) e mantém os exercícios atuais`, async () => {
     const h = await abrir();
     const antes = copia(h.store.dados);
-    h.ia.fila(resposta, resposta);
+    h.ia.fila(resposta, resposta, resposta);
     await h.clicar(/Regenerar exercícios com IA/);
-    assert.equal(h.ia.chamadas.length, 2, "tenta de novo uma vez");
+    assert.equal(h.ia.chamadas.length, 3, "até 3 tentativas");
     assert.deepEqual(copia(h.store.dados), antes, "banco intacto");
     assert.deepEqual(enunciados(h), ["Quanto é 1 + 1?", "Quanto é 2 + 2?", "Quanto é 3 + 3?"]);
     const msg = erroIA(h);
-    assert.match(msg, /questões inválidas/);
+    assert.match(msg, /^⚠️ Não foi possível gerar 3 questões válidas após 3 tentativas \(\d aprovadas\)\. Os exercícios atuais foram mantidos\. Tentativa 1 \(3 pedidas, \d aprovadas\): .*Tentativa 2 .*Tentativa 3 /);
     assert.match(msg, re);
-    assert.match(msg, /Os exercícios atuais foram mantidos\./);
+    assert.equal((msg.match(/mantidos/g) || []).length, 1, "a confirmação aparece uma vez só");
     h.fechar();
   });
 }
@@ -268,11 +272,13 @@ test("rollback: se o documento da lição sumiu (update impossível), nenhuma pa
   h.fechar();
 });
 
+// (objetos diferentes: questões que só trocam os números são recusadas como repetição)
+const OBJ_PEDRO = ["tampinhas", "chaveiros", "conchas"];
 test("regenerar duas vezes seguidas: versão 2 e explicações sempre casando com os exercícios atuais", async () => {
   const h = await abrir();
   h.ia.fila(F.json(F.questoesIA(3)));
   await h.clicar(/Regenerar exercícios com IA/);
-  h.ia.fila(F.json(F.questoesIA(3, i => ({ enunciado: `Pedro guardou ${i + 50} tampinhas numa caixa e achou mais ${i + 60}. Qual o total de tampinhas?` }))));
+  h.ia.fila(F.json(F.questoesIA(3, i => ({ enunciado: `Pedro guardou ${i + 50} ${OBJ_PEDRO[i]} numa caixa e achou mais ${i + 60}. Qual o total de ${OBJ_PEDRO[i]}?` }))));
   await h.clicar(/Regenerar exercícios com IA/);
   const d = docJ(h, "licoes", "L1");
   assert.equal(d.exerciciosVersao, 2);
@@ -288,7 +294,7 @@ test("concorrência: dois professores regenerando ao mesmo tempo → estado fina
   const h1 = await abrirProfessor({ seed: s, editar: "L1" });
   const h2 = await abrirProfessor({ store: h1.firebase, relogio: h1.relogio, editar: "L1" });
   h1.ia.fila(F.json(F.questoesIA(3)));
-  h2.ia.fila(F.json(F.questoesIA(3, i => ({ enunciado: `Pedro guardou ${i + 50} tampinhas numa caixa e achou mais ${i + 60}. Qual o total de tampinhas?` }))));
+  h2.ia.fila(F.json(F.questoesIA(3, i => ({ enunciado: `Pedro guardou ${i + 50} ${OBJ_PEDRO[i]} numa caixa e achou mais ${i + 60}. Qual o total de ${OBJ_PEDRO[i]}?` }))));
   const p1 = h1.App.regenerarExerciciosIA(), p2 = h2.App.regenerarExerciciosIA();
   await Promise.all([p1, p2]); await h1.estabilizar(); await h2.estabilizar();
   const d = docJ(h1, "licoes", "L1");

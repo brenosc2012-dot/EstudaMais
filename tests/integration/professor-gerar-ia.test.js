@@ -42,13 +42,13 @@ test("gerar (substituir): troca os exercícios do editor pelos da IA, mapeando t
   h.fechar();
 });
 
-test("gerar: geração incompleta (itens inválidos, menos de 15) é recusada 2x e NÃO troca os exercícios atuais", async () => {
+test("gerar: geração incompleta (itens inválidos, menos de 15) esgota as 3 tentativas e NÃO troca os exercícios atuais", async () => {
   const h = await abrirProfessor({ editar: "L1" });
-  h.ia.fila(RESP_INCOMPLETA, RESP_INCOMPLETA);
+  h.ia.fila(RESP_INCOMPLETA, RESP_INCOMPLETA, RESP_INCOMPLETA);
   await h.clicar(/Gerar 15 Exercícios com IA/);
-  assert.equal(h.ia.chamadas.length, 2, "pede mais uma vez antes de desistir");
+  assert.equal(h.ia.chamadas.length, 3, "até 3 tentativas");
   assert.equal(cards(h).length, 3, "os 3 exercícios atuais continuam");
-  assert.match(erroIA(h), /5 de 15 questões válidas.*alternativas insuficientes.*Os exercícios atuais foram mantidos/);
+  assert.match(erroIA(h), /\(5 aprovadas\)\. Os exercícios atuais foram mantidos\. Tentativa 1 \(15 pedidas, 5 aprovadas\): foram rejeitadas 2 questões: questão 6 por resposta ou alternativas inválidas; questão 7 por enunciado inválido\. Além disso, a IA enviou 8 questões a menos que o pedido\./);
   h.fechar();
 });
 
@@ -129,8 +129,8 @@ const ERROS = [
   ["429 limite", { status: 429 }, /Erro 429 — Limite de uso atingido/],
   ["503 indisponível", { status: 503, mensagem: "Service Unavailable" }, /Erro 503 — Service Unavailable/],
   ["rede", { rede: true }, /Falha na chamada à OpenAI/],
-  ["JSON malformado", "[{ isto não é json", /questões inválidas \(0 de 15 questões válidas\)/],
-  ["array vazio", "[]", /questões inválidas \(0 de 15 questões válidas\)/],
+  ["JSON malformado", "[{ isto não é json", /15 questões válidas após 3 tentativas \(0 aprovadas\).*Tentativa 1 \(15 pedidas, 0 aprovadas\): a IA enviou 15 questões a menos que o pedido/],
+  ["array vazio", "[]", /15 questões válidas após 3 tentativas \(0 aprovadas\).*Tentativa 1 \(15 pedidas, 0 aprovadas\): a IA enviou 15 questões a menos que o pedido/],
   ["corpo inválido (JSON quebrado)", { corpoInvalido: true, json: true }, /chegou incompleta/],
   ["stream cortado", { corte: "[{\"enun" }, /interrompida no meio/],
 ];

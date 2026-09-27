@@ -116,27 +116,27 @@ test("gerar: pergunta 'According to the text' SEM texto de apoio é recusada; ge
   const resp = F.json([semTexto, leituraIA(1), leituraIA(2)].concat(VOCAB.map(vocabIA)));
   const h = await editarIng();
   try {
-    h.ia.fila(resp, resp);
+    h.ia.fila(resp, resp, resp);
     await h.clicar(/Gerar 15 Exercícios com IA/);
-    assert.equal(h.ia.chamadas.length, 2);
-    assert.match(erroIA(h), /14 de 15 questões válidas.*depende de um texto que não veio.*Os exercícios atuais foram mantidos/);
+    assert.equal(h.ia.chamadas.length, 3);
+    assert.match(erroIA(h), /\(14 aprovadas\)\. Os exercícios atuais foram mantidos\. Tentativa 1 \(15 pedidas, 14 aprovadas\): foi rejeitada 1 questão: questão 1 por ausência de texto de apoio\./);
     assert.equal(apoios(h).length, 3, "editor continua com os 3 exercícios de antes");
   } finally { h.fechar(); }
 });
 
 for (const [nome, item, motivo] of [
-  ["tipo interpretacao sem texto_apoio", leituraIA(0, { texto_apoio: "" }), /depende de um texto que não veio/],
-  ["texto de apoio em português numa aula de Inglês", leituraIA(0, { texto_apoio: "Ana acorda cedo todos os dias. Ela toma café com a família e vai a pé para a escola." }), /fora do idioma esperado/],
-  ["texto de apoio longo demais para a série", leituraIA(0, { texto_apoio: (TEXTO_ANNA + " ").repeat(12) }), /texto de apoio longo demais/],
-  ["pergunta sem relação com o texto", leituraIA(0, { enunciado: "What color is the planet Mars?" }), /sem relação com o texto de apoio/],
-  ["instrução que entrega a resposta", leituraIA(0, { instrucao: "Read the text: Anna goes On foot." }), /a instrução entrega a resposta/],
-  ["alternativas duplicadas", leituraIA(0, { opcoes: ["On foot", "On foot", "By car", "By bus"] }), /alternativas repetidas/],
+  ["tipo interpretacao sem texto_apoio", leituraIA(0, { texto_apoio: "" }), /questão 1 por ausência de texto de apoio/],
+  ["texto de apoio em português numa aula de Inglês", leituraIA(0, { texto_apoio: "Ana acorda cedo todos os dias. Ela toma café com a família e vai a pé para a escola." }), /questão 1 por idioma do texto ou da pergunta diferente do esperado/],
+  ["texto de apoio longo demais para a série", leituraIA(0, { texto_apoio: (TEXTO_ANNA + " ").repeat(12) }), /questão 1 por texto de apoio com tamanho inadequado para a série/],
+  ["pergunta sem relação com o texto", leituraIA(0, { enunciado: "What color is the planet Mars?" }), /questão 1 por pergunta sem relação com o texto de apoio/],
+  ["instrução que entrega a resposta", leituraIA(0, { instrucao: "Read the text: Anna goes On foot." }), /questão 1 por instrução que entrega a resposta/],
+  ["alternativas duplicadas", leituraIA(0, { opcoes: ["On foot", "On foot", "By car", "By bus"] }), /questão 1 por resposta ou alternativas inválidas/],
 ]) {
   test(`validação da interpretação: ${nome} → recusada`, async () => {
     const resp = F.json([item, leituraIA(1), leituraIA(2)].concat(VOCAB.map(vocabIA)));
     const h = await editarIng();
     try {
-      h.ia.fila(resp, resp);
+      h.ia.fila(resp, resp, resp);
       await h.clicar(/Gerar 15 Exercícios com IA/);
       assert.match(erroIA(h), motivo);
       assert.equal(h.store.escritas().length, 0);

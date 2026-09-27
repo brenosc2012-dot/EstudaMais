@@ -7,10 +7,10 @@ const { carregar } = require("./carregar-app");
 
 const PURAS = ["norm", "esc", "uid", "fmtInline", "formatResumo", "linhasTexto", "paragrafosTexto",
   "tipoLabel", "nivelDificuldadeLabel", "contarPorDificuldade", "normalizarNivelDif", "acharIndiceCorreto",
-  "sanitizarControlesJson", "jsonParseTolerante", "parseExerciciosIA", "similaridadeEnunciados",
+  "sanitizarControlesJson", "jsonParseTolerante", "parseExerciciosIA", "compararQuestoes",
   "validarExerciciosRegenerados", "ehLinguaEstrangeira", "blocoLinguaEstrangeira", "timeoutComMaterial",
   "mensagemErroIA", "limitePalavrasResumo", "montarPromptResumo", "montarPromptRegenerarExercicios"];
-const CONSTS = ["REGEN_SIMILAR_ANTIGA", "REGEN_SIMILAR_NOVA", "REGEN_EX_TENTATIVAS", "LINGUAS_ESTRANGEIRAS"];
+const CONSTS = ["REGEN_EX_TENTATIVAS", "LINGUAS_ESTRANGEIRAS"];
 const SUBJ = { mat: { id: "mat", nome: "Matemática" }, ing: { id: "ing", nome: "Inglês" } };
 
 function exs(n) {
@@ -100,8 +100,10 @@ test("tela de explicação avisa que a atividade será reiniciada", () => {
 });
 
 // ============ 2) Regenerar exercícios ============
+// cada questão muda também o contexto (trocar só os números é reformulação superficial)
+const LOJAS = ["mercado", "padaria", "farmácia", "papelaria", "feira", "livraria", "sorveteria", "quitanda"];
 function itemIA(i, extra) {
-  return Object.assign({ nivel: "facil", tipo: "multipla_escolha", enunciado: `Quanto é ${i + 2} vezes ${i + 7} em uma conta de mercado?`,
+  return Object.assign({ nivel: "facil", tipo: "multipla_escolha", enunciado: `Quanto é ${i + 2} vezes ${i + 7} em uma conta de ${LOJAS[i % 8]}?`,
     opcoes: ["Opção alfa " + i, "Opção beta " + i, "Opção gama " + i, "Opção delta " + i], resposta_correta: "Opção beta " + i,
     explicacao: "Tudo bem errar! A resposta certa é a beta porque multiplicamos os dois números." }, extra);
 }
@@ -183,11 +185,12 @@ test("regenerar: resposta inválida da IA (2x) mantém os exercícios atuais", a
   const { ctx, ops, atuais, licaoSalva } = ctxRegen({ respostas: [ruim, ruim] });
   const antes = JSON.stringify(licaoSalva.exercicios);
   await ctx.regenerarExerciciosIA();
-  assert.equal(ctx.prompts.length, 2, "tenta de novo uma vez");
+  assert.equal(ctx.prompts.length, 3, "até 3 tentativas (as seguintes pedem só a que falta)");
+  assert.match(ctx.prompts[1], /REPOSIÇÃO — TENTATIVA 2 DE 3[\s\S]*EXATAMENTE 1 questão NOVA/);
   assert.equal(ops.length, 0, "nada foi gravado");
   assert.equal(ctx.Teacher.editingLesson.exercicios, atuais);
   assert.equal(JSON.stringify(licaoSalva.exercicios), antes);
-  assert.match(ctx.Teacher.iaErro, /inválidas.*ambígua.*mantidos/);
+  assert.match(ctx.Teacher.iaErro, /após 3 tentativas \(2 aprovadas\)\. Os exercícios atuais foram mantidos\. Tentativa 1 \(3 pedidas, 2 aprovadas\): foi rejeitada 1 questão: questão 1 por resposta ou alternativas inválidas\./);
   assert.equal(ctx.Teacher.regenerandoEx, false);
 });
 

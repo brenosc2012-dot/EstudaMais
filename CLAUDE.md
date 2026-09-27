@@ -211,7 +211,19 @@ Regras necessárias em `firestore.rules` (ponto de partida; ver arquivo no repo)
   um texto — `citaTexto`/`REF_TEXTO` — ou `tipo:"interpretacao"` precisa de `texto_apoio`; tamanho
   por idade `limitePalavrasApoio`; idioma via `idiomaProvavel`; relação pergunta↔texto; resposta
   fora da instrução) e `relacionadaAsFontes` (heurística, não vale p/ Matemática/Inglês).
-  Inválido → 1 nova tentativa; falhou → nada muda no editor/banco.
+  **Recuperação** (`gerarExerciciosValidados`): as válidas ficam em memória e as tentativas
+  seguintes (até `REGEN_EX_TENTATIVAS` = 3) pedem SÓ as que faltam (`blocoReposicaoIA`: aprovadas +
+  rejeitadas com motivo + dificuldade que falta); o painel mostra "11 de 15 questões foram validadas.
+  Estamos gerando 4 novas…" (`Teacher.iaProgresso`). Só o conjunto completo é gravado; esgotou →
+  nada muda e a mensagem resume cada tentativa (`descreverRejeicoes`: todas as rejeições agrupadas
+  por motivo, posição = ordem na resposta da IA a partir de 1, + "a IA enviou N a menos").
+- **Duplicidade** (`compararQuestoes`): compara palavras de CONTEÚDO (sem as de molde —
+  `PALAVRAS_MOLDE` — e com negações) + resposta correta + texto de apoio. Idêntica; reformulação
+  superficial (`DUP_QUASE_IGUAL` 0,85, ou só números trocados com ≥`DUP_MIN_PALAVRAS_NUMEROS`
+  palavras); mesma resposta (`DUP_MESMA_RESPOSTA` 0,5 · mesmo texto 0,25 · conteúdo contido 0,8).
+  Mesmo enunciado sobre OUTRO texto de apoio = questão nova. Logs técnicos via `logIA`
+  (`[EstudaMais] exercicios.tentativa {...}`: contagens, posições, códigos, similaridade — nunca
+  prompt, documento, chave ou dados de alunos).
 - O gerar agora também traz `explicacao` por questão: fica em `L._explicacoesNovas` com a
   "assinatura" da questão e vai ao Firestore no Salvar só se a questão não foi editada.
 - Aluno: `blocoApoioHtml` mostra instrução → texto (bloco `.q-apoio`, `pre-wrap`, `lang="en"` em
@@ -277,8 +289,7 @@ Regras necessárias em `firestore.rules` (ponto de partida; ver arquivo no repo)
   (mesma quantidade/dificuldade/tipos, lista as questões atuais para não repetir, usa o
   texto de estudo em cache) → `parseExerciciosIA(texto,{estrito:true})` → `validarExerciciosRegenerados`
   (quantidade, alternativas completas/distintas, 1 correta, lacuna com `___`, `explicacao`
-  presente, sem duplicadas e sem repetir as atuais via `similaridadeEnunciados`) — 1 nova
-  tentativa se inválido. Só então `gravarExerciciosRegenerados` faz um **batch atômico**:
+  presente, sem duplicadas e sem repetir as atuais via `compararQuestoes`). Só então `gravarExerciciosRegenerados` faz um **batch atômico**:
   `licoes` (exercicios + explicacoes novas + `exerciciosVersao` +1), `licoes_geradas.exercicios`
   (resumo intacto) e apaga `historias_geradas/{id}`. Falha em qualquer etapa → nada muda.
 - `progresso` guarda só totais por lição (+ `exerciciosVersao`), então o histórico continua

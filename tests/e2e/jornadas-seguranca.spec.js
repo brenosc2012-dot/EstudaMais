@@ -137,7 +137,7 @@ test.describe("falha da IA sem perda de conteúdo nem de exercícios", () => {
     expect((await app.doc("licoes_geradas", "L1")).resumo).toBe(RESUMO_ANTIGO);
   });
 
-  test("JSON malformado da IA (2 tentativas) ao regenerar exercícios: rejeitado e exercícios preservados", async ({ app, page }) => {
+  test("JSON malformado da IA (3 tentativas) ao regenerar exercícios: rejeitado e exercícios preservados", async ({ app, page }) => {
     const ia = await iaRoteada(page, [{ se: PROMPT.regenerarExercicios, resposta: "isto não é JSON {[" }]);
     await app.abrir({ seed: bancoComResumo(), sessao: PROF });
     await abrirEditorL1(page);
@@ -145,8 +145,8 @@ test.describe("falha da IA sem perda de conteúdo nem de exercícios", () => {
     page.once("dialog", d => d.accept());
     await page.getByRole("button", { name: /Regenerar exercícios com IA/ }).click();
 
-    await expect(page.getByText(/A IA devolveu questões inválidas.*Os exercícios atuais foram mantidos\./)).toBeVisible();
-    expect(ia.de(PROMPT.regenerarExercicios)).toHaveLength(2);
+    await expect(page.getByText(/Não foi possível gerar 3 questões válidas após 3 tentativas \(0 aprovadas\)\. Os exercícios atuais foram mantidos\./)).toBeVisible();
+    expect(ia.de(PROMPT.regenerarExercicios)).toHaveLength(3);
     expect(await app.doc("licoes", "L1")).toEqual(antes);
   });
 });

@@ -4076,7 +4076,12 @@ function escopoLicaoLabel(l){
 }
 function teacherSelectSubj(v){ Teacher.subj=v; render(); }
 
-function resetIaEstado(){ Teacher.gerando=false; Teacher.regenerando=false; Teacher.regenerandoEx=false;Teacher.previewing=false; Teacher.iaErro=""; Teacher.iaConfigAberta=false; Teacher.iaTeste=null; }
+// Progresso das novas tentativas (painel de IA do professor).
+function mostrarProgressoIA(p){
+  Teacher.iaProgresso = `${p.aprovadas} de ${p.n} questões foram validadas. Estamos gerando ${p.faltam} ${p.faltam===1?"nova questão para substituir a que não foi aprovada":"novas questões para substituir as que não foram aprovadas"}.`;
+  render();
+}
+function resetIaEstado(){ Teacher.gerando=false; Teacher.regenerando=false; Teacher.regenerandoEx=false; Teacher.iaProgresso="";Teacher.previewing=false; Teacher.iaErro=""; Teacher.iaConfigAberta=false; Teacher.iaTeste=null; }
 // Escopo inicial de uma lição nova: se o professor leciona uma única série (ou turma), ela já vem
 // escolhida — evita salvar sem querer para o 1º item da lista (ex.: "1º ano" em vez de "5º ano").
 function escopoInicialNovaLicao(){
@@ -4807,6 +4812,7 @@ function iaPanel(L){
       : (Teacher.regenerando ? 'Regenerando conteúdo' : 'Gerando 15 exercícios');
     return `<div class="ia-panel">
       <div class="ia-loading"><span class="ia-spinner"></span> ${acao} com IA...</div>
+      ${Teacher.iaProgresso ? `<p class="ia-progresso" role="status" style="font-size:13px;color:#555;text-align:center;margin-top:6px;font-weight:700">${esc(Teacher.iaProgresso)}</p>` : ''}
       <p style="font-size:12px;color:#777;text-align:center;margin-top:6px">Isso pode levar alguns segundos.</p>
     </div>`;
   }
@@ -5337,11 +5343,12 @@ async function gerarExerciciosIA(){
   if(!fontes.suficiente){ Teacher.iaErro=MSG_SEM_FONTES; render(); return; }
   if(!iaConfigurada()){ Teacher.iaErro="IA não configurada (chave ou proxy). Peça ao Administrador (⚙️ na tela inicial)."; render(); return; }
 
-  Teacher.gerando=true; Teacher.iaErro=""; render();
+  Teacher.gerando=true; Teacher.iaErro=""; Teacher.iaProgresso=""; render();
 
   const pub = descreverPublicoLicao(L);
   const blocoLingua = blocoLinguaEstrangeira(Teacher.subj, L.titulo);
   const disc = (subjById(Teacher.subj)||{}).nome || "";
+  const acumulando = IA.modo==="acumular" && L.exercicios.length>0;
   const prompt =
 `Você é um professor do ${pub.ano} do ${nomeNivel(pub.nivelId)} (Sistema Positivo).
 Com base nas FONTES DA LIÇÃO "${L.titulo||""}"${disc?` (${disc})`:""}, gere exatamente ${GERAR_EX_QTD} exercícios divididos em:
@@ -5353,6 +5360,8 @@ ${pub.frase}
 Adapte a linguagem para uma criança de aproximadamente ${pub.idade} anos.
 
 Tipos permitidos: "multipla_escolha" (4 opções), "verdadeiro_falso", "completar_lacunas" e "interpretacao".
+
+${regrasVariedadeIA(GERAR_EX_QTD, acumulando)}
 
 REGRAS DE CADA QUESTÃO:
 - "multipla_escolha": exatamente 4 opções diferentes e completas, com UMA só correta; "resposta_correta" = o TEXTO EXATO da opção correta, NUNCA a letra/rótulo (A, B, C, D).
@@ -5368,28 +5377,32 @@ ${regrasFidelidadeIA(Teacher.subj)}
 - Não crie exercícios sobre assuntos que não estejam nas fontes. Se as fontes não tiverem conteúdo suficiente para ${GERAR_EX_QTD} exercícios, responda APENAS: {"erro":"${CONTEXTO_INSUFICIENTE}","motivo":"<motivo em uma frase>"}
 
 Retorne APENAS um JSON válido (um array), sem explicações, no formato:
-${exemploJsonExercicios(Teacher.subj)}${blocoLingua}
+${exemploJsonExercicios(Teacher.subj)}${blocoLingua}${acumulando ? `
+
+EXERCÍCIOS ATUAIS (NÃO repetir):
+${L.exercicios.map((e,i)=>`${i+1}. ${resumoQuestaoIA(e)}`).join("\n")}` : ""}
 
 ${blocoFontesIA(fontes)}`;
 
   try{
     // acumular: as novas não podem repetir as que já estão no editor
     const antigos = IA.modo==="acumular" ? L.exercicios : [];
-    const r = await gerarExerciciosValidados(prompt, GERAR_EX_QTD, antigos, ctxValidacaoLicao(L, Teacher.subj), timeoutComMaterial(45000, fontes.material));
+    const ctxG = Object.assign(ctxValidacaoLicao(L, Teacher.subj), { alvoNiveis:{ facil:5, intermediario:5, dificil:5 }, onProgresso: mostrarProgressoIA });
+    const r = await gerarExerciciosValidados(prompt, GERAR_EX_QTD, antigos, ctxG, timeoutComMaterial(45000, fontes.material));
     const novos = r.exercicios;
     // explicações geradas junto: vão ao Firestore no Salvar (só as de questões não alteradas)
     L._explicacoesNovas = Object.assign(IA.modo==="acumular" ? (L._explicacoesNovas||{}) : {}, assinarExplicacoes(novos, r.explicacoes));
     if(IA.modo==="acumular") L.exercicios = L.exercicios.concat(novos);
     else L.exercicios = novos;
 
-    Teacher.gerando=false; Teacher.iaErro="";
+    Teacher.gerando=false; Teacher.iaErro=""; Teacher.iaProgresso="";
     render();
     const cont = contarPorDificuldade(novos);
     toast(`✨ ${novos.length} exercícios (${cont.facil}F/${cont.intermediario}I/${cont.dificil}D)! Revise e salve.`);
   }catch(err){
     // nada muda no editor: exercícios válidos não são trocados por uma geração incompleta
-    Teacher.gerando=false;
-    Teacher.iaErro = mensagemErroIA(err) + " Os exercícios atuais foram mantidos.";
+    Teacher.gerando=false; Teacher.iaProgresso="";
+    Teacher.iaErro = err && err.completa ? err.message : mensagemErroIA(err) + " Os exercícios atuais foram mantidos.";
     render();
   }
 }
@@ -5436,7 +5449,12 @@ function jsonParseTolerante(s){
 // também guarda a justificativa da IA em `_explicacao` (removida antes de salvar).
 function parseExerciciosIA(texto, opts){
   const estrito = !!(opts && opts.estrito);
-  const rejeitar = motivo=>{ if(opts && opts.rejeitados) opts.rejeitados.push(motivo); };
+  // rejeição com a POSIÇÃO na resposta da IA (começa em 1) e um código de categoria
+  const rejeitar = (k, codigo, texto)=>{
+    if(!(opts && opts.rejeitados)) return;
+    const it = arr && arr[k];
+    opts.rejeitados.push({ pos:k+1, codigo, texto, enunciado:String((it && (it.enunciado||it.pergunta||it.question))||"").slice(0,120) });
+  };
   if(!texto) return [];
   let s = texto.trim();
   // remove cercas de código ```json ... ```
@@ -5444,14 +5462,13 @@ function parseExerciciosIA(texto, opts){
   // tenta extrair o array, caso venha com texto ao redor
   const ini=s.indexOf("["), fim=s.lastIndexOf("]");
   if(ini>=0 && fim>ini) s = s.slice(ini, fim+1);
-  const arr = jsonParseTolerante(s);
+  var arr = jsonParseTolerante(s); // var: usado por rejeitar() (declarado antes)
   if(!Array.isArray(arr)) return [];
 
   const out=[];
   arr.forEach((item,k)=>{
-    const q = "questão "+(k+1);
     const enunciado = item && (item.enunciado || item.pergunta || item.question);
-    if(!item || !enunciado){ rejeitar(q+": sem enunciado"); return; }
+    if(!item || !enunciado){ rejeitar(k, "enunciado", "sem enunciado"); return; }
     item = Object.assign({}, item, { enunciado,
       opcoes: item.opcoes || item.options,
       resposta_correta: item.resposta_correta!=null ? item.resposta_correta : item.correctAnswer,
@@ -5468,23 +5485,23 @@ function parseExerciciosIA(texto, opts){
     let ex;
     if(tipo.indexOf("verdadeiro")>=0 || tipo==="vf"){
       const v = norm(resp);
-      if(estrito && !/^(v|f|true|false)/.test(v)){ rejeitar(q+": V/F sem resposta válida"); return; }
+      if(estrito && !/^(v|f|true|false)/.test(v)){ rejeitar(k, "resposta", "V/F sem resposta válida"); return; }
       ex = { id:uid(), tipo:"vf", nivel, enunciado:String(item.enunciado),
         opcoes:["Verdadeiro","Falso"], correta:(v.charAt(0)==="v"||v==="true"||v==="1")?0:1 };
     } else if(tipo.indexOf("lacuna")>=0 || tipo.indexOf("completar")>=0 || tipo==="fill"){
       ex = { id:uid(), tipo:"fill", nivel, enunciado:String(item.enunciado), resposta:String(resp==null?"":resp) };
-      if(estrito && !ex.resposta.trim()){ rejeitar(q+": lacuna sem resposta"); return; }
-      if(estrito && !/_{2,}/.test(ex.enunciado)){ rejeitar(q+": lacuna sem ___ no enunciado"); return; }
+      if(estrito && !ex.resposta.trim()){ rejeitar(k, "resposta", "lacuna sem resposta"); return; }
+      if(estrito && !/_{2,}/.test(ex.enunciado)){ rejeitar(k, "formato", "lacuna sem ___ no enunciado"); return; }
     } else { // múltipla escolha (padrão)
       let opcoes = Array.isArray(item.opcoes)? item.opcoes.map(o=>String(o)) : [];
-      if(opcoes.length<2){ rejeitar(q+": alternativas insuficientes"); return; }
+      if(opcoes.length<2){ rejeitar(k, "resposta", "alternativas insuficientes"); return; }
       if(estrito){
-        if(opcoes.length<3 || opcoes.length>6 || opcoes.some(o=>!o.trim())){ rejeitar(q+": alternativas incompletas"); return; }
-        if(new Set(opcoes.map(norm)).size!==opcoes.length){ rejeitar(q+": alternativas repetidas"); return; }
+        if(opcoes.length<3 || opcoes.length>6 || opcoes.some(o=>!o.trim())){ rejeitar(k, "resposta", "alternativas incompletas"); return; }
+        if(new Set(opcoes.map(norm)).size!==opcoes.length){ rejeitar(k, "resposta", "alternativas repetidas"); return; }
         // exatamente UMA opção igual à resposta (ou, na falta, uma letra A–F válida)
         const iguais = opcoes.filter(o=>norm(o)===norm(resp)).length;
         const letraOk = /^[a-f]$/i.test(String(resp==null?"":resp).trim()) && (String(resp).trim().toUpperCase().charCodeAt(0)-65)<opcoes.length;
-        if(iguais!==1 && !(iguais===0 && letraOk)){ rejeitar(q+": resposta correta ausente ou ambígua"); return; }
+        if(iguais!==1 && !(iguais===0 && letraOk)){ rejeitar(k, "resposta", "resposta correta ausente ou ambígua"); return; }
       }
       ex = { id:uid(), tipo:"mc", nivel, enunciado:String(item.enunciado), opcoes, correta:acharIndiceCorreto(opcoes, resp) };
     }
@@ -5493,81 +5510,247 @@ function parseExerciciosIA(texto, opts){
     if(apoio) ex.textoApoio = apoio;
     if(instr) ex.instrucao = instr;
     if(interp) ex._exigeApoio = true;
+    ex._pos = k+1; // posição na resposta da IA (mensagens e logs); removida antes de salvar
     if(estrito) ex._explicacao = String(item.explicacao||"").trim();
     out.push(ex);
   });
   return out;
 }
 
-// Semelhança entre dois enunciados (Jaccard das palavras com 3+ letras e dos números; 0 a 1).
-// Números contam: em Matemática "3 x 4" e "5 x 6" são questões diferentes.
-function similaridadeEnunciados(a, b){
-  const pal = s=> new Set(norm(s).split(/[^a-z0-9]+/).filter(w=>w.length>=3 || /^\d+$/.test(w)));
-  const A=pal(a), B=pal(b);
-  if(!A.size || !B.size) return norm(a)===norm(b) ? 1 : 0;
-  let inter=0; A.forEach(w=>{ if(B.has(w)) inter++; });
-  return inter/(A.size+B.size-inter);
+// ----- DUPLICIDADE DE QUESTÕES (gerar/regenerar) -----
+// Compara o QUE a questão cobra, não o "molde" da frase. Antes, só o enunciado inteiro era
+// comparado: "…palavra em inglês para 'pé'?" × "…para 'maçã'?" dava 0,80 (recusada como igual,
+// embora peça outra palavra), e "Como se diz 'maçã'…" × "…palavra em inglês para 'maçã'?" dava 0,29
+// (aceita, embora seja a mesma questão). Agora:
+//  - palavras funcionais e de molde ("qual", "palavra", "inglês", "como se diz"...) não contam;
+//    negações ("não", "not") contam — "é uma vogal" ≠ "não é uma vogal";
+//  - mesma resposta correta + enunciado parecido → mesma questão reformulada;
+//  - mesmas palavras e só números trocados → reformulação superficial;
+//  - mesmo enunciado sobre OUTRO texto de apoio → questão diferente.
+// Limiares (0 a 1, Jaccard das palavras de conteúdo):
+const DUP_QUASE_IGUAL = 0.85;   // conteúdo quase igual → reformulação superficial (mesmo com outra resposta)
+const DUP_MESMA_RESPOSTA = 0.5; // mesma resposta correta e conteúdo ≥ isto → mesma questão reformulada
+const DUP_MESMA_RESPOSTA_MESMO_TEXTO = 0.25; // idem, sobre o MESMO texto de apoio (mesma informação do texto)
+const DUP_MESMA_RESPOSTA_CONTIDO = 0.8; // mesma resposta e o conteúdo de uma está (quase) todo na outra: "…'pé'?" × "…'pé'? (parte do corpo)"
+const DUP_MIN_PALAVRAS_NUMEROS = 2; // regra "só trocou números" exige ≥2 palavras (3+ letras): pega problema contextualizado, não "Quanto é 3 x 4?"
+const PALAVRAS_MOLDE = new Set(["qual","quais","como","diz","dizer","palavra","palavras","ingles","portugues","traducao","traduza","traduzir",
+  "significa","significado","escreva","escolha","marque","assinale","complete","completa","frase","correta","correto","alternativa","opcao",
+  "resposta","responda","questao","verdadeiro","falso","what","which","word","words","english","portuguese","translate","translation","means",
+  "mean","choose","correct","answer","sentence","a","e","o","ou","em","ao","aos","dos","das","nos","nas","pela","pelo","sua","seu","say"]);
+const NEGACOES = new Set(["nao","not","no","never","nunca","nenhum","nenhuma"]);
+function tokensConteudo(t){
+  // norm() antes: "inglês"/"não" viram "ingles"/"nao" e casam com as listas (sem acento)
+  return palavrasDe(norm(t)).filter(w=> NEGACOES.has(w) || !(PALAVRAS_PT.has(w) || PALAVRAS_EN.has(w) || PALAVRAS_MOLDE.has(w) || PALAVRAS_VAZIAS.has(w)));
 }
-const REGEN_SIMILAR_ANTIGA = 0.7; // acima disso a questão nova é "igual" a uma atual
-const REGEN_SIMILAR_NOVA = 0.85;  // entre as novas: acima disso é duplicada
+function jaccardConj(A, B){
+  if(!A.size && !B.size) return 1;
+  let i=0; A.forEach(x=>{ if(B.has(x)) i++; });
+  return i/(A.size+B.size-i);
+}
+// Texto da resposta correta (V/F não informa: "Verdadeiro" é resposta de muitas questões).
+function respostaCorretaTexto(ex){
+  if(!ex) return "";
+  if(ex.tipo==="fill") return String(ex.resposta||"");
+  if(ex.tipo==="mc") return String((ex.opcoes||[])[ex.correta]||"");
+  return "";
+}
+// → { tipo: "identica" | "superficial" | "semelhante" | "diferente", score } (score = Jaccard do conteúdo)
+function compararQuestoes(a, b){
+  const limpo = t => norm(t).replace(/[^a-z0-9]+/g," ").trim();
+  const apoioIgual = limpo(a.textoApoio||"") === limpo(b.textoApoio||"");
+  if(limpo(a.enunciado) && limpo(a.enunciado)===limpo(b.enunciado) && apoioIgual) return { tipo:"identica", score:1 };
+  const ta = tokensConteudo(a.enunciado), tb = tokensConteudo(b.enunciado);
+  const score = jaccardConj(new Set(ta), new Set(tb));
+  const semNum = arr => new Set(arr.filter(w=>!/^\d+$/.test(w) && w.length>=3)); // "x" de "3 x 4" não é palavra
+  const pa = semNum(ta), pb = semNum(tb);
+  if(apoioIgual && pa.size>=DUP_MIN_PALAVRAS_NUMEROS && jaccardConj(pa,pb)===1 && score<1) return { tipo:"superficial", score };
+  if(apoioIgual && score>=DUP_QUASE_IGUAL) return { tipo:"superficial", score };
+  const ra = norm(respostaCorretaTexto(a)), rb = norm(respostaCorretaTexto(b));
+  const mesmoTexto = apoioIgual && limpo(a.textoApoio||"")!=="";
+  if(ra && ra===rb){
+    const A = new Set(ta), B = new Set(tb); let inter = 0; A.forEach(x=>{ if(B.has(x)) inter++; });
+    const contido = Math.min(A.size, B.size) ? inter/Math.min(A.size, B.size) : 0; // fração da menor contida na maior
+    if(score>=(mesmoTexto ? DUP_MESMA_RESPOSTA_MESMO_TEXTO : DUP_MESMA_RESPOSTA) || contido>=DUP_MESMA_RESPOSTA_CONTIDO) return { tipo:"semelhante", score };
+  }
+  return { tipo:"diferente", score };
+}
+const ROTULO_DUPLICIDADE = { identica:"igual a", superficial:"reformulação superficial de", semelhante:"mesma pergunta (mesma resposta) que" };
 
-// Valida as questões regeneradas ANTES de substituir as atuais. Recebe o que o parser
-// estrito aceitou e devolve { ok, exercicios, explicacoes, erro }. Só dá ok com
-// exatamente `n` questões completas, sem duplicadas e sem repetir as atuais.
-// opts: { subjId, idade, fontes (texto das fontes), exigirExplicacao (padrão true) }
+// Valida um lote de questões vindo da IA ANTES de qualquer substituição. Cada questão passa por
+// TODOS os critérios (pode ter mais de um motivo) e é identificada pela posição na resposta da IA
+// (começa em 1 — a mesma usada pelo parser). `n` = quantas questões este lote precisa trazer.
+// opts: { subjId, idade, fontes, exigirExplicacao (padrão true), aprovadas (já aceitas antes) }
+// → { ok, aceitos (brutos), exercicios, explicacoes, rejeicoes:[{pos, codigos, detalhes, enunciado, score}],
+//     recebidas, faltaram, erro }
 function validarExerciciosRegenerados(novos, antigos, n, rejeitados, opts){
   opts = opts || {};
-  const motivos = (rejeitados||[]).slice();
+  const rejeicoes = (rejeitados||[]).map(r=>({ pos:r.pos, codigos:[r.codigo], detalhes:[r.texto], enunciado:r.enunciado||"", score:null }));
   const aceitos = [];
+  const jaAprovadas = (opts.aprovadas||[]).slice();
   (novos||[]).forEach((ex,k)=>{
-    const q = "questão "+(k+1);
+    const pos = ex._pos || (k+1);
+    const codigos=[], detalhes=[]; let score=null;
+    const add = (codigo, texto)=>{ if(codigos.indexOf(codigo)<0){ codigos.push(codigo); } detalhes.push(texto); };
     const enun = String(ex.enunciado||"").trim();
-    if(enun.length<8){ motivos.push(q+": enunciado vazio ou curto demais"); return; }
-    if(["mc","vf","fill"].indexOf(ex.tipo)<0){ motivos.push(q+": tipo não suportado"); return; }
-    if(ex.tipo!=="fill" && !(ex.correta>=0 && ex.correta<(ex.opcoes||[]).length)){ motivos.push(q+": sem resposta correta"); return; }
-    if(opts.exigirExplicacao!==false && String(ex._explicacao||"").length<20){ motivos.push(q+": sem explicação da resposta"); return; }
+    if(enun.length<8) add("enunciado", "enunciado vazio ou curto demais");
+    if(["mc","vf","fill"].indexOf(ex.tipo)<0) add("tipo", "tipo não suportado");
+    else if(ex.tipo!=="fill" && !(ex.correta>=0 && ex.correta<(ex.opcoes||[]).length)) add("resposta", "sem resposta correta");
+    if(opts.exigirExplicacao!==false && String(ex._explicacao||"").length<20) add("explicacao", "sem explicação da resposta");
     const pa = problemaTextoApoio(ex, opts);
-    if(pa){ motivos.push(q+": "+pa); return; }
-    if(!relacionadaAsFontes(ex, opts)){ motivos.push(q+": sem relação com as fontes da lição"); return; }
-    if((antigos||[]).some(a=>similaridadeEnunciados(a.enunciado, enun)>=REGEN_SIMILAR_ANTIGA)){ motivos.push(q+": igual/parecida com uma questão atual"); return; }
-    if(aceitos.some(a=>similaridadeEnunciados(a.enunciado, enun)>=REGEN_SIMILAR_NOVA)){ motivos.push(q+": duplicada"); return; }
-    aceitos.push(ex);
+    if(pa) add(codigoProblemaApoio(pa), pa);
+    if(!relacionadaAsFontes(ex, opts)) add("fontes", "sem relação com as fontes da lição");
+    for(const a of (antigos||[])){
+      const c = compararQuestoes(ex, a);
+      if(c.tipo!=="diferente"){ score=c.score; add("repetida_atual", `${ROTULO_DUPLICIDADE[c.tipo]} uma questão atual ("${String(a.enunciado||"").slice(0,80)}")`); break; }
+    }
+    for(const a of jaAprovadas.concat(aceitos)){
+      const c = compararQuestoes(ex, a);
+      if(c.tipo!=="diferente"){ score = score==null ? c.score : Math.max(score, c.score); add("duplicada", `${ROTULO_DUPLICIDADE[c.tipo]} outra questão nova ("${String(a.enunciado||"").slice(0,80)}")`); break; }
+    }
+    if(codigos.length) rejeicoes.push({ pos, codigos, detalhes, enunciado:enun.slice(0,120), score, idTemp:ex.id });
+    else aceitos.push(ex);
   });
-  if(aceitos.length<n){
-    const resumo = motivos.slice(0,3).join("; ") + (motivos.length>3 ? `; +${motivos.length-3}` : "");
-    return { ok:false, erro:`${aceitos.length} de ${n} questões válidas${resumo?" — "+resumo:""}` };
-  }
+  rejeicoes.sort((a,b)=>a.pos-b.pos);
+  const recebidas = (novos||[]).length + (rejeitados||[]).length;
+  const faltaram = Math.max(0, n - recebidas);
+  const r = { ok: aceitos.length>=n, aceitos, rejeicoes, recebidas, faltaram, exercicios:[], explicacoes:{}, erro:"" };
+  if(!r.ok){ r.erro = `${aceitos.length} de ${n} questões válidas — ${descreverRejeicoes(r)}`; return r; }
+  Object.assign(r, finalizarExercicios(aceitos.slice(0,n)));
+  return r;
+}
+// Remove os campos temporários e separa as explicações (vão para licoes.explicacoes[id]).
+function finalizarExercicios(lista){
   const exercicios=[], explicacoes={};
-  aceitos.slice(0,n).forEach(ex=>{
-    const limpo=Object.assign({}, ex); delete limpo._explicacao; delete limpo._exigeApoio;
+  lista.forEach(ex=>{
+    const limpo=Object.assign({}, ex); delete limpo._explicacao; delete limpo._exigeApoio; delete limpo._pos;
     exercicios.push(limpo); if(ex._explicacao) explicacoes[limpo.id]=ex._explicacao;
   });
-  return { ok:true, exercicios, explicacoes, erro:"" };
+  return { exercicios, explicacoes };
+}
+function codigoProblemaApoio(pa){
+  if(/não veio/.test(pa)) return "apoio_ausente";
+  if(/idioma/.test(pa)) return "apoio_idioma";
+  if(/curto demais|longo demais/.test(pa)) return "apoio_tamanho";
+  if(/sem relação/.test(pa)) return "apoio_relacao";
+  if(/entrega a resposta/.test(pa)) return "apoio_resposta";
+  return "apoio";
+}
+const ROTULO_REJEICAO = {
+  repetida_atual:"semelhança com exercícios atuais", duplicada:"repetição entre as novas questões",
+  resposta:"resposta ou alternativas inválidas", formato:"formato inválido", apoio_ausente:"ausência de texto de apoio",
+  apoio:"texto de apoio inadequado", apoio_idioma:"idioma do texto ou da pergunta diferente do esperado",
+  apoio_tamanho:"texto de apoio com tamanho inadequado para a série", apoio_relacao:"pergunta sem relação com o texto de apoio",
+  apoio_resposta:"instrução que entrega a resposta", explicacao:"falta de explicação", enunciado:"enunciado inválido",
+  tipo:"tipo de questão não suportado", fontes:"conteúdo fora das fontes da lição",
+};
+function juntarNumeros(ns){ return ns.length<=1 ? String(ns[0]) : ns.slice(0,-1).join(", ")+" e "+ns[ns.length-1]; }
+// Texto para o professor: TODAS as rejeições agrupadas por motivo (numeração a partir de 1) + o que
+// a IA deixou de mandar. Sem prompt, sem resposta bruta.
+function descreverRejeicoes(r){
+  if(!r) return "nenhuma questão foi recebida";
+  const partes=[];
+  const nRej = r.rejeicoes.length;
+  if(nRej){
+    const grupos = [];
+    r.rejeicoes.forEach(x=> x.codigos.forEach(c=>{ let g=grupos.find(y=>y.c===c); if(!g){ g={ c, pos:[] }; grupos.push(g); } if(g.pos.indexOf(x.pos)<0) g.pos.push(x.pos); }));
+    const txt = grupos.map(g=>`${g.pos.length>1?"questões":"questão"} ${juntarNumeros(g.pos.sort((a,b)=>a-b))} por ${ROTULO_REJEICAO[g.c]||g.c}`).join("; ");
+    partes.push(`${nRej===1?"foi rejeitada 1 questão":`foram rejeitadas ${nRej} questões`}: ${txt}`);
+  }
+  if(r.faltaram>0) partes.push(`a IA enviou ${r.faltaram} ${r.faltaram===1?"questão":"questões"} a menos que o pedido`);
+  return partes.length ? partes.join(". Além disso, ") : "nenhuma questão válida foi recebida";
 }
 
 // ----- REGENERAR EXERCÍCIOS (professor) -----
 // Troca as questões de uma lição JÁ SALVA por questões novas, sem mexer no texto de estudo
 // (resumo em licoes_geradas / resumoIA). Ordem segura: gera → valida tudo → grava num
 // batch atômico. Qualquer falha antes do commit deixa os exercícios atuais intactos.
-const REGEN_EX_TENTATIVAS = 2; // se a IA devolver algo inválido, pede mais uma vez
+// Tentativas por geração: a 1ª pede todas; as seguintes pedem SÓ as que faltaram (com as já
+// aprovadas e as rejeitadas + motivos). Nada é gravado até o conjunto completo ser aprovado.
+const REGEN_EX_TENTATIVAS = 3;
 // Contexto da validação (idioma, idade, fontes) de uma lição em edição.
 function ctxValidacaoLicao(L, subjId){
   const f = fontesDaLicao(L);
-  return { subjId, idade: descreverPublicoLicao(L).idade, fontes: [L.titulo, f.texto, f.material].join("\n") };
+  return { subjId, idade: descreverPublicoLicao(L).idade, fontes: [L.titulo, f.texto, f.material].join("\n"), licaoId: L.id || "(nova)" };
 }
-// Chama a IA e só devolve exercícios que passaram na validação estrita (usado por GERAR e
-// REGENERAR). Fora do padrão → pede mais uma vez; "contexto insuficiente" → para na hora.
+// Log técnico estruturado: contagens, posições, códigos de motivo e similaridade. Nunca prompt,
+// documentos, resposta bruta, chave de API ou dados de alunos.
+function logIA(evento, dados){ try{ console.info("[EstudaMais] "+evento+" "+JSON.stringify(dados)); }catch(_){} }
+// Chama a IA e só devolve o conjunto COMPLETO de `n` exercícios aprovados (usado por GERAR e
+// REGENERAR). Questões válidas ficam em memória; as inválidas são pedidas de novo (só a quantidade
+// que falta), até REGEN_EX_TENTATIVAS. "Contexto insuficiente" encerra na hora.
+// ctx: validação + { licaoId, alvoNiveis, onProgresso({ aprovadas, n, faltam, tentativa }) }
 async function gerarExerciciosValidados(prompt, n, antigos, ctx, timeoutMs){
-  let r = null;
-  for(let t=0; t<REGEN_EX_TENTATIVAS && !(r && r.ok); t++){
-    const texto = await chamarIA(prompt, timeoutMs);
+  ctx = ctx || {};
+  const aprovadas = [];
+  const historico = []; // uma entrada por tentativa, para a mensagem final (numeração de cada tentativa)
+  let ultimo = null, t = 0;
+  while(aprovadas.length<n && t<REGEN_EX_TENTATIVAS){
+    t++;
+    const falta = n - aprovadas.length;
+    const p = t===1 ? prompt : prompt + "\n\n" + blocoReposicaoIA(t, falta, aprovadas, ultimo, ctx);
+    const texto = await chamarIA(p, timeoutMs);
     const semBase = motivoSemContexto(texto);
     if(semBase!==null) throw new Error(`O texto explicativo e os documentos não têm conteúdo suficiente para gerar os exercícios (${semBase}). Complete o texto explicativo ou importe um documento.`);
     const rejeitados = [];
-    r = validarExerciciosRegenerados(parseExerciciosIA(texto, { estrito:true, rejeitados }), antigos, n, rejeitados, ctx);
+    const r = validarExerciciosRegenerados(parseExerciciosIA(texto, { estrito:true, rejeitados }), antigos, falta, rejeitados, Object.assign({}, ctx, { aprovadas }));
+    const novas = r.aceitos.slice(0, falta);
+    aprovadas.push(...novas);
+    ultimo = r;
+    historico.push({ pedidas:falta, aprovadas:novas.length, r });
+    logIA("exercicios.tentativa", { licaoId:ctx.licaoId, tentativa:t, solicitadas:falta, recebidas:r.recebidas, validas:novas.length,
+      invalidas:r.rejeicoes.length, faltaramNaResposta:r.faltaram,
+      rejeicoes:r.rejeicoes.map(x=>({ posicao:x.pos, idTemp:x.idTemp||null, motivos:x.codigos, similaridade:x.score==null?null:Math.round(x.score*100)/100 })) });
+    if(aprovadas.length<n && t<REGEN_EX_TENTATIVAS && ctx.onProgresso) ctx.onProgresso({ aprovadas:aprovadas.length, n, faltam:n-aprovadas.length, tentativa:t+1 });
   }
-  if(!r.ok) throw new Error("A IA devolveu questões inválidas ("+r.erro+").");
-  return r;
+  if(aprovadas.length<n){
+    logIA("exercicios.falhou", { licaoId:ctx.licaoId, solicitadas:n, aprovadas:aprovadas.length, tentativas:t });
+    const porTentativa = historico.map((x,i)=>`Tentativa ${i+1} (${x.pedidas} pedidas, ${x.aprovadas} aprovadas): ${descreverRejeicoes(x.r)}.`).join(" ");
+    const e = new Error(`Não foi possível gerar ${n} questões válidas após ${t} ${t===1?"tentativa":"tentativas"} (${aprovadas.length} aprovadas). Os exercícios atuais foram mantidos. ${porTentativa}`);
+    e.completa = true; // mensagem final pronta (já diz que os atuais foram mantidos)
+    throw e;
+  }
+  logIA("exercicios.aprovados", { licaoId:ctx.licaoId, solicitadas:n, tentativas:t });
+  return Object.assign({ ok:true, tentativas:t }, finalizarExercicios(aprovadas));
+}
+// Resumo de uma questão para o prompt: enunciado + resposta (sem alternativas, para caber no contexto).
+function resumoQuestaoIA(e){
+  const r = respostaCorretaTexto(e) || (e.tipo==="vf" ? (e.correta===0 ? "verdadeiro" : "falso") : "");
+  return `${String(e.enunciado||"").slice(0,160)}${r ? ` → resposta: ${String(r).slice(0,60)}` : ""}`;
+}
+function faltasPorNivel(alvo, aprovadas){
+  const c = contarPorDificuldade(aprovadas), partes=[];
+  [["facil","fácil","fáceis"],["intermediario","intermediária","intermediárias"],["dificil","difícil","difíceis"]].forEach(([k,um,varios])=>{
+    const f = Math.max(0, (alvo[k]||0) - (c[k]||0)); if(f) partes.push(`${f} ${f===1?um:varios}`);
+  });
+  return partes.join(", ");
+}
+// Bloco acrescentado ao prompt nas novas tentativas: quantidade exata que falta + aprovadas +
+// rejeitadas com os motivos (para a IA não repetir os mesmos problemas).
+function blocoReposicaoIA(t, falta, aprovadas, ultimo, ctx){
+  const aprov = aprovadas.map((e,i)=>`${i+1}. ${resumoQuestaoIA(e)}`).join("\n");
+  const rej = ((ultimo && ultimo.rejeicoes)||[]).slice(0,20).map(r=>`- "${r.enunciado||"(sem enunciado)"}" — ${r.detalhes.join("; ")}`).join("\n");
+  const niveis = ctx && ctx.alvoNiveis ? faltasPorNivel(ctx.alvoNiveis, aprovadas) : "";
+  return `REPOSIÇÃO — TENTATIVA ${t} DE ${REGEN_EX_TENTATIVAS} (esta instrução substitui a quantidade pedida acima)
+Já foram aprovadas ${aprovadas.length} questões. Gere agora EXATAMENTE ${falta} ${falta===1?"questão NOVA":"questões NOVAS"}, sem reenviar as aprovadas.${niveis ? `
+Dificuldade das que faltam: ${niveis}.` : ""}
+As novas não podem repetir nem reformular as questões atuais, as aprovadas abaixo ou as rejeitadas.
+
+QUESTÕES JÁ APROVADAS (não repetir):
+${aprov || "(nenhuma)"}${rej ? `
+
+QUESTÕES REJEITADAS NA TENTATIVA ANTERIOR (não repita os mesmos problemas):
+${rej}` : ""}
+
+Retorne APENAS um array JSON com ${falta} ${falta===1?"questão":"questões"}, no mesmo formato pedido acima.`;
+}
+// Regras de variedade/quantidade comuns aos prompts de gerar e regenerar.
+function regrasVariedadeIA(n, temAtuais){
+  return `VARIEDADE E QUANTIDADE
+- Gere EXATAMENTE ${n} questões, todas completas (enunciado, alternativas ou resposta, e explicação) e no formato JSON pedido.
+- Nenhuma questão pode repetir ou só reformular ${temAtuais ? "uma questão atual (listadas no fim) nem " : ""}outra questão nova.
+- Trocar só nomes, números, a ordem das alternativas ou algumas palavras NÃO cria uma questão nova.
+- Cada questão deve cobrar um conceito, trecho, exemplo ou habilidade DIFERENTE das fontes; o mesmo tema pode se repetir se a informação cobrada for outra.
+- Tudo fundamentado no texto explicativo e nos documentos da lição; questões de interpretação trazem o texto de apoio.`;
 }
 // JSON de exemplo comum aos prompts de exercícios (inclui a questão de interpretação).
 function exemploJsonExercicios(subjId){
@@ -5590,7 +5773,7 @@ function montarPromptRegenerarExercicios(L, atuais, n, resumo, subjId){
   const tipos = { mc:0, vf:0, fill:0 };
   atuais.forEach(e=>{ if(tipos[e.tipo]!==undefined) tipos[e.tipo]++; });
   const nInterp = atuais.filter(e=>String(e.textoApoio||"").trim()).length;
-  const listaAtuais = atuais.map((e,i)=>`${i+1}. ${String(e.enunciado||"").slice(0,220)}`).join("\n");
+  const listaAtuais = atuais.map((e,i)=>`${i+1}. ${resumoQuestaoIA(e)}`).join("\n"); // enunciado + resposta
   const blocoLingua = blocoLinguaEstrangeira(subjId, L.titulo);
   return `Você é um professor do ${pub.ano} do ${nomeNivel(pub.nivelId)} (Sistema Positivo).
 Os exercícios atuais da lição "${L.titulo}"${disc?` (${disc})`:""} serão SUBSTITUÍDOS. Crie exatamente ${n} exercícios NOVOS.
@@ -5603,7 +5786,7 @@ MANTENHA:
 ${pub.frase}
 Adapte a linguagem para uma criança de aproximadamente ${pub.idade} anos.
 
-AS QUESTÕES DEVEM SER DIFERENTES DAS ATUAIS (listadas no fim): não repita enunciados, não mude só números ou nomes — explore outros aspectos, situações e exemplos do mesmo conteúdo. Não repita questões entre si.
+${regrasVariedadeIA(n, true)}
 
 REGRAS DE CADA QUESTÃO:
 - "multipla_escolha": exatamente 4 opções diferentes e completas, com UMA só correta; "resposta_correta" = o TEXTO EXATO da opção correta (nunca a letra A/B/C/D).
@@ -5664,7 +5847,7 @@ async function regenerarExerciciosIA(){
   if(!fontesDaLicao(L).suficiente){ Teacher.iaErro=MSG_SEM_FONTES; render(); return; }
   if(!iaConfigurada()){ Teacher.iaErro="IA não configurada (chave ou proxy). Peça ao Administrador (⚙️ na tela inicial)."; render(); return; }
   if(!confirm("A regeneração substituirá os exercícios atuais por novas questões. As tentativas e respostas relacionadas poderão ser afetadas. Deseja continuar?")) return;
-  Teacher.regenerandoEx=true; Teacher.iaErro=""; render();
+  Teacher.regenerandoEx=true; Teacher.iaErro=""; Teacher.iaProgresso=""; render();
   const licaoId=L.id, disc=Teacher.subj;
   try{
     // evita repetir tanto o que está no editor quanto o que está salvo
@@ -5673,16 +5856,20 @@ async function regenerarExerciciosIA(){
     const cache=await getLicaoGerada(licaoId);
     const resumo=(cache && cache.resumo) || (salva && salva.resumoIA) || resumoCache[licaoId] || "";
     const prompt=montarPromptRegenerarExercicios(L, atuais, n, resumo, disc);
-    const r=await gerarExerciciosValidados(prompt, n, antigos, ctxValidacaoLicao(L, disc), timeoutComMaterial(45000, L.materialTexto));
+    const cont0=contarPorDificuldade(atuais), semNivel0=n-cont0.facil-cont0.intermediario-cont0.dificil;
+    const ctxR=Object.assign(ctxValidacaoLicao(L, disc), { alvoNiveis:{ facil:cont0.facil, intermediario:cont0.intermediario+semNivel0, dificil:cont0.dificil }, onProgresso: mostrarProgressoIA });
+    const r=await gerarExerciciosValidados(prompt, n, antigos, ctxR, timeoutComMaterial(45000, L.materialTexto));
     await gravarExerciciosRegenerados(licaoId, disc, r.exercicios, r.explicacoes);
+    logIA("regenerar.gravado", { licaoId, exercicios:r.exercicios.length, tentativas:r.tentativas });
     // o editor só é atualizado se o professor ainda está nesta lição
     if(Teacher.editingLesson && Teacher.editingLesson.id===licaoId) Teacher.editingLesson.exercicios=r.exercicios.map(e=>JSON.parse(JSON.stringify(e)));
     const c=contarPorDificuldade(r.exercicios);
     toast(`✅ ${r.exercicios.length} exercícios novos salvos (${c.facil}F/${c.intermediario}I/${c.dificil}D)!`);
   }catch(err){
-    Teacher.iaErro = mensagemErroIA(err)+" Os exercícios atuais foram mantidos.";
+    Teacher.iaErro = err && err.completa ? err.message : mensagemErroIA(err)+" Os exercícios atuais foram mantidos.";
+    logIA("regenerar.mantido", { licaoId, motivo: err && err.completa ? "validacao" : ((err && err.message)==="timeout" ? "timeout" : "erro_ia_ou_gravacao") });
   }finally{
-    Teacher.regenerandoEx=false; render();
+    Teacher.regenerandoEx=false; Teacher.iaProgresso=""; render();
   }
 }
 // Normaliza o nível de dificuldade vindo da IA (ignora acentos/variações).

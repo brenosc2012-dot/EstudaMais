@@ -10,7 +10,7 @@ const { carregar } = require("../unit/carregar-app");
 const CHAVE = process.env.OPENAI_API_KEY_TESTE;
 const SUBJ = { mat: { id: "mat", nome: "Matemática" } };
 const PURAS = ["norm", "uid", "tipoLabel", "nivelDificuldadeLabel", "contarPorDificuldade", "normalizarNivelDif", "acharIndiceCorreto",
-  "sanitizarControlesJson", "jsonParseTolerante", "parseExerciciosIA", "similaridadeEnunciados", "validarExerciciosRegenerados",
+  "sanitizarControlesJson", "jsonParseTolerante", "parseExerciciosIA", "compararQuestoes", "validarExerciciosRegenerados",
   "ehLinguaEstrangeira", "blocoLinguaEstrangeira", "limitePalavrasResumo", "montarPromptResumo", "montarPromptRegenerarExercicios"];
 
 async function chamar(prompt) {
@@ -28,7 +28,7 @@ async function chamar(prompt) {
 if (!CHAVE) {
   console.log("tests/opcional: OPENAI_API_KEY_TESTE não definida — suíte da IA real não registrada.");
 } else {
-  const ctx = carregar({ funcoes: PURAS, constantes: ["REGEN_SIMILAR_ANTIGA", "REGEN_SIMILAR_NOVA", "LINGUAS_ESTRANGEIRAS"], stubs: {
+  const ctx = carregar({ funcoes: PURAS, constantes: ["LINGUAS_ESTRANGEIRAS"], stubs: {
     subjById: id => SUBJ[id], nomeNivel: () => "Ensino Fundamental I",
     descreverPublicoLicao: () => ({ ano: "3º ano", nivelId: "fund1", idade: 8, frase: "Adapte a linguagem para um aluno do 3º ano, com 8 anos." }),
   } });

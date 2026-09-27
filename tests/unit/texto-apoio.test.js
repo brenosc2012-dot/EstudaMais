@@ -86,7 +86,8 @@ test("validarExerciciosRegenerados: várias perguntas com o mesmo texto; limpa c
   assert.ok(r.exercicios.every(e => e.textoApoio === ANNA && !("_exigeApoio" in e) && !("_explicacao" in e)));
   const r3 = c.validarExerciciosRegenerados(exs, [], 3, [], { subjId: "ing", idade: 11 });
   assert.equal(r3.ok, false);
-  assert.match(r3.erro, /2 de 3 questões válidas — questão 3: a pergunta depende de um texto que não veio/);
+  assert.match(r3.erro, /^2 de 3 questões válidas — foi rejeitada 1 questão: questão 3 por ausência de texto de apoio$/);
+  assert.match(r3.rejeicoes[0].detalhes.join(), /a pergunta depende de um texto que não veio/, "o motivo detalhado vai para o prompt de reposição");
 });
 
 test("relacionadaAsFontes: recusa questão fora das fontes (disciplinas de texto); não se aplica a Matemática/Inglês nem a fontes curtas", () => {

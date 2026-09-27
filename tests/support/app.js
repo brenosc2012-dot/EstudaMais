@@ -106,6 +106,8 @@ async function abrirApp(o) {
   const vc = new VirtualConsole();
   vc.on("jsdomError", e => { if (!/Not implemented: (navigation|window\.scrollTo|HTMLMediaElement)/.test(e.message)) erros.push("jsdom: " + e.message); });
   vc.on("error", (...a) => erros.push("console.error: " + a.map(x => (x && x.stack) || String(x)).join(" ")));
+  const logs = []; // console.info da página (logs técnicos estruturados do app)
+  vc.on("info", (...a) => logs.push(a.map(String).join(" ")));
   const relogio = o.relogio || criarRelogio(o.agora || new Date(2026, 2, 10, 12, 0, 0).getTime());
   const random = typeof o.random === "function" ? o.random : criarRandom(o.random || 7);
   const firebase = o.store || criarFirebaseFake({ seed: o.seed, agora: () => relogio.agora });
@@ -190,7 +192,7 @@ async function abrirApp(o) {
 
   const h = {
     dom, window: w, document: w.document, firebase, store: firebase.__store, ia, fala, sons, relogio, random,
-    confirmacoes, alertas, toasts, erros, compartilhados,
+    confirmacoes, alertas, toasts, erros, compartilhados, logs,
     get App() { return w.App; },
     /** HTML/texto da área principal (#app). */
     html: () => w.document.getElementById("app").innerHTML,

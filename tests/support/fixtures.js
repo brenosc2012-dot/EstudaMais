@@ -84,13 +84,17 @@ const RESUMO_DIDATICO = [
   "Somar é juntar! Você consegue!",
 ].join("\n");
 
+// Personagens e objetos distintos por questão: trocar só os números NÃO cria questão nova
+// (a validação de duplicidade recusa), então cada questão muda também as palavras.
+const NOMES_Q = ["Maria", "João", "Ana", "Pedro", "Luísa", "Caio", "Beatriz", "Rafael", "Sofia", "Gabriel", "Helena", "Davi", "Clara", "Enzo", "Lara", "Theo", "Alice", "Miguel", "Laura", "Arthur"];
+const OBJETOS_Q = ["figurinhas", "bolinhas", "lápis", "balas", "livros", "carrinhos", "adesivos", "bonecas", "moedas", "flores", "pipas", "botões", "tampinhas", "conchas", "cartas", "blocos", "fitas", "chaveiros", "pulseiras", "selos"];
 /** Array JSON de N questões válidas no formato da IA (regenerar/gerar exercícios). */
 function questoesIA(n, extra) {
   const niveis = ["facil", "intermediario", "dificil"];
   return Array.from({ length: n }, (_, i) => Object.assign({
     nivel: niveis[Math.floor(i * 3 / Math.max(n, 1))] || "facil",
     tipo: "multipla_escolha",
-    enunciado: `Maria tinha ${i + 10} figurinhas e ganhou ${i + 20}. Quantas figurinhas ela tem agora?`,
+    enunciado: `${NOMES_Q[i % 20]} tinha ${i + 10} ${OBJETOS_Q[i % 20]} e ganhou ${i + 20}. Quantas ${OBJETOS_Q[i % 20]} tem agora?`.replace("Quantas figurinhas tem agora?", "Quantas figurinhas ela tem agora?"),
     opcoes: [String(2 * i + 30), String(2 * i + 31), String(2 * i + 29), String(2 * i + 40)],
     resposta_correta: String(2 * i + 30),
     explicacao: "Tudo bem errar! Para saber o total, somamos as duas quantidades de figurinhas.",
