@@ -19,6 +19,7 @@ rastreabilidade), os defeitos corrigidos e o que **não** está coberto.
 | `npm run lint` | ESLint (app extraído, sw.js, proxy, testes) |
 | `npm run check` | validação estática: sintaxe, constantes órfãs, `App.x()` inexistentes, JSONs |
 | `npm run check:no-only` | falha se houver `.only/.skip/.todo/fixme` |
+| `npm run check:regras-publicadas` | **manual, só leitura**: confere se as regras PUBLICADAS no Firebase deixam ler cada coleção do app (403 = `firestore.rules` do repositório não publicado). Fora do CI |
 | `npm run ci` | tudo o que o CI roda (check, no-only, lint, coverage com limites, e2e) |
 | `npm run test:ai-real` | suíte **opcional** com a OpenAI real (ver §7) — desligada por padrão |
 
@@ -264,6 +265,7 @@ mínimas e estão no `index.html`.
 |---|---|---|
 | **Autorização no servidor** | As regras do Firestore são `allow read, write: if true` e não há Firebase Auth. As guardas testadas são do cliente: quem usar o SDK direto lê e grava tudo, inclusive a chave da IA em `config/openai` e dados de crianças | **Alto** se o app for público. Mitigação: Firebase Auth + regras por usuário + proxy com a chave (já documentado no CLAUDE.md) |
 | **Sessão local sem token/expiração** | A sessão é só `{tipo,id}` no localStorage; quem souber o id de outro aluno entra na conta dele. Não existe "sessão expirada" | Alto (mesma mitigação) |
+| Regras publicadas ≠ `firestore.rules` do repositório | Em 2026-09-27 `historias_geradas` e `correcoes` estavam bloqueadas em produção (o arquivo do repo libera): a regeneração de exercícios falhava com "Missing or insufficient permissions" (o batch apaga `historias_geradas/{id}`), o cache do Modo História e o salvar do corretor também. Os testes usam o banco falso e não pegam isso | Alto enquanto não publicar; detectável com `npm run check:regras-publicadas` |
 | Firestore real e emulador | Os testes usam um fake fiel ao subconjunto usado. Não há teste contra o emulador (exige Java e firebase-tools; com as regras abertas, não haveria o que validar) | Médio: diferenças sutis de semântica do SDK |
 | OpenAI real | Nunca chamada nos testes comuns. A suíte opcional `tests/opcional` roda só com `OPENAI_API_KEY_TESTE` | Baixo/médio: mudança de formato da API |
 | Qualidade do texto gerado | Validamos requisitos objetivos: `validarResumoIA` confere títulos, ≥2 exemplos, tamanho por idade, português e ausência de HTML antes de gravar. A qualidade pedagógica em si não é avaliada, e não checamos se o texto revela respostas (daria falso positivo com os termos do tema) | Baixo/médio |

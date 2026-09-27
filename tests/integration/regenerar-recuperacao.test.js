@@ -234,3 +234,16 @@ test("aluno sem permissão não dispara a regeneração (nenhuma chamada nem esc
     assert.equal(prof.store.log.length, antes);
   } finally { aluno.fechar(); prof.fechar(); }
 });
+
+test("REGRESSÃO: regras publicadas bloqueiam uma coleção do batch (permission-denied) → nada muda e a mensagem diz o que fazer", async () => {
+  const h = await abrir();
+  try {
+    const antes = copia(h.store.dados);
+    const negado = Object.assign(new Error("Missing or insufficient permissions."), { code: "permission-denied" });
+    h.store.falhar({ op: "commit", erro: negado });
+    h.ia.fila(F.json(novas(0, 15)));
+    await regenerar(h);
+    assert.deepEqual(copia(h.store.dados), antes, "batch atômico: nenhuma parte aplicada");
+    assert.equal(erroIA(h), "⚠️ O banco de dados recusou a gravação: as regras publicadas no Firebase não permitem esta operação. O Administrador precisa publicar o arquivo firestore.rules do projeto (Firebase Console → Firestore → Regras). Nada foi alterado. Os exercícios atuais foram mantidos.");
+  } finally { h.fechar(); }
+});

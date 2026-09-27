@@ -169,7 +169,10 @@ best-effort para cache offline).
 | `config` | doc `openai`: `{apiKey}` cadastrada no painel Admin |
 | `historias_geradas` | Cache do Modo História por lição: `{titulo, cenario, protagonista, capitulos[], desfecho_heroi, desfecho_aprendiz, geradoEm}` |
 
-Regras necessárias em `firestore.rules` (ponto de partida; ver arquivo no repo).
+Regras necessárias em `firestore.rules` (ponto de partida; ver arquivo no repo). ⚠️ O arquivo só vale
+depois de **publicado** (Firebase Console → Firestore → Regras). Para conferir o que está publicado:
+`npm run check:regras-publicadas` (só leitura). Erro "Missing or insufficient permissions" = coleção
+bloqueada nas regras publicadas (`mensagemErroIA` explica isso ao usuário).
 
 **localStorage** — apenas dados locais do dispositivo:
 

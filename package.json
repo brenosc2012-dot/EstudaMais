@@ -7,6 +7,7 @@
     "check": "node tests/tools/validar-app.js",
     "lint": "node tests/tools/extrair-app.js && eslint .",
     "check:no-only": "node tests/tools/verificar-sem-only.js",
+    "check:regras-publicadas": "node tests/tools/verificar-regras-publicadas.js",
     "test": "npm run test:all",
     "test:unit": "node tests/tools/extrair-app.js && node --test \"tests/unit/**/*.test.js\"",
     "test:integration": "node tests/tools/extrair-app.js && node --test \"tests/integration/**/*.test.js\"",

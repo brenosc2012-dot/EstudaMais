@@ -5295,6 +5295,9 @@ async function chamarIAMensagens(messages, timeoutMs, opts){
 function mensagemErroIA(err){
   let msg = (err && err.message) ? err.message : "Falha ao contatar a IA.";
   if(msg==="timeout") return "A IA demorou demais para responder. Tente novamente.";
+  // Firestore recusou (regras publicadas diferentes do firestore.rules do projeto)
+  if((err && err.code==="permission-denied") || /Missing or insufficient permissions/i.test(msg))
+    return "O banco de dados recusou a gravação: as regras publicadas no Firebase não permitem esta operação. O Administrador precisa publicar o arquivo firestore.rules do projeto (Firebase Console → Firestore → Regras). Nada foi alterado.";
   if(/Failed to fetch|NetworkError|Load failed/i.test(msg))
     return "Falha na chamada à OpenAI. Verifique, nesta ordem: (1) a chave é válida e a conta tem créditos/billing ativo; (2) a rede/firewall não bloqueia api.openai.com (redes corporativas costumam bloquear); (3) sua internet.";
   return msg;
