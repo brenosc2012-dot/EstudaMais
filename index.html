@@ -519,6 +519,16 @@ const NIVEIS_ENSINO = [
   { id:"medio", nome:"Ensino Médio",          anos:["1º ano EM","2º ano EM","3º ano EM"] },
 ];
 function nivelById(id){ return NIVEIS_ENSINO.find(n=>n.id===id) || NIVEIS_ENSINO[0]; }
+// Rótulo oficial do ano a partir do valor gravado, comparando só letras e dígitos (ignora º/ª/o,
+// espaços, acentos e maiúsculas): protege lições com o "º" corrompido por codificação.
+// As chaves dos anos oficiais são únicas ("1ano" ≠ "1anoem"), então nenhum ano vira outro.
+function chaveAno(v){ return norm(v).replace(/(\d)\s*[ºª°o]?\s*/g, "$1").replace(/[^a-z0-9]/g, ""); }
+function anoCanonico(v){
+  const k = chaveAno(v);
+  if(!k) return "";
+  for(const n of NIVEIS_ENSINO){ const a = n.anos.find(x=>chaveAno(x)===k); if(a) return a; }
+  return String(v).trim();
+}
 function nomeNivel(id){ return nivelById(id).nome; }
 
 // Turmas padronizadas como LETRA ÚNICA (A–F), iguais no aluno e no professor,
@@ -901,7 +911,7 @@ function licaoDeDoc(id, d){
     explicacoes: (d.explicacoes && typeof d.explicacoes==="object") ? d.explicacoes : {},
     // escopo (Fase B): turma e ano/nível a que a lição se destina ("" = todas)
     turma: d.turma||"",
-    ano: d.ano||"",
+    ano: anoCanonico(d.ano), // "5  ano" / "5o ano" / "5ª ano" → "5º ano" (valor desconhecido fica como está)
     nivel: d.nivel||"",
     // material de apoio: só o TEXTO extraído localmente (não usamos mais Storage/URLs).
     // Campos antigos de URL (materialUrls) em lições salvas antes desta versão são ignorados.

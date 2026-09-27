@@ -151,3 +151,19 @@ test("escopo com maiúsculas/espaços/acentos é comparado normalizado; lição 
     assert.ok(!t.includes("Sem escopo"), "regra estrita vigente: sem ano/turma ninguém vê");
   } finally { a5.fechar(); h.fechar(); }
 });
+
+test("REGRESSÃO: ano gravado com o 'º' corrompido (\"5  ano\") volta a valer como 5º ano — aluno vê, professor acha e o salvar grava limpo", async () => {
+  const h = await abrirProfessor({ seed: seed({ C1: ing({ titulo: "Prova - Setembro 2026", ano: "5  ano" }) }) });
+  const a5 = await aluno(h, "a5");
+  try {
+    assert.match(await licoesIngles(a5), /Prova - Setembro 2026/, "aluno do 5º A vê a lição");
+    const a1 = await aluno(h, "a1");
+    try { assert.doesNotMatch(await licoesIngles(a1), /Prova - Setembro 2026/, "não vira outra série"); } finally { a1.fechar(); }
+    h.App.teacherSelectSubj("ing"); await h.estabilizar();
+    assert.match(h.texto(), /Prova - Setembro 2026/, "aparece na lista do professor");
+    h.App.editLesson("C1"); await h.estabilizar();
+    assert.equal(h.campo("lAno").value, "5º ano", "editor já mostra a série certa");
+    await h.clicar(/Salvar lição/);
+    assert.equal(h.store.doc("licoes", "C1").ano, "5º ano", "re-salvar grava o valor limpo");
+  } finally { a5.fechar(); h.fechar(); }
+});

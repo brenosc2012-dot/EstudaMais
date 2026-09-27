@@ -260,7 +260,12 @@ async function abrirApp(o) {
       h.fechar();
       return abrirApp(Object.assign({}, o, { store: firebase, ia, relogio, random, local: localAtual, session: sessAtual, sessao: undefined, seed: undefined }, extra || {}));
     },
-    fechar() { relogio.timers.clear(); try { w.close(); } catch (_) { /* já fechada */ } },
+    fechar() {
+      // como fechar a aba: desliga os onSnapshot DESTA janela (o banco falso pode ser compartilhado
+      // com outras janelas abertas; callbacks criados aqui têm o Function.prototype desta janela)
+      firebase.__store._ouvintes.forEach(o => { if (o.cb instanceof w.Function) o.ativo = false; });
+      relogio.timers.clear(); try { w.close(); } catch (_) { /* já fechada */ }
+    },
   };
 
   function executarTimer(id, t) {
