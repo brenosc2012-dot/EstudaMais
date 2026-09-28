@@ -7,7 +7,7 @@ const { carregar } = require("./carregar-app");
 const SUBJ = { mat: { id: "mat", nome: "Matemática" }, his: { id: "his", nome: "História" }, ing: { id: "ing", nome: "Inglês" } };
 const ctx = () => carregar({
   funcoes: ["dividirEmBlocos", "mesclarTopicos", "validarPlano", "alinharExercicio", "topicoCoberto", "dividirSecoesMarkdown", "renderizarConteudo",
-    "hashFontesLicao", "limitePalavrasConteudo", "parseConteudoCoberto", "situacaoFontes", "documentosAnalisados"],
+    "hashFontesLicao", "limitePalavrasConteudo", "parseConteudoCoberto", "situacaoFontes", "documentosAnalisados", "idTopicoDe", "vincularTopicosPorTexto"],
   stubs: { subjById: id => SUBJ[id], Teacher: { upload: { ativo: false } } },
 });
 const j = v => JSON.parse(JSON.stringify(v));
@@ -112,4 +112,30 @@ test("hashFontesLicao muda quando qualquer fonte muda (descrição, documento, e
     assert.notEqual(c.hashFontesLicao(L, "his"), h0);
   }
   assert.notEqual(c.hashFontesLicao(base(), "mat"), h0);
+});
+
+test("idTopicoDe: id exato, variações (t3, 'T3: nome', 'T 3') e o NOME do tópico; desconhecido → null (bug 28)", () => {
+  const c = ctx();
+  const plano = { topicos: [{ id: "T1", topico: "Volume e massa" }, { id: "T3", topico: "Densidade e Flutuação" }, { id: "T4", topico: "Materiais Magnéticos" }] };
+  for (const x of ["T3", "t3", "T3: Densidade", "T 3", "Densidade e Flutuação", "densidade e flutuacao", "DENSIDADE E FLUTUAÇÃO (submarino)"]) assert.equal(c.idTopicoDe(x, plano), "T3", x);
+  assert.equal(c.idTopicoDe("Materiais magnéticos", plano), "T4");
+  for (const x of ["T9", "Fotossíntese", "", null]) assert.equal(c.idTopicoDe(x, plano), null, String(x));
+});
+
+test("vincularTopicosPorTexto: liga tópico não marcado à seção que o ENSINA; não liga por uma palavra solta", () => {
+  const c = ctx();
+  const plano = { topicos: [{ id: "T1", topico: "Densidade e Flutuação", conceitos: ["afundar"] }, { id: "T2", topico: "Materiais Magnéticos", conceitos: ["ímã"] },
+    { id: "T3", topico: "Condutividade", conceitos: ["bom condutor de calor"] }, { id: "T4", topico: "Eletricidade", conceitos: ["fio de cobre"] }] };
+  const secoes = [{ id: "S1", titulo: "Por que o submarino afunda?", topicos: [], texto: "A densidade explica a flutuação: objetos com densidade menor que a da água flutuam." },
+    { id: "S2", titulo: "Materiais", topicos: [], texto: "Os materiais podem ser duros ou macios." },
+    { id: "S3", titulo: "Calor", topicos: [], texto: "A condutividade térmica: o metal é bom condutor de calor." }];
+  assert.equal(c.vincularTopicosPorTexto(plano, secoes), 2);
+  assert.deepEqual(j(secoes.map(s => s.topicos)), [["T1"], [], ["T3"]], "'Materiais' sozinho não ensina 'Materiais Magnéticos'; Eletricidade não aparece");
+});
+
+test("parseConteudoCoberto: seções marcadas pelo nome/variação do tópico mantêm a marcação (antes eram descartadas)", () => {
+  const c = ctx();
+  const plano = { topicos: [{ id: "T1", topico: "Densidade e Flutuação" }, { id: "T2", topico: "Transferência de Calor" }] };
+  const p = c.parseConteudoCoberto(JSON.stringify({ secoes: [{ titulo: "A", topicos: ["Densidade e Flutuação", "T1"], texto: "x" }, { titulo: "B", topicos: ["t2: calor", "T7"], texto: "y" }] }), plano, "");
+  assert.deepEqual(j(p.secoes.map(s => s.topicos)), [["T1"], ["T2"]]);
 });

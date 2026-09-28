@@ -5424,6 +5424,7 @@ ${ing ? "6. Inclua os textos, trechos, vocabulário e estruturas gramaticais que
 - Não copie documentos longos: explique com suas palavras e cite só trechos curtos (textos de leitura podem vir inteiros se forem curtos).
 - Parágrafos curtos, listas com "- ", subtítulos com "### " dentro da seção. Sem HTML, sem tabelas, sem blocos de código.
 - No máximo ${limite} palavras no total.
+- Em "topicos" de cada seção, coloque os IDs dos tópicos que ela ensina (ex.: ["T1","T3"]), não os nomes.
 ${exs.length ? `- Estes exercícios já existem: o texto deve ensinar o que eles cobram, SEM dar as respostas:\n${exs.map((e,i)=>`  ${i+1}. ${String(e.enunciado||"").slice(0,160)}`).join("\n")}\n` : ""}
 Retorne APENAS um JSON:
 {"secoes":[{"id":"S1","titulo":"título curto","topicos":["T1"],"texto":"texto da seção"}],"verificacao":["pergunta curta de compreensão"],"resumo_final":["ponto principal"]}
@@ -5434,13 +5435,50 @@ ${String(L.texto||"").trim() || "(vazia)"}
 NOTAS DOS DOCUMENTOS:
 ${notasTxt || "(nenhum documento)"}`;
 }
+// Marcação de tópico que a IA pôs na seção → id do plano. Aceita o id exato ("T3"), variações
+// ("t3", "T3: Densidade", "T 3") e o NOME do tópico ("Densidade e Flutuação"). Antes só o id
+// exato valia: seção que ensinava o tópico mas vinha marcada pelo nome era descartada e o
+// tópico aparecia "sem explicação" mesmo após os complementos.
+function idTopicoDe(x, plano){
+  const topicos = (plano && plano.topicos) || [];
+  const bruto = String(x==null?"":x).trim();
+  if(!bruto) return null;
+  if(topicos.some(t=>t.id===bruto)) return bruto;
+  const m = bruto.match(/^t\s*(\d+b?)\b/i);
+  if(m && topicos.some(t=>t.id==="T"+m[1])) return "T"+m[1];
+  const n = norm(bruto.replace(/^t\s*\d+b?\s*[:\-–—.)]\s*/i,""));
+  const porNome = n && (topicos.find(t=>norm(t.topico)===n) || topicos.find(t=>{ const tn=norm(t.topico); return tn.length>=6 && n.length>=6 && (tn.indexOf(n)>=0 || n.indexOf(tn)>=0); }));
+  return porNome ? porNome.id : null;
+}
+// Palavras de conteúdo (prefixo de 5 letras, como em compartilhaConteudo) do nome de um tópico.
+function palavrasTopico(t){ return palavrasDe(norm(t)).filter(w=>w.length>=4 && !PALAVRAS_PT.has(w) && !PALAVRAS_VAZIAS.has(w)).map(w=>w.slice(0,5)); }
+// Tópico obrigatório que nenhuma seção marcou, mas que uma seção claramente ENSINA: o título/texto
+// traz a maioria das palavras do nome do tópico (e, se o nome tem uma palavra só, também um dos
+// conceitos). Liga a seção ao tópico (o rastreio das questões continua funcionando).
+function vincularTopicosPorTexto(plano, secoes){
+  let vinculados = 0;
+  ((plano && plano.topicos)||[]).forEach(t=>{
+    if(secoes.some(s=>s.topicos.indexOf(t.id)>=0)) return;
+    const nome = Array.from(new Set(palavrasTopico(t.topico)));
+    if(!nome.length) return;
+    const sec = secoes.find(s=>{
+      const B = new Set(palavrasTopico(s.titulo+" "+s.texto));
+      const achou = nome.filter(w=>B.has(w)).length;
+      if(achou < Math.max(1, Math.ceil(nome.length*0.6))) return false;
+      return nome.length>1 || !(t.conceitos||[]).length || (t.conceitos||[]).some(c=>palavrasTopico(c).some(w=>B.has(w)));
+    });
+    if(sec){ sec.topicos.push(t.id); vinculados++; }
+  });
+  return vinculados;
+}
 function parseConteudoCoberto(txt, plano, prefixoId){
   const o = parseJsonObjIA(txt);
   if(!o || !Array.isArray(o.secoes)) return null;
-  const ids = new Set(((plano && plano.topicos)||[]).map(t=>t.id));
+  const temPlano = !!((plano && plano.topicos)||[]).length;
   const secoes = o.secoes.map((s,k)=>({
     id: prefixoId ? `${prefixoId}${k+1}` : String((s && s.id)||("S"+(k+1))),
-    titulo: String((s && s.titulo)||"").trim(), topicos: limparItensNotas(s && s.topicos).filter(t=>!ids.size || ids.has(t)),
+    titulo: String((s && s.titulo)||"").trim(),
+    topicos: Array.from(new Set(limparItensNotas(s && s.topicos).map(x=> temPlano ? idTopicoDe(x, plano) : x).filter(Boolean))),
     texto: String((s && s.texto)||"").trim(),
   })).filter(s=>s.titulo && s.texto);
   return { secoes, verificacao: limparItensNotas(o.verificacao).slice(0,8), resumo_final: limparItensNotas(o.resumo_final).slice(0,12) };
@@ -5487,9 +5525,13 @@ async function gerarConteudoCoberto(L, subjId, plano, ctx){
     const semBase = motivoSemContexto(resp);
     if(semBase!==null) throw erroPreparo(`O texto explicativo e os documentos não têm conteúdo suficiente para o texto de estudo (${semBase}). Complete a descrição ou importe um documento.`, true);
     const novo = parseConteudoCoberto(resp, plano, c ? `C${t}-` : "");
-    if(!novo || !novo.secoes.length) continue;
+    if(!novo || !novo.secoes.length){ logIA("preparo.cobertura", { licaoId:L.id||"(nova)", tentativa:t+1, formatoInvalido:true, caracteres:String(resp||"").length }); continue; }
     if(!c) c = novo;
     else { c.secoes = c.secoes.concat(novo.secoes); if(!c.verificacao.length) c.verificacao = novo.verificacao; if(!c.resumo_final.length) c.resumo_final = novo.resumo_final; }
+    const vinculados = vincularTopicosPorTexto(plano, c.secoes);
+    const p = pendencias(c);
+    logIA("preparo.cobertura", { licaoId:L.id||"(nova)", tentativa:t+1, topicos:plano.topicos.length, secoes:c.secoes.length,
+      secoesSemTopico:c.secoes.filter(x=>!x.topicos.length).length, vinculadosPorTexto:vinculados, faltam:p.faltam.map(x=>x.id), exerciciosSemApoio:p.exs.length });
   }
   if(!c) throw erroPreparo("A IA não devolveu o conteúdo de estudo no formato esperado. Nada foi alterado — tente de novo.");
   const pend = pendencias(c);

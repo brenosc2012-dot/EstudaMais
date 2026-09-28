@@ -203,10 +203,10 @@ Legenda dos tipos:
 
 | Suíte | Testes | Resultado |
 |---|---|---|
-| Unitários + contrato + backend + SW (`tests/unit`, 12 arquivos) | 141 | 141 ✔ |
-| Integração/componente/segurança (`tests/integration`, 41 arquivos) | 458 | 458 ✔ |
+| Unitários + contrato + backend + SW (`tests/unit`, 12 arquivos) | 144 | 144 ✔ |
+| Integração/componente/segurança (`tests/integration`, 41 arquivos) | 459 | 459 ✔ |
 | E2E Playwright (`tests/e2e`, 4 arquivos) | 19 | 19 ✔ |
-| **Total** | **618** | 0 falhas, 0 skip/todo |
+| **Total** | **622** | 0 falhas, 0 skip/todo |
 
 Os testes node rodaram duas vezes seguidas com resultado idêntico. O E2E passou em três
 execuções completas.
@@ -259,6 +259,7 @@ mínimas e estão no `index.html`.
 | 25 | "Não foi possível analisar o documento … (resposta inválida da IA na parte 1)" em fotos de prova de Matemática: o OCR devolvia fórmulas em LaTeX (`\( \frac{0}{0} \)`, `\cdot`) e a IA as copiava para o JSON com barra simples — `\(` é escape inválido (o `JSON.parse` falhava) e `\frac`/`\times` virariam form-feed/tab | `sanitizarControlesJson` torna literais as barras que não formam escape JSON (e as de comandos LaTeX ambíguos); a análise pede fórmulas sem LaTeX e tenta a parte mais uma vez se vier fora do formato (log `preparo.documento.formato`, só contagens); o OCR também pede texto simples | `parsers-ia` › "LaTeX copiado pela IA…", `preparo-licao` › "análise de documento com LaTeX…", "análise fora do formato…" |
 | 26 | Regenerar conteúdo de Inglês falhava com "1 exercício(s) atual(is) sem conteúdo que os prepare… tente de novo": um exercício antigo cobrava assunto que não está nas fontes (comida, numa lição de gadgets/música); o conteúdo, fiel às fontes, nunca o ensinaria — tentar de novo não resolvia e a mensagem não dizia qual questão | tópicos das fontes continuam obrigatórios (erro); exercício atual sem apoio → conteúdo salvo + aviso no painel/toast com a posição e o enunciado, indicando "Regenerar exercícios"; o complemento em língua estrangeira informa o vocabulário usado; log `preparo.exercicios_sem_apoio` (só posições) | `professor-regenerar-conteudo` › "exercício atual FORA das fontes…" |
 | 27 | Regenerar exercícios de Matemática esgotava as 3 tentativas ("13 questões… 11 aprovadas", recusas por semelhança com atuais): a IA repetia o molde das questões atuais trocando só os números ("área do retângulo 8×5" → "7×4"), recusa correta do validador, e as reposições só repetiam o motivo | validação mantida; o prompt de Matemática traz `dicasVariacaoIA` (pergunta inversa, problema do dia a dia, comparar, achar o erro…) e `blocoMoldesIA` (enunciados com números → N, "moldes já usados"); a reposição após recusa por semelhança reforça as dicas e os moldes das atuais + aprovadas | `regenerar-recuperacao` › "Matemática: prompt ensina a variar…", "Português/Inglês: sem o bloco…" |
+| 28 | Regenerar exercícios de Ciências ("Prova 09/2026 - Parte 1", 9 fotos) falhava com "tópicos sem explicação: Densidade e Flutuação, Transferência de Calor…": o parser do conteúdo só aceitava o id exato do tópico em `secoes[].topicos`; seção marcada pelo nome ("Densidade e Flutuação") ou "T3: nome" perdia a marcação e o tópico contava como não coberto, mesmo com o texto ensinando — os complementos não resolviam | `idTopicoDe` (id, variações e nome → id do plano); `vincularTopicosPorTexto` (tópico sem marcação ligado à seção que traz a maioria das palavras do nome); prompt pede os IDs; log `preparo.cobertura` por tentativa (só ids e contagens) | `preparo` (unit) › "idTopicoDe…", "vincularTopicosPorTexto…", "parseConteudoCoberto: seções marcadas pelo nome…"; `preparo-licao` › "seções marcadas pelo nome do tópico…" |
 | 24 | (código novo, pego pelo teste) o painel dizia "fontes usadas: descrição" só porque a descrição existia, mesmo sem nenhum tópico vindo dela | "usadas" = o que o plano aproveitou | `preparo-licao` › "descrição curta + anexos…", "documento sem conteúdo útil…" |
 | 18 | Firestore falso: batch com duas operações no mesmo documento não via a anterior (o real vê) | cálculo sequencial dentro do batch | `professor-gerar-ia` › "gerar: explicações geradas junto…" |
 

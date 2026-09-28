@@ -212,7 +212,9 @@ bloqueada nas regras publicadas (`mensagemErroIA` explica isso ao usuário).
   2. `gerarPlanoCobertura` → `validarPlano`: tópicos com origem ("descricao"/"docN"), objetivos
      ligados, descrição considerada (se ≥8 palavras) e todo documento útil aproveitado (senão pede de
      novo com o motivo; persistindo, segue com aviso). `{suficiente:false}` → erro definitivo.
-  3. `gerarConteudoCoberto`: JSON de seções `{id,titulo,topicos,texto}` → `topicoCoberto` para cada
+  3. `gerarConteudoCoberto`: JSON de seções `{id,titulo,topicos,texto}` (marcações de tópico
+     normalizadas por `idTopicoDe` — id, "t3", "T3: nome" ou o nome; tópico sem marcação ligado pelo
+     texto em `vincularTopicosPorTexto`; log `preparo.cobertura`) → `topicoCoberto` para cada
      tópico obrigatório (e `alinharExercicio` para os exercícios atuais, na regeneração de conteúdo)
      → complementos (até `PREPARO_TENTATIVAS_COBERTURA`) → `renderizarConteudo` → `validarResumoIA`
      (tópico sem seção → erro; exercício ATUAL que continua sem apoio → não bloqueia: vira aviso

@@ -381,3 +381,30 @@ test("análise fora do formato: pede a MESMA parte mais uma vez (log só com con
     assert.deepEqual(j(h.store.doc("licoes", "L1")), antes);
   } finally { h.fechar(); }
 });
+
+// ================================================================== marcação dos tópicos (bug 28)
+// Ciências, "Prova 09/2026 - Parte 1": a IA marcava as seções pelo NOME do tópico (ou "T2: nome");
+// o parser só aceitava o id exato, descartava a marcação e acusava "tópicos sem explicação" mesmo
+// com o texto ensinando — os 2 complementos não resolviam e o professor via o erro.
+test("seções marcadas pelo nome do tópico (ou sem marcação, mas ensinando) contam como cobertura; log de cobertura só com ids", async () => {
+  const pelosNomes = ch => {
+    const c = JSON.parse(require("../support/preparo-helpers").conteudoPadrao(ch, EXTRA_HIS));
+    c.secoes.forEach((s, k) => { s.topicos = k === 0 ? [] : s.topicos.map(id => `${id}: ${s.titulo}`); }); // 1ª sem marcação; demais "T2: nome"
+    c.secoes[1] && (c.secoes[1].topicos = [c.secoes[1].titulo]); // e uma só pelo nome
+    return JSON.stringify(c);
+  };
+  const h = await abrirHis({ preparoExtra: { conteudo: pelosNomes }, licao: { exercicios: Array.from({ length: 15 }, (_, i) => F.mc(i + 1, { nivel: ["facil", "intermediario", "dificil"][Math.floor(i / 5)] })) } });
+  try {
+    await importar(h, [arquivo(h, "densidade.txt", "Densidade e flutuação: o submarino afunda quando enche os reservatórios de água.")]);
+    h.ia.fila(F.json(QUINZE()));
+    await h.clicar(/Regenerar exercícios com IA/);
+    assert.equal(erroIA(h), "");
+    assert.equal(h.preparo.de("conteudo").length, 1, "coberto de primeira: nenhum complemento");
+    const c = j(h.store.doc("licoes_geradas", "L1"));
+    assert.deepEqual(c.secoes.map(s => s.topicos.join()), ["T1", "T2"], "marcações convertidas para os ids do plano");
+    const log = h.logs.find(l => /preparo\.cobertura/.test(l));
+    assert.match(log, /"tentativa":1,"topicos":2,"secoes":2,"secoesSemTopico":0,"vinculadosPorTexto":1,"faltam":\[\]/);
+    assert.ok(!/Densidade|submarino/.test(h.logs.join("\n")), "log sem conteúdo");
+    assert.match(h.preparo.de("conteudo")[0].prompt, /coloque os IDs dos tópicos que ela ensina/);
+  } finally { h.fechar(); }
+});
