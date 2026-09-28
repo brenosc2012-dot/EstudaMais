@@ -32,8 +32,10 @@ const vocabIA = (w, i) => ({ nivel: ["facil", "intermediario", "dificil"][i % 3]
   opcoes: [w + " (certa)", w + " (errada 1)", w + " (errada 2)", w + " (errada 3)"], resposta_correta: w + " (certa)", explicacao: EXPL });
 const RESP_LEITURA = F.json([0, 1, 2].map(i => leituraIA(i)).concat(VOCAB.map(vocabIA)));
 
+// o conteúdo de estudo preparado ensina o vocabulário e traz o texto que as questões usam
+const EXTRA_ING = "Vocabulário da lição: " + VOCAB.map(w => `${w} (certa)`).join(", ") + ". Texto de leitura: " + TEXTO_ANNA;
 async function editarIng(o) {
-  const h = await abrirProfessor(Object.assign({ seed: seedIng(o && o.licao) }, o));
+  const h = await abrirProfessor(Object.assign({ seed: seedIng(o && o.licao), preparo: { extra: EXTRA_ING } }, o));
   h.App.teacherSelectSubj("ing"); await h.estabilizar();
   h.App.editLesson("L1"); await h.estabilizar();
   return h;
@@ -41,17 +43,22 @@ async function editarIng(o) {
 const apoios = h => [...h.document.querySelectorAll('.ex-edit-card textarea[oninput*="setExApoio"]')].map(t => t.value);
 
 // ======================= fontes enviadas à IA =======================
-test("gerar exercícios: o texto explicativo E os documentos importados vão no prompt, com prioridade e regras de fidelidade", async () => {
+test("gerar exercícios: descrição inteira e documentos vão ao plano/conteúdo; os exercícios saem SÓ do conteúdo de estudo", async () => {
   const h = await editarIng();
   try {
     h.ia.fila(RESP_LEITURA);
     await h.clicar(/Gerar 15 Exercícios com IA/);
+    const pa = h.preparo.de("analise")[0].prompt, pp = h.preparo.de("plano")[0].prompt, pc = h.preparo.de("conteudo")[0].prompt;
+    assert.match(pa, /documento "routine\.pdf"[\s\S]*<<<\n\[routine\.pdf\]\nAnna wakes up early|documento "routine\.pdf"[\s\S]*Anna wakes up early/);
+    assert.match(pa, /Mantenha o idioma original/);
+    assert.match(pp, /DESCRIÇÃO DO PROFESSOR \(fonte principal\):\nNesta lição lemos textos curtos/);
+    assert.match(pp, /\[doc1\] routine\.pdf/);
+    assert.match(pc, /textos, trechos, vocabulário e estruturas gramaticais que o aluno vai precisar/);
     const p = h.ia.ultimoPrompt();
-    assert.match(p, /\[TEXTO DO PROFESSOR — fonte principal\]\nNesta lição lemos textos curtos/);
-    assert.match(p, /\[DOCUMENTOS IMPORTADOS PELO PROFESSOR[^\n]*\]\n\[routine\.pdf\]\nAnna wakes up early/);
-    for (const re of [/NÃO invente fatos/, /siga o TEXTO DO PROFESSOR/, /Não crie exercícios sobre assuntos que não estejam nas fontes/,
-      /o aluno NÃO vê os documentos/i, /"texto_apoio"/, /CONTEXTO_INSUFICIENTE/, /ficam em inglês/, /Read the text and answer the question\./])
+    assert.match(p, /CONTEÚDO DE ESTUDO QUE O ALUNO LEU \(ÚNICA base das questões/);
+    for (const re of [/NÃO invente fatos/, /ALINHAMENTO COM O CONTEÚDO ESTUDADO/, /"secao"/, /o aluno NÃO vê os documentos/i, /"texto_apoio"/, /CONTEXTO_INSUFICIENTE/, /ficam em inglês/, /Read the text and answer the question\./])
       assert.match(p, re);
+    assert.doesNotMatch(p, /DOCUMENTOS IMPORTADOS PELO PROFESSOR/, "o documento bruto não vai para os exercícios");
   } finally { h.fechar(); }
 });
 
@@ -61,7 +68,7 @@ test("lição só com documentos (sem texto explicativo) gera normalmente; sem n
     assert.equal(h.botao(/Gerar 15 Exercícios com IA/).disabled, false);
     h.ia.fila(RESP_LEITURA);
     await h.clicar(/Gerar 15 Exercícios com IA/);
-    assert.match(h.ia.ultimoPrompt(), /o professor não escreveu texto explicativo: use os documentos/);
+    assert.match(h.preparo.de("plano")[0].prompt, /DESCRIÇÃO DO PROFESSOR \(fonte principal\):\n\(vazia\)/);
     assert.equal(apoios(h).length, 15);
   } finally { h.fechar(); }
   h = await editarIng({ licao: { conteudo: "", materialTexto: "", materialNomes: [], materialTipos: [] } });
@@ -69,25 +76,29 @@ test("lição só com documentos (sem texto explicativo) gera normalmente; sem n
     assert.equal(h.botao(/Gerar 15 Exercícios com IA/).disabled, true);
     assert.match(h.texto(), /Escreva o texto explicativo ou importe um documento antes de gerar/);
     h.App.gerarExerciciosIA(); h.App.regenerarConteudoIA(); h.App.regenerarExerciciosIA(); await h.estabilizar();
-    assert.equal(h.ia.chamadas.length, 0);
+    assert.equal(h.ia.chamadas.length + h.preparo.chamadas.length, 0);
   } finally { h.fechar(); }
 });
 
 test("regenerar exercícios e regenerar conteúdo usam as MESMAS fontes (texto do professor + documentos)", async () => {
   const h = await editarIng({ licao: { exercicios: [0, 1, 2].map(i => ({ id: "r" + i, tipo: "mc", nivel: "intermediario", instrucao: "Read the text and answer the question.", textoApoio: TEXTO_ANNA, enunciado: ["Where does Anna live?", "When does Anna wake up?", "What does Anna eat?"][i], opcoes: ["a", "b", "c", "d"], correta: 0 })) } });
   try {
+    // sem conteúdo salvo: regenerar exercícios PREPARA o conteúdo das mesmas fontes antes
     h.ia.fila(F.json([0, 1, 2].map(i => leituraIA(i))));
     await h.clicar(/Regenerar exercícios com IA/);
     const pEx = h.ia.ultimoPrompt();
-    h.ia.fila(F.RESUMO_DIDATICO);
+    const planoEx = h.preparo.de("plano")[0].prompt;
     await h.clicar(/Regenerar conteúdo com IA/);
-    const pRes = h.ia.ultimoPrompt();
-    for (const p of [pEx, pRes]) {
-      assert.match(p, /\[TEXTO DO PROFESSOR — fonte principal\]\nNesta lição lemos textos curtos/);
-      assert.match(p, /\[routine\.pdf\]\nAnna wakes up early/);
-      assert.match(p, /REGRAS DE FIDELIDADE ÀS FONTES/);
+    const planoRes = h.preparo.de("plano").slice(-1)[0].prompt;
+    for (const p of [planoEx, planoRes]) {
+      assert.match(p, /DESCRIÇÃO DO PROFESSOR \(fonte principal\):\nNesta lição lemos textos curtos/);
+      assert.match(p, /\[doc1\] routine\.pdf/);
     }
+    assert.match(pEx, /CONTEÚDO DE ESTUDO QUE O ALUNO LEU/);
+    assert.match(pEx, /REGRAS DE FIDELIDADE ÀS FONTES/);
     assert.match(pEx, /Destas, 3 de interpretação de texto \(com "texto_apoio"\)/);
+    const cacheL1 = h.store.doc("licoes_geradas", "L1");
+    assert.ok(cacheL1.secoes.length && cacheL1.plano.topicos.length, "conteúdo preparado foi gravado junto com os exercícios");
     assert.equal(h.store.doc("licoes", "L1").exercicios[0].textoApoio, TEXTO_ANNA, "regeneração gravou o texto de apoio");
   } finally { h.fechar(); }
 });
@@ -147,16 +158,22 @@ for (const [nome, item, motivo] of [
 test("contexto insuficiente: a IA responde de forma controlada → mensagem clara, sem nova tentativa, nada muda", async () => {
   const h = await editarIng();
   try {
+    // exercícios: o conteúdo existe, mas a IA diz que não dá para gerar 15 questões
     h.ia.fila('{"erro":"CONTEXTO_INSUFICIENTE","motivo":"o documento só tem uma pergunta, sem texto"}');
     await h.clicar(/Gerar 15 Exercícios com IA/);
-    assert.equal(h.ia.chamadas.length, 1);
+    assert.equal(h.ia.chamadas.length, 1, "sem nova tentativa");
     assert.match(erroIA(h), /não têm conteúdo suficiente para gerar os exercícios \(o documento só tem uma pergunta, sem texto\)/);
     assert.equal(apoios(h).length, 3);
-    h.store.semear(seedIng()); // (independente) resumo: mesma resposta controlada
-    h.ia.fila("CONTEXTO_INSUFICIENTE: as fontes não explicam o tema");
+  } finally { h.fechar(); }
+});
+
+test("contexto insuficiente no PLANO (fontes pobres) → mensagem clara, nada é gerado nem gravado", async () => {
+  const h = await editarIng({ preparo: { extra: EXTRA_ING, plano: '{"suficiente":false,"motivo":"as fontes não explicam o tema"}' } });
+  try {
     await h.clicar(/Regenerar conteúdo com IA/);
-    assert.equal(h.ia.chamadas.length, 2, "texto de estudo também não repete");
-    assert.match(erroIA(h), /não têm informação suficiente para o texto de estudo \(as fontes não explicam o tema\)/);
+    assert.equal(h.preparo.de("plano").length, 1, "texto de estudo também não repete");
+    assert.equal(h.preparo.de("conteudo").length, 0);
+    assert.match(erroIA(h), /não têm conteúdo suficiente para a lição \(as fontes não explicam o tema\)/);
     assert.equal((h.store.dados.licoes_geradas || {}).L1, undefined);
   } finally { h.fechar(); }
 });

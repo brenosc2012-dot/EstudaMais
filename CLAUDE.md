@@ -200,6 +200,35 @@ bloqueada nas regras publicadas (`mensagemErroIA` explica isso ao usuário).
     antes da pergunta) e `instrucao` (ex.: "Read the text and answer the question."). Só são
     gravados quando preenchidos — exercício antigo (só enunciado) continua igual, sem migração.
 
+### Preparo da lição (fontes → plano → conteúdo → exercícios)
+- **Regra central:** nenhum exercício cobra o que não foi ensinado no conteúdo de estudo.
+  `prepararConteudoLicao` (usado por gerar, regenerar conteúdo e — se não houver conteúdo salvo —
+  regenerar exercícios):
+  1. `analisarMateriaisLicao`/`analisarDocumento`: cada documento é lido INTEIRO em partes
+     (`dividirEmBlocos`: `PREPARO_BLOCO_CHARS` 12.000 com `PREPARO_BLOCO_SOBREPOSICAO` 800) e vira
+     notas (`L.materialNotas[i]`: tópicos/conceitos/fatos/exemplos/vocabulário/textos literais; status
+     pendente/analisando/ok/falhou/vazio; `parcial` se veio do texto salvo cortado em 60.000). As notas
+     vão ao Firestore (`materialNotas`) e nunca são refeitas a partir do texto salvo (`materialOrigem`).
+  2. `gerarPlanoCobertura` → `validarPlano`: tópicos com origem ("descricao"/"docN"), objetivos
+     ligados, descrição considerada (se ≥8 palavras) e todo documento útil aproveitado (senão pede de
+     novo com o motivo; persistindo, segue com aviso). `{suficiente:false}` → erro definitivo.
+  3. `gerarConteudoCoberto`: JSON de seções `{id,titulo,topicos,texto}` → `topicoCoberto` para cada
+     tópico obrigatório (e `alinharExercicio` para os exercícios atuais, na regeneração de conteúdo)
+     → complementos (até `PREPARO_TENTATIVAS_COBERTURA`) → `renderizarConteudo` → `validarResumoIA`
+     (limite `limitePalavrasConteudo`: 220 palavras por tópico, teto 3.000; fora do padrão → 1 nova vez).
+- Exercícios (gerar/regenerar) recebem SÓ `blocoConteudoIA` (seções + objetivos; nada bruto dos
+  documentos) e `regrasAlinhamentoIA` (indicar "secao"/"objetivo"). No validador, `alinharExercicio`
+  confere/infere a seção que ensina (palavras de conteúdo em comum, ou resposta presente na seção);
+  sem seção → motivo `nao_ensinado` → reposição só dessa questão. A questão salva guarda
+  `rastreio:{secao,topico,objetivo,fontes,verificado}` (`verificado:false` = conta curta ou
+  informação no texto de apoio).
+- `L._preparo` = conteúdo preparado no editor; `saveLesson` grava `licoes_geradas {resumo, plano,
+  secoes, preparoHash, exercicios}` se `hashFontesLicao` não mudou (senão limpa o cache).
+  `conteudoSalvoDaLicao` lê o conteúdo (com seções; resumo antigo → `dividirSecoesMarkdown`).
+- Transparência: `painelPreparoHtml` (descrição, documentos por status, tópicos com origem, fontes
+  REALMENTE usadas pelo plano, divergências, avisos). Geração bloqueada durante a leitura
+  (`materialEmProcessamento`). Logs `preparo.documento` / `preparo.conteudo` (só contagens).
+
 ### Fontes da lição e questões com texto de apoio
 - **Fontes** = texto explicativo do professor + documentos importados (`fontesDaLicao`,
   `blocoFontesIA`). Os TRÊS prompts (texto de estudo, gerar e regenerar exercícios) recebem o

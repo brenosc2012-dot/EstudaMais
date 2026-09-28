@@ -17,6 +17,7 @@ function criarIAFake(opts) {
   const fila = [];
   const chamadas = [];
   let padrao = opts.padrao !== undefined ? opts.padrao : "Resposta padrão da IA.";
+  let interceptor = null; // fn(chamada) → item | undefined: responde SEM consumir a fila
 
   function textoDasMensagens(msgs) {
     return (msgs || []).map(m => typeof m.content === "string" ? m.content
@@ -61,9 +62,11 @@ function criarIAFake(opts) {
     try { body = JSON.parse(init.body || "{}"); } catch (_) { body = {}; }
     const headers = Object.assign({}, init.headers || {});
     const chamada = { url: String(url), headers, body, prompt: textoDasMensagens(body.messages), stream: body.stream === true };
-    chamadas.push(chamada);
     await Promise.resolve();
-    let item = fila.length ? fila.shift() : padrao;
+    // interceptadas (ex.: etapas do preparo) ficam fora de `chamadas` — o interceptor registra as suas
+    const inter = interceptor ? interceptor(chamada) : undefined;
+    if (inter === undefined) chamadas.push(chamada);
+    let item = inter !== undefined ? inter : (fila.length ? fila.shift() : padrao);
     if (typeof item === "function") item = item(chamada);
     if (item == null) item = "";
     if (typeof item === "string") item = { texto: item };
@@ -89,6 +92,8 @@ function criarIAFake(opts) {
     fila(...itens) { fila.push(...itens); return this; },
     /** Resposta usada quando a fila está vazia. */
     padrao(item) { padrao = item; return this; },
+    /** Responde certas chamadas (ex.: etapas do preparo) antes da fila, sem consumi-la. */
+    interceptar(fn) { interceptor = fn; return this; },
     pendentes() { return fila.length; },
     ultimoPrompt() { return chamadas.length ? chamadas[chamadas.length - 1].prompt : ""; },
   };

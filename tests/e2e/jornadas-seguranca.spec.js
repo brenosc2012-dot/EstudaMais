@@ -88,7 +88,7 @@ test.describe("falha da IA sem perda de conteúdo nem de exercícios", () => {
   test.beforeEach(async ({ page }) => { await page.clock.install(); });
 
   test("limite de uso (429) ao regenerar o conteúdo: erro visível e resumo anterior preservado", async ({ app, page }) => {
-    await iaRoteada(page, [{ se: PROMPT.resumo, resposta: { status: 429 } }]);
+    await iaRoteada(page, [{ se: PROMPT.plano, resposta: { status: 429 } }]);
     await app.abrir({ seed: bancoComResumo(), sessao: PROF });
     await abrirEditorL1(page);
     page.once("dialog", d => d.accept());
@@ -116,7 +116,7 @@ test.describe("falha da IA sem perda de conteúdo nem de exercícios", () => {
   });
 
   test("timeout da IA ao regenerar exercícios e conteúdo: mensagens de erro e nada perdido", async ({ app, page }) => {
-    await iaRoteada(page, [{ se: PROMPT.regenerarExercicios, resposta: { pendurar: true } }, { se: PROMPT.resumo, resposta: { pendurar: true } }]);
+    await iaRoteada(page, [{ se: PROMPT.regenerarExercicios, resposta: { pendurar: true } }, { se: PROMPT.plano, resposta: { pendurar: true } }]);
     await app.abrir({ seed: bancoComResumo(), sessao: PROF });
     await abrirEditorL1(page);
     const antes = await app.doc("licoes", "L1");
@@ -130,7 +130,7 @@ test.describe("falha da IA sem perda de conteúdo nem de exercícios", () => {
     page.once("dialog", d => d.accept());
     await page.getByRole("button", { name: /Regenerar conteúdo com IA/ }).click();
     await expect(page.getByText(/Regenerando conteúdo com IA/)).toBeVisible();
-    await page.clock.runFor(26000);
+    await page.clock.runFor(46000); // plano de cobertura: até 45s para começar a responder
     await expect(page.getByText("⚠️ A IA demorou demais para responder. Tente novamente.")).toBeVisible();
 
     expect(await app.doc("licoes", "L1")).toEqual(antes);

@@ -125,7 +125,8 @@ function ctxRegen(opts) {
       syncTextInputs: () => {}, render: () => {}, toasts: [], confirm: () => opts.confirmar !== false,
       iaConfigurada: () => true, subjById: id => SUBJ[id], nomeNivel: () => "Ensino Fundamental I",
       descreverPublicoLicao: () => ({ ano: "3º ano", nivelId: "fund1", idade: 8, frase: "Adapte para 8 anos." }),
-      getLicaoGerada: async () => ({ resumo: "## O que é?\nMultiplicar é somar parcelas iguais." }),
+      // texto de estudo salvo: ensina as contas de vezes nas lojas que as questões simuladas usam
+      getLicaoGerada: async () => ({ resumo: "## O que é?\nMultiplicar é somar parcelas iguais: quanto é tantas vezes tanto numa conta de mercado, padaria, farmácia, papelaria, feira, livraria, sorveteria ou quitanda." }),
       prompts: [],
       firebase: { firestore: { FieldValue: { increment: n => ({ inc: n }), serverTimestamp: () => "TS" } } },
       db: {
@@ -176,7 +177,7 @@ test("regenerar: gera, valida e grava tudo num batch atômico (resumo intacto)",
   const p = ctx.prompts[0];
   assert.match(p, /exatamente 3 exercícios NOVOS/);
   assert.match(p, /Pergunta original número 0/);
-  assert.match(p, /TEXTO DE ESTUDO/);
+  assert.match(p, /CONTEÚDO DE ESTUDO QUE O ALUNO LEU/);
   assert.match(p, /3 de múltipla escolha, 0 de verdadeiro\/falso e 0 de completar lacunas/);
 });
 

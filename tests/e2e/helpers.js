@@ -6,6 +6,10 @@
 const { expect } = require("./base");
 
 const PROMPT = {
+  // etapas do preparo (análise → plano → conteúdo) — ver tests/support/preparo-helpers.js
+  analise: /Analise a PARTE \d+ DE \d+ do documento/,
+  plano: /^PLANO DE COBERTURA DA LIÇÃO/,
+  conteudo: /^CONTEÚDO DE ESTUDO ESTRUTURADO/,
   resumo: /TEXTO DE ESTUDO/,
   explicacaoErro: /errou a seguinte questão/,
   pregeracao: /pode errar a seguinte questão/,
@@ -92,4 +96,16 @@ async function abrirEditorL1(page) {
   await expect(page.locator("#lTitulo")).toHaveValue("Somas simples");
 }
 
-module.exports = { iaRoteada, adiado, loginAluno, loginProfessor, abrirLicaoEComecar, responder, abrirEditorL1, PROMPT, RE_ENUNCIADO };
+// Regras que respondem as etapas do preparo de forma determinística (as mesmas da integração).
+// `sobrescrever`: { plano, conteudo, analise } → resposta no lugar da padrão.
+function regrasPreparo(extra, sobrescrever) {
+  const P = require("../support/preparo-helpers");
+  const o = sobrescrever || {};
+  return [
+    { se: PROMPT.analise, resposta: o.analise || (ch => P.analisePadrao(ch)) },
+    { se: PROMPT.plano, resposta: o.plano || (ch => P.planoPadrao(ch)) },
+    { se: PROMPT.conteudo, resposta: o.conteudo || (ch => P.conteudoPadrao(ch, extra != null ? extra : P.VOCAB_TESTES)) },
+  ];
+}
+
+module.exports = { regrasPreparo, iaRoteada, adiado, loginAluno, loginProfessor, abrirLicaoEComecar, responder, abrirEditorL1, PROMPT, RE_ENUNCIADO };

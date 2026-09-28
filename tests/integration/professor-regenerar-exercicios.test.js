@@ -5,6 +5,9 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const { abrirApp } = require("../support/app");
 const { abrirProfessor, erroIA, ultimoToast, F } = require("../support/professor-helpers");
+const { VOCAB_TESTES } = require("../support/preparo-helpers");
+// texto de estudo salvo: ensina o que as questões de teste cobram (a regeneração exige esse alinhamento)
+const RESUMO_SALVO = "## Resumo salvo\nTexto de estudo da lição. " + VOCAB_TESTES + " Somar 7 e 8, juntar 9 bolas com 6 bolas.";
 
 const CONFIRM = "A regeneração substituirá os exercícios atuais por novas questões. As tentativas e respostas relacionadas poderão ser afetadas. Deseja continuar?";
 
@@ -14,7 +17,7 @@ function seed(extra) {
       L1: F.licao({ explicacoes: { ex1: "explicação antiga 1", ex2: "explicação antiga 2" } }),
       L2: F.licao({ titulo: "Outra lição", exercicios: [F.mc(7)] }),
     },
-    licoes_geradas: { L1: { licaoId: "L1", resumo: "## Resumo salvo\nTexto de estudo da lição." } },
+    licoes_geradas: { L1: { licaoId: "L1", resumo: RESUMO_SALVO } },
     historias_geradas: { L1: { titulo: "História velha", capitulos: [] } },
     progresso: { a1_L1: { alunoId: "a1", licaoId: "L1", acertos: 2, erros: 1, total: 3, concluido: true, percentualAcertos: 67 } },
   }, extra || {}));
@@ -94,7 +97,7 @@ test("sucesso: substitui atomicamente, mantém quantidade, atualiza UI/cache e p
   assert.ok(d.exerciciosRegeneradosEm && d.exerciciosRegeneradosEm.seconds > 0);
   assert.equal(d.titulo, "Somas simples"); assert.equal(d.conteudo, "Somar é juntar quantidades.");
   const cache = docJ(h, "licoes_geradas", "L1");
-  assert.equal(cache.resumo, "## Resumo salvo\nTexto de estudo da lição.", "conteúdo explicativo NÃO muda");
+  assert.equal(cache.resumo, RESUMO_SALVO, "conteúdo explicativo NÃO muda");
   assert.equal(cache.exercicios.length, 3);
   assert.equal(docJ(h, "historias_geradas", "L1"), undefined, "história antiga (1 capítulo por questão) removida");
   assert.deepEqual(copia(docJ(h, "progresso", "a1_L1")), progAntes, "histórico do aluno preservado");
@@ -123,7 +126,8 @@ test("contexto enviado à IA: tema, disciplina, série, idade, dificuldade, tipo
   for (const re of [/lição "Somas simples" \(Matemática\)/, /Crie exatamente 3 exercícios NOVOS/, /3º ano do Ensino Fundamental I/,
     /aproximadamente 8 anos/, /1 fáceis, 1 intermediários e 1 difíceis/, /1 de múltipla escolha, 1 de verdadeiro\/falso e 1 de completar lacunas/,
     /EXERCÍCIOS ATUAIS \(NÃO repetir\):\n1\. Quanto é 1 \+ 1\?/, /Afirmação número 2/, /Complete a lacuna 3/,
-    /TEXTO DE ESTUDO QUE O ALUNO LÊ ANTES[^\n]*\n## Resumo salvo/, /Somar é juntar quantidades/, /Material X/, /"explicacao"/]) assert.match(p, re);
+    /CONTEÚDO DE ESTUDO QUE O ALUNO LEU \(ÚNICA base das questões[^\n]*\n\[S1\] Resumo salvo/, /ALINHAMENTO COM O CONTEÚDO ESTUDADO/, /"secao"/, /"explicacao"/]) assert.match(p, re);
+  assert.doesNotMatch(p, /Material X/, "com conteúdo de estudo, o documento bruto não vai para os exercícios");
   // as questões atuais vão resumidas: enunciado + resposta (para a IA não repetir o que já é cobrado)
   assert.match(p, /1\. Quanto é 1 \+ 1\? → resposta: 2\n2\. Afirmação número 2 é verdadeira\? → resposta: verdadeiro\n3\. Complete a lacuna 3: ___ → resposta: dez/);
   for (const re of [/VARIEDADE E QUANTIDADE/, /Gere EXATAMENTE 3 questões/, /Trocar só nomes, números, a ordem das alternativas ou algumas palavras NÃO cria uma questão nova/,
@@ -133,13 +137,14 @@ test("contexto enviado à IA: tema, disciplina, série, idade, dificuldade, tipo
   h.fechar();
 });
 
-test("texto de estudo: sem cache em licoes_geradas usa o resumoIA legado da lição", async () => {
-  const s = seed({ licoes: { L1: F.licao({ resumoIA: "Resumo legado da lição" }) } });
+test("texto de estudo: sem cache em licoes_geradas usa o resumoIA legado da lição (dividido em seções)", async () => {
+  const s = seed({ licoes: { L1: F.licao({ resumoIA: "Resumo legado da lição. " + VOCAB_TESTES }) } });
   delete s.licoes_geradas;
   const h = await abrir({ seed: s });
   h.ia.fila(F.json(F.questoesIA(3)));
   await h.clicar(/Regenerar exercícios com IA/);
-  assert.match(h.ia.ultimoPrompt(), /TEXTO DE ESTUDO[^\n]*\nResumo legado da lição/);
+  assert.match(h.ia.ultimoPrompt(), /CONTEÚDO DE ESTUDO QUE O ALUNO LEU[^\n]*\n\[S1\] Introdução\nResumo legado da lição/);
+  assert.equal(h.preparo.chamadas.length, 0, "havia texto de estudo: não precisou preparar um novo");
   h.fechar();
 });
 

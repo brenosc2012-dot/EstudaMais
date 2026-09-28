@@ -113,6 +113,7 @@ Legenda dos tipos:
 | Aluno ou visitante não consegue regenerar | S, E | `professor-regenerar-exercicios` › "permissão: …"; `seguranca-autorizacao`; `jornadas-seguranca` |
 | **Regenerar conteúdo** altera só o resumo; exercícios intactos | I, E | `professor-regenerar-conteudo` › "sucesso grava SÓ…"; `jornadas-professor` |
 | Contexto do resumo e estrutura didática objetiva (títulos, ≥2 exemplos, "Cuidado!", tamanho, idioma, sem respostas) | U, C, I | `fluxos` › "prompt do texto de estudo…"; `material-prompts` › "montarPromptResumo…"; `professor-regenerar-conteudo` › "contexto enviado…" |
+| Preparo: documentos lidos inteiros em partes (fim incluso); descrição inteira; todos os anexos processados; plano com origem; conteúdo cobre o plano (complementos); exercícios só do conteúdo, com rastreio seção/objetivo; não ensinado → recusado e reposto; bloqueio durante leitura; avisos de falha; transparência; falhas preservam tudo | U, I, E | `preparo-licao` (21), `preparo` (unit, 7), `professor-regenerar-conteudo` (23), `resumo-validacao` › "professor: …"; `jornadas-professor` › "regenera o conteúdo…" |
 | Regenerar/gerar com recuperação: só as que faltam, até 3 tentativas, progresso na tela, conjunto completo ou nada; mensagens com todos os motivos e numeração a partir de 1; duplicidade por conteúdo+resposta+texto; logs técnicos sem dados sensíveis | U, I, E | `regenerar-recuperacao` (13); `parsers-ia` › "compararQuestoes…", "validarExerciciosRegenerados…"; `professor-regenerar-exercicios` › "validação: …" (13); `jornadas-seguranca` › "JSON malformado da IA (3 tentativas)…" |
 | Visibilidade: lição aparece só para alunos de mesmo ano E turma (todas as disciplinas); salvar exige ano/turma; fora do escopo do professor pede confirmação; atualização ao vivo sem recarregar; disciplina normalizada | I | `visibilidade-licoes` › "REGRESSÃO: professor do 5º ano…", "lição de Inglês publicada aparece…", "lição recém-salva… sem sair nem recarregar", "disciplina gravada com nome/variação…", "sem ano ou sem turma…", "nova lição já vem com a série/turma…" |
 | Fontes da lição (texto do professor + documentos) nos 3 prompts; lição só com documentos; sem fontes → não chama a IA; CONTEXTO_INSUFICIENTE controlado | U, I | `texto-apoio` (unit) › "fontesDaLicao…", "motivoSemContexto…"; `fontes-texto-apoio` › "gerar exercícios: o texto explicativo E os documentos…", "lição só com documentos…", "regenerar exercícios e regenerar conteúdo usam as MESMAS fontes…", "contexto insuficiente…", "texto de estudo do aluno: …" (2) |
@@ -202,10 +203,10 @@ Legenda dos tipos:
 
 | Suíte | Testes | Resultado |
 |---|---|---|
-| Unitários + contrato + backend + SW (`tests/unit`, 11 arquivos) | 133 | 133 ✔ |
-| Integração/componente/segurança (`tests/integration`, 38 arquivos) | 402 | 402 ✔ |
+| Unitários + contrato + backend + SW (`tests/unit`, 12 arquivos) | 140 | 140 ✔ |
+| Integração/componente/segurança (`tests/integration`, 41 arquivos) | 453 | 453 ✔ |
 | E2E Playwright (`tests/e2e`, 4 arquivos) | 19 | 19 ✔ |
-| **Total** | **554** | 0 falhas, 0 skip/todo |
+| **Total** | **612** | 0 falhas, 0 skip/todo |
 
 Os testes node rodaram duas vezes seguidas com resultado idêntico. O E2E passou em três
 execuções completas.
@@ -215,7 +216,7 @@ e funções ≥ 97%; branches ≥ 75%.
 
 | Arquivo | Linhas | Branches | Funções |
 |---|---|---|---|
-| `index.html` (script → `build/index.app.js`) | 98,36% | 78,10% | 98,88% |
+| `index.html` (script → `build/index.app.js`) | 98,49% | 78,22% | 98,99% |
 | `sw.js` | 100% | 100% | 100% |
 | `proxy/cloudflare-worker.js` | 100% | 100% | 100% |
 
@@ -254,6 +255,8 @@ mínimas e estão no `index.html`.
 | 20 | Ano gravado com o "º" corrompido por codificação (`"5  ano"`) deixava a lição invisível para alunos e fora da lista do professor (sem como corrigir pela tela) | `anoCanonico` ao carregar: compara só letras/dígitos e devolve o rótulo oficial ("5  ano"/"5o ano"/"5ª ano" → "5º ano"; anos continuam distintos) | `visibilidade-licoes` › "REGRESSÃO: ano gravado com o 'º' corrompido…" |
 | 21 | Regenerar exercícios: "11 de 15 válidas" com só 2 motivos — a IA mandou 13 e a falta não era informada; motivos cortados em 3, só o 1º motivo de cada questão e numeração deslocada pelos descartes do parser; a 2ª tentativa refazia tudo e jogava fora as válidas | motivos com a posição real (1 em diante), todos os motivos, "a IA enviou N a menos", resumo por tentativa; reposição só das que faltam (até 3 tentativas) com aprovadas + rejeitadas + motivos | `regenerar-recuperacao` (13), `parsers-ia` › "validarExerciciosRegenerados: mensagem traz TODOS os motivos…" |
 | 22 | Duplicidade só pelo enunciado inteiro: falso positivo em questões do mesmo molde ("…inglês para 'pé'?" × "…'maçã'?" = 0,80, recusada) e falso negativo em reformulações ("Como se diz 'maçã'…" × "…palavra em inglês para 'maçã'?" = 0,29, aceita) e em "só trocou números" (0,64) | `compararQuestoes`: conteúdo sem palavras de molde + resposta correta + texto de apoio + regra de números; limiares em constantes | `parsers-ia` › "compararQuestoes: …"; `regenerar-recuperacao` › "duplicidade: …", "compara com TODAS…" |
+| 23 | Exercícios cobravam assuntos não ensinados: documentos cortados em 60.000 caracteres (só o começo de cada um ia à IA, o final era descartado e o texto completo não era guardado); texto de estudo limitado a 350–550 palavras; conteúdo e exercícios gerados separados, sem vínculo; conteúdo apagado ao salvar; geração liberada durante a importação | preparo em etapas (análise em partes → plano → conteúdo coberto → exercícios alinhados), rastreio por questão, conteúdo gravado com os exercícios, bloqueio durante a leitura | `preparo-licao`, `professor-regenerar-conteudo`, `preparo` (unit) |
+| 24 | (código novo, pego pelo teste) o painel dizia "fontes usadas: descrição" só porque a descrição existia, mesmo sem nenhum tópico vindo dela | "usadas" = o que o plano aproveitou | `preparo-licao` › "descrição curta + anexos…", "documento sem conteúdo útil…" |
 | 18 | Firestore falso: batch com duas operações no mesmo documento não via a anterior (o real vê) | cálculo sequencial dentro do batch | `professor-gerar-ia` › "gerar: explicações geradas junto…" |
 
 **Falhas preexistentes:** a suíte existente antes deste trabalho (`tests/unit/fluxos.test.js`,
@@ -271,6 +274,9 @@ mínimas e estão no `index.html`.
 | Qualidade do texto gerado | Validamos requisitos objetivos: `validarResumoIA` confere títulos, ≥2 exemplos, tamanho por idade, português e ausência de HTML antes de gravar. A qualidade pedagógica em si não é avaliada, e não checamos se o texto revela respostas (daria falso positivo com os termos do tema) | Baixo/médio |
 | Layout, rolagem, animações, confete, áudio audível | jsdom não faz layout nem fala; o E2E verifica o fluxo, não a aparência | Baixo |
 | Streaming SSE no navegador real | O E2E responde em JSON; o SSE é coberto no jsdom (`contrato-ia`) e no proxy | Baixo |
+| Alinhamento questão ↔ conteúdo e cobertura do plano | Verificados por palavras de conteúdo em comum (e resposta presente na seção), não por sentido. Contas curtas e questões com texto de apoio são aceitas com `verificado:false`. Uma questão pode "casar" com a seção por uma palavra sem que a seção a prepare de fato | Médio: o professor revisa; o rastreio mostra a seção ligada |
+| Documento grande salvo sem gerar | O texto salvo continua limitado a 60.000 caracteres (somados); a análise completa exige o documento importado na sessão. Salvar sem gerar e reabrir depois → análise do texto salvo, marcada "possivelmente incompleto" com aviso para reimportar | Baixo/médio (visível ao professor) |
+| Custo/tempo da IA | Documentos longos geram várias chamadas (uma por parte) + plano + conteúdo antes dos exercícios | Baixo (o preparo é reaproveitado enquanto as fontes não mudam) |
 | Heurísticas de validação das questões | "Pergunta respondível pelo texto", "relacionada às fontes" e idioma são verificados por palavras em comum e palavras funcionais — não entendem o sentido. A relação com as fontes não se aplica a Matemática nem a Inglês. A resposta correta não é conferida contra o texto (ex.: "On foot" × "walks") | Médio: a IA ainda pode gerar uma questão plausível mas errada; o professor revisa antes de salvar |
 | `esc()` não escapa `'` | Valores interpolados em `onclick="App.x('…')"` são ids do Firestore ou turmas de lista fixa (A–F); uma turma legada com `'` quebraria o clique | Baixo (observação, sem correção) |
 

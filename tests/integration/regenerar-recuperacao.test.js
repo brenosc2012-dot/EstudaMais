@@ -25,8 +25,10 @@ const seedIng = extra => F.banco(Object.assign({
   licoes: { L1: F.licao({ disciplina: "ing", titulo: "Food vocabulary", conteudo: "Vocabulário: comidas e objetos em inglês.", exercicios: PALAVRAS_ATUAIS.map(exAtual) }) },
   progresso: { a1_L1: { alunoId: "a1", licaoId: "L1", acertos: 12, erros: 3, total: 15, percentualAcertos: 80, concluido: true } },
 }, extra));
+// o conteúdo de estudo preparado ensina o vocabulário cobrado (regra: só se cobra o que foi ensinado)
+const VOCAB_ING = PALAVRAS_ATUAIS.concat(PALAVRAS_NOVAS).map(([pt, en]) => `${pt} = ${en}`).join(", ") + ". Maria comprou maçãs e peras na feira: frutas.";
 async function abrir(o) {
-  const h = await abrirProfessor(Object.assign({ seed: seedIng() }, o));
+  const h = await abrirProfessor(Object.assign({ seed: seedIng(), preparo: { extra: VOCAB_ING } }, o));
   h.App.teacherSelectSubj("ing"); await h.estabilizar();
   h.App.editLesson("L1"); await h.estabilizar();
   return h;

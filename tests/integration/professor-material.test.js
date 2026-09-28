@@ -37,12 +37,17 @@ test("importa TXT, PDF e DOCX, mostra lista/progresso e salva o texto combinado 
   h.fechar();
 });
 
-test("material entra no prompt de geração de exercícios", async () => {
+test("material: o documento é analisado inteiro e chega ao plano/conteúdo; os exercícios usam só o conteúdo de estudo", async () => {
   const h = await abrirProfessor({ editar: "L1" });
   await importar(h, [arquivo(h, "aula.txt", "Frações equivalentes são iguais", "text/plain")]);
-  h.ia.fila(F.json(F.questoesIA(2)));
+  h.ia.fila(F.json(F.questoesIA(15)));
   await h.clicar(/Gerar 15 Exercícios com IA/);
-  assert.match(h.ia.ultimoPrompt(), /\[DOCUMENTOS IMPORTADOS PELO PROFESSOR[^\n]*\]\n\[aula\.txt\]\nFrações equivalentes são iguais/);
+  assert.match(h.preparo.de("analise")[0].prompt, /PARTE 1 DE 1 do documento "aula\.txt"[\s\S]*<<<\nFrações equivalentes são iguais\n>>>/);
+  assert.match(h.preparo.de("plano")[0].prompt, /NOTAS DOS DOCUMENTOS:\n\[doc1\] aula\.txt/);
+  assert.match(h.preparo.de("conteudo")[0].prompt, /\[doc1\] aula\.txt/);
+  const pEx = h.ia.ultimoPrompt();
+  assert.match(pEx, /CONTEÚDO DE ESTUDO QUE O ALUNO LEU \(ÚNICA base das questões/);
+  assert.doesNotMatch(pEx, /DOCUMENTOS IMPORTADOS PELO PROFESSOR/, "o documento bruto não vai direto para os exercícios");
   h.fechar();
 });
 

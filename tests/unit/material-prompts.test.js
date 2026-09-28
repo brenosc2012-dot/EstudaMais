@@ -90,10 +90,15 @@ test("montarPromptRegenerarExercicios: contexto completo, distribuição de difi
   const p = c.montarPromptRegenerarExercicios(L, atuais, 3, "## Resumo de estudo", "mat");
   for (const re of [/3º ano do Ensino Fundamental I/, /lição "Contas" \(Matemática\)/, /exatamente 3 exercícios NOVOS/,
     /1 fáceis, 1 intermediários e 1 difíceis/, /1 de múltipla escolha, 1 de verdadeiro\/falso e 1 de completar lacunas/,
-    /Adapte para 8 anos\./, /1\. Quanto é 1\+1\?/, /3\. 3 x 3 = ___/, /TEXTO DE ESTUDO QUE O ALUNO LÊ ANTES/, /## Resumo de estudo/,
-    /TEXTO DO PROFESSOR — fonte principal\]\nConteúdo base da lição/, /DOCUMENTOS IMPORTADOS PELO PROFESSOR[^\n]*\]\nApostila/,
+    /Adapte para 8 anos\./, /1\. Quanto é 1\+1\?/, /3\. 3 x 3 = ___/,
+    /CONTEÚDO DE ESTUDO QUE O ALUNO LEU \(ÚNICA base das questões[^\n]*\n\[S1\] Resumo de estudo/, /ALINHAMENTO COM O CONTEÚDO ESTUDADO/,
     /"explicacao"/, /nunca a letra/, /REGRAS DE FIDELIDADE ÀS FONTES/, /NÃO invente/, /QUESTÕES DE INTERPRETAÇÃO/, /"texto_apoio"/, /CONTEXTO_INSUFICIENTE/])
     assert.match(p, re);
+  assert.doesNotMatch(p, /DOCUMENTOS IMPORTADOS PELO PROFESSOR/, "com conteúdo de estudo, as fontes brutas não vão para os exercícios");
+  // sem conteúdo nenhum (caso-limite): cai nas fontes
+  const semConteudo = c.montarPromptRegenerarExercicios(L, atuais, 3, "", "mat");
+  assert.match(semConteudo, /TEXTO DO PROFESSOR — fonte principal\]\nConteúdo base da lição/);
+  assert.match(semConteudo, /DOCUMENTOS IMPORTADOS PELO PROFESSOR[^\n]*\]\nApostila/);
 });
 
 test("montarPromptRegenerarExercicios: sem resumo/material omite as seções; Inglês inclui bloco da língua com ressalva", () => {

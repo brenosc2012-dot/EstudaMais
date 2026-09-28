@@ -84,16 +84,17 @@ test("configuração ⚙️: alterna substituir/acumular e persiste no localStor
   h.fechar();
 });
 
-test("prompt inclui conteúdo, material, faixa etária e regra de resposta por texto", async () => {
-  const h = await abrirProfessor({ extraSeed: { licoes: { L1: F.licao({ materialTexto: "[apostila.txt]\nMaterial secreto do professor" }) } }, editar: "L1" });
+test("prompt: descrição e material chegam ao plano/conteúdo; o de exercícios traz faixa etária, conteúdo estudado e regras", async () => {
+  const h = await abrirProfessor({ extraSeed: { licoes: { L1: F.licao({ materialNomes: ["apostila.txt"], materialTipos: ["text/plain"], materialTexto: "[apostila.txt]\nMaterial secreto do professor" }) } }, editar: "L1" });
   h.ia.fila(RESP_MISTA);
   await h.clicar(/Gerar 15 Exercícios com IA/);
+  assert.match(h.preparo.de("analise")[0].prompt, /Material secreto do professor/);
+  assert.match(h.preparo.de("plano")[0].prompt, /Somar é juntar quantidades/);
   const p = h.ia.ultimoPrompt();
   assert.match(p, /3º ano do Ensino Fundamental I/);
   assert.match(p, /aproximadamente 8 anos/);
   assert.match(p, /exatamente 15 exercícios/);
-  assert.match(p, /Somar é juntar quantidades/);
-  assert.match(p, /Material secreto do professor/);
+  assert.match(p, /CONTEÚDO DE ESTUDO QUE O ALUNO LEU/);
   assert.match(p, /NUNCA a letra/);
   const c = h.ia.chamadas[0];
   assert.equal(c.body.model, "gpt-4o-mini");

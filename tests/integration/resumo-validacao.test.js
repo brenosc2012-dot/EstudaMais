@@ -52,23 +52,31 @@ test("aluno: resumo já em cache (formato antigo, sem títulos) continua sendo u
   } finally { h.fechar(); }
 });
 
-// ---------------- professor (regenerarConteudoIA) ----------------
+// ---------------- professor (regenerarConteudoIA: validação do conteúdo em seções) ----------------
+const { conteudoPadrao, VOCAB_TESTES } = require("../support/preparo-helpers");
 const comCache = () => F.banco({ licoes_geradas: { L1: { licaoId: "L1", resumo: "RESUMO ANTIGO" } } });
-
-for (const [nome, resposta, motivo] of [
-  ["curto demais", CURTO, /curto demais/],
-  ["sem exemplos", SEM_EXEMPLOS, /menos de 2 exemplos/],
-  ["em inglês", "## What\n## Exemplo 1\n## Exemplo 2\n" + "Adding means putting quantities together to find the total. ".repeat(12), /não parece estar em português/],
-  ["longo demais", F.RESUMO_DIDATICO + "\n" + "Somar de novo é juntar mais uma vez. ".repeat(80), /longo demais/],
-]) {
-  test(`professor: resposta ${nome} (2x) → erro claro, resumo anterior mantido, nada gravado`, async () => {
-    const h = await abrirProfessor({ seed: comCache(), editar: "L1" });
+// altera o texto de cada seção mantendo as palavras do tópico (a cobertura continua válida)
+const variar = (f, semExtras) => ch => {
+  const c = JSON.parse(conteudoPadrao(ch, VOCAB_TESTES));
+  c.secoes.forEach(sec => { sec.texto = f(sec); });
+  if (semExtras) { c.verificacao = []; c.resumo_final = []; }
+  return JSON.stringify(c);
+};
+const primeiraLinha = sec => sec.texto.split("\n")[0].slice(0, 120);
+const CASOS = [
+  ["curto demais", variar(sec => primeiraLinha(sec) + " Exemplo 1. Exemplo 2."), /curto demais/], // títulos: seção + verificação + resumo
+  ["sem exemplos", variar(sec => sec.texto.replace(/Exemplo/g, "Caso")), /menos de 2 exemplos/],
+  ["em inglês", variar(sec => primeiraLinha(sec) + " Exemplo 1. Exemplo 2. " + "Adding means putting quantities together to find the total. ".repeat(14)), /não parece estar em português/],
+  ["longo demais", variar(sec => sec.texto + " Somar de novo é juntar mais uma vez.".repeat(70)), /longo demais/],
+];
+for (const [nome, conteudo, motivo] of CASOS) {
+  test(`professor: conteúdo ${nome} (2x) → erro claro, conteúdo anterior mantido, nada gravado`, async () => {
+    const h = await abrirProfessor({ seed: comCache(), editar: "L1", preparo: { conteudo } });
     try {
-      h.ia.fila(resposta, resposta);
       await h.clicar(/Regenerar conteúdo com IA/);
-      assert.equal(h.ia.chamadas.length, 2);
+      assert.equal(h.preparo.de("conteudo").length, 2, "fora do padrão → pede de novo 1x");
       assert.match(erroIA(h), motivo);
-      assert.match(erroIA(h), /resumo anterior foi mantido/);
+      assert.match(erroIA(h), /fora do padrão .*Nada foi alterado/);
       assert.equal(h.store.doc("licoes_geradas", "L1").resumo, "RESUMO ANTIGO");
       assert.equal(h.store.log.length, 0);
       assert.notEqual(ultimoToast(h), "Resumo regenerado e salvo no cache! ✅");
@@ -76,13 +84,12 @@ for (const [nome, resposta, motivo] of [
   });
 }
 
-test("professor: 1ª resposta fora do padrão, 2ª válida → grava a válida e anuncia sucesso", async () => {
-  const h = await abrirProfessor({ seed: comCache(), editar: "L1" });
+test("professor: 1º conteúdo fora do padrão, 2º válido → grava o válido e anuncia sucesso", async () => {
+  const h = await abrirProfessor({ seed: comCache(), editar: "L1", preparo: { conteudo: [CASOS[0][1], ch => conteudoPadrao(ch, VOCAB_TESTES)] } });
   try {
-    h.ia.fila(CURTO, F.RESUMO_DIDATICO);
     await h.clicar(/Regenerar conteúdo com IA/);
-    assert.equal(h.ia.chamadas.length, 2);
-    assert.equal(h.store.doc("licoes_geradas", "L1").resumo, F.RESUMO_DIDATICO.trim());
+    assert.equal(h.preparo.de("conteudo").length, 2);
+    assert.match(h.store.doc("licoes_geradas", "L1").resumo, /^## Tema da descrição/);
     assert.equal(ultimoToast(h), "Resumo regenerado e salvo no cache! ✅");
     assert.equal(h.store.doc("licoes", "L1").exercicios.length, 3, "exercícios intactos");
   } finally { h.fechar(); }

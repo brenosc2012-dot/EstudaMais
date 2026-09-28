@@ -3,15 +3,19 @@
 "use strict";
 const { abrirApp } = require("./app");
 const F = require("./fixtures");
+const { usarPreparo } = require("./preparo-helpers");
 
 /**
- * @param {object} o  seed (mesclado com F.banco), extraSeed, editar (id da lição), ia, confirmar, semChave
+ * @param {object} o  seed (mesclado com F.banco), extraSeed, editar (id da lição), ia, confirmar, semChave,
+ *                    preparo (opções de usarPreparo; false = sem respostas automáticas das etapas do preparo)
  */
 async function abrirProfessor(o) {
   o = o || {};
   const seed = o.seed || F.banco(o.extraSeed);
   if (o.semChave) seed.config = { openai: { apiKey: "", proxyUrl: "" } };
   const h = await abrirApp(Object.assign({}, o, { seed, local: Object.assign({}, F.LOCAL_BASE, o.local || {}), sessao: { tipo: "professor", id: o.profId || "p1" } }));
+  // análise/plano/conteúdo respondidos automaticamente (a fila de cada teste fica para os exercícios)
+  if (o.preparo !== false) h.preparo = usarPreparo(h, o.preparo);
   if (o.editar) { h.App.editLesson(o.editar); await h.estabilizar(); }
   return h;
 }

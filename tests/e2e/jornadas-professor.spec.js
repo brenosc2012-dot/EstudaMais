@@ -2,10 +2,12 @@
 "use strict";
 const { test, expect } = require("./base");
 const F = require("../support/fixtures");
-const { iaRoteada, adiado, loginProfessor, abrirEditorL1, loginAluno, PROMPT } = require("./helpers");
+const { iaRoteada, adiado, loginProfessor, abrirEditorL1, loginAluno, PROMPT, regrasPreparo } = require("./helpers");
+const { VOCAB_TESTES } = require("../support/preparo-helpers");
 
 const PROF = { tipo: "professor", id: "p1" };
-const RESUMO_ANTIGO = "## Resumo antigo\nSomar é juntar.";
+// texto de estudo salvo: ensina o que as questões de teste cobram (regenerar exige esse alinhamento)
+const RESUMO_ANTIGO = "## Resumo antigo\nSomar é juntar. " + VOCAB_TESTES;
 const bancoComResumo = () => F.banco({ licoes_geradas: { L1: { licaoId: "L1", resumo: RESUMO_ANTIGO } } });
 
 test("professor faz login, abre uma lição existente e cria uma nova lição com exercício", async ({ app, page }) => {
@@ -44,7 +46,7 @@ test("professor faz login, abre uma lição existente e cria uma nova lição co
 });
 
 test("professor regenera o conteúdo explicativo e o aluno passa a ver o novo resumo", async ({ app, page }) => {
-  const ia = await iaRoteada(page, [{ se: PROMPT.resumo, resposta: F.RESUMO_DIDATICO }]);
+  const ia = await iaRoteada(page, regrasPreparo());
   await app.abrir({ seed: bancoComResumo(), sessao: PROF });
   await abrirEditorL1(page);
   const exerciciosAntes = (await app.doc("licoes", "L1")).exercicios;
@@ -53,19 +55,23 @@ test("professor regenera o conteúdo explicativo e o aluno passa a ver o novo re
   await page.getByRole("button", { name: /Regenerar conteúdo com IA/ }).click();
   await expect(page.getByText("Resumo regenerado e salvo no cache! ✅")).toBeVisible();
 
-  expect(ia.de(PROMPT.resumo)).toHaveLength(1);
-  expect(ia.de(PROMPT.resumo)[0].prompt).toContain("Tema: Somas simples");
-  await expect.poll(async () => (await app.doc("licoes_geradas", "L1")).resumo).toBe(F.RESUMO_DIDATICO);
+  // etapas: plano de cobertura (com a descrição inteira) → conteúdo em seções
+  expect(ia.de(PROMPT.plano)).toHaveLength(1);
+  expect(ia.de(PROMPT.plano)[0].prompt).toContain("Somar é juntar quantidades.");
+  expect(ia.de(PROMPT.conteudo)).toHaveLength(1);
+  await expect.poll(async () => (await app.doc("licoes_geradas", "L1")).resumo).toMatch(/^## Tema da descrição/);
+  await expect(page.getByText(/Plano de cobertura: 1 tópico/)).toBeVisible(); // transparência para o professor
   expect((await app.doc("licoes", "L1")).exercicios).toEqual(exerciciosAntes); // só o conteúdo mudou
 
   // o aluno vê o resumo novo (vindo do cache, sem nova chamada de resumo à IA)
+  const chamadasAntesDoAluno = ia.chamadas.length;
   await page.getByTitle("Sair").click();
   await loginAluno(page, "Ana Souza", "senha123");
   await page.getByText("Matemática", { exact: true }).click();
   await page.getByText("Somas simples", { exact: true }).click();
-  await expect(page.getByText("O que é somar?")).toBeVisible();
+  await expect(page.getByText("Tema da descrição").first()).toBeVisible();
   await expect(page.getByText("Resumo antigo")).toHaveCount(0);
-  expect(ia.de(PROMPT.resumo)).toHaveLength(1);
+  expect(ia.chamadas.slice(chamadasAntesDoAluno).filter(c => PROMPT.resumo.test(c.prompt))).toHaveLength(0); // veio pronto do cache (só a pré-geração de explicações roda no aluno)
   expect(app.errosPagina).toEqual([]);
 });
 
