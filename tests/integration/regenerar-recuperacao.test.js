@@ -249,3 +249,46 @@ test("REGRESSÃO: regras publicadas bloqueiam uma coleção do batch (permission
     assert.equal(erroIA(h), "⚠️ O banco de dados recusou a gravação: as regras publicadas no Firebase não permitem esta operação. O Administrador precisa publicar o arquivo firestore.rules do projeto (Firebase Console → Firestore → Regras). Nada foi alterado. Os exercícios atuais foram mantidos.");
   } finally { h.fechar(); }
 });
+
+// ---------------------------------------------------------------------------------------------
+// Bug 27 (Matemática, "Prova - Setembro 2026"): a IA repetia o MOLDE das questões atuais trocando só
+// os números ("área do retângulo 8×5" → "7×4"); o validador (correto) recusava e as 3 tentativas se
+// esgotavam. O prompt agora mostra COMO variar e os moldes já usados; a validação não foi afrouxada.
+const EXPL_MAT = "Tudo bem errar! Releia no conteúdo de estudo como calcular a área e o perímetro.";
+const exMat = (i, enunciado, certa, nivel) => ({ id: "m" + i, tipo: "mc", nivel, enunciado, opcoes: [certa, certa + "0", "1" + certa, "9"], correta: 0 });
+const ATUAIS_MAT = [exMat(1, "Qual é a área de um retângulo com base 8 cm e altura 5 cm?", "40", "facil"), exMat(2, "Qual é a fração equivalente a 2/6?", "1/3", "facil"),
+  exMat(3, "Qual é o perímetro de um quadrado com lado 4 cm?", "16", "dificil")];
+const qMat = (enunciado, certa, nivel) => ({ nivel, tipo: "multipla_escolha", enunciado, opcoes: [certa, certa + "0", "1" + certa, "9"], resposta_correta: certa, explicacao: EXPL_MAT });
+const VOCAB_MAT = "Área do retângulo = base × altura. Perímetro = soma dos lados do quadrado ou retângulo. Frações equivalentes representam a mesma parte. Horta, quadra, jardim, cerca, metros, lado, medida, maior, figura.";
+
+test("Matemática: prompt ensina a variar e lista os moldes; recusa por 'só trocou números' continua; reposição reforça como variar", async () => {
+  const seed = F.banco({ professores: { p1: F.professor({ disciplinas: ["mat"], anos: ["3º ano"], turmas: ["A"] }) },
+    licoes: { L1: F.licao({ disciplina: "mat", titulo: "Prova - Setembro 2026", conteudo: "Frações equivalentes, área e perímetro de retângulos e quadrados.", exercicios: ATUAIS_MAT }) } });
+  const h = await abrirProfessor({ seed, preparo: { extra: VOCAB_MAT } });
+  try {
+    h.App.teacherSelectSubj("mat"); await h.estabilizar();
+    h.App.editLesson("L1"); await h.estabilizar();
+    h.ia.fila(
+      F.json([qMat("Qual é a área de um retângulo com base 7 cm e altura 4 cm?", "28", "facil"), // só trocou números → recusada
+        qMat("Uma horta retangular tem área de 24 metros quadrados e base de 6 metros. Qual é a altura?", "4", "facil"),
+        qMat("Uma cerca vai contornar um jardim quadrado de lado 5 metros. Quantos metros de cerca são necessários (perímetro)?", "20", "dificil")]),
+      F.json([qMat("Qual figura tem a maior área: um retângulo de base 3 e altura 4 ou um quadrado de lado 3?", "o retângulo", "facil")]));
+    await regenerar(h);
+    const p1 = h.ia.chamadas[0].prompt, p2 = h.ia.chamadas[1].prompt;
+    assert.match(p1, /COMO VARIAR EM MATEMÁTICA[\s\S]*Pergunta inversa/);
+    assert.match(p1, /MOLDES JÁ USADOS[^\n]*\n- Qual é a área de um retângulo com base N cm e altura N cm\?\n- Qual é a fração equivalente a N\?\n- Qual é o perímetro de um quadrado com lado N cm\?/);
+    assert.match(p2, /reformulação superficial de uma questão atual/, "a recusa continua (validação não afrouxada)");
+    assert.match(p2, /recusadas por SEMELHANÇA: mude a habilidade ou o formato[\s\S]*COMO VARIAR EM MATEMÁTICA[\s\S]*MOLDES JÁ USADOS[\s\S]*- Uma horta retangular tem área de N metros/);
+    assert.equal(erroIA(h), "");
+    assert.deepEqual(copia(h.store.doc("licoes", "L1").exercicios.map(e => e.enunciado.slice(0, 20)).sort()), ["Qual figura tem a ma", "Uma cerca vai contor", "Uma horta retangular"]);
+  } finally { h.fechar(); }
+});
+
+test("Português/Inglês: sem o bloco de variação de Matemática nem moldes (não poluem o prompt)", async () => {
+  const h = await abrir();
+  try {
+    h.ia.fila(F.json(novas(0, 15)));
+    await regenerar(h);
+    assert.doesNotMatch(h.ia.chamadas[0].prompt, /COMO VARIAR EM MATEMÁTICA|MOLDES JÁ USADOS/);
+  } finally { h.fechar(); }
+});

@@ -255,7 +255,9 @@ bloqueada nas regras publicadas (`mensagemErroIA` explica isso ao usuário).
   `PALAVRAS_MOLDE` — e com negações) + resposta correta + texto de apoio. Idêntica; reformulação
   superficial (`DUP_QUASE_IGUAL` 0,85, ou só números trocados com ≥`DUP_MIN_PALAVRAS_NUMEROS`
   palavras); mesma resposta (`DUP_MESMA_RESPOSTA` 0,5 · mesmo texto 0,25 · conteúdo contido 0,8).
-  Mesmo enunciado sobre OUTRO texto de apoio = questão nova. Logs técnicos via `logIA`
+  Mesmo enunciado sobre OUTRO texto de apoio = questão nova. Em Matemática o prompt de regenerar
+  (e a reposição após recusa por semelhança) traz `dicasVariacaoIA` + `blocoMoldesIA` (moldes = enunciados
+  com números trocados por N) para a IA não repetir o molde só trocando números. Logs técnicos via `logIA`
   (`[EstudaMais] exercicios.tentativa {...}`: contagens, posições, códigos, similaridade — nunca
   prompt, documento, chave ou dados de alunos).
 - O gerar agora também traz `explicacao` por questão: fica em `L._explicacoesNovas` com a

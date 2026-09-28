@@ -6271,6 +6271,9 @@ function blocoReposicaoIA(t, falta, aprovadas, ultimo, ctx){
   const aprov = aprovadas.map((e,i)=>`${i+1}. ${resumoQuestaoIA(e)}`).join("\n");
   const rej = ((ultimo && ultimo.rejeicoes)||[]).slice(0,20).map(r=>`- "${r.enunciado||"(sem enunciado)"}" — ${r.detalhes.join("; ")}`).join("\n");
   const niveis = ctx && ctx.alvoNiveis ? faltasPorNivel(ctx.alvoNiveis, aprovadas) : "";
+  const subjId = ctx && ctx.subjId;
+  const porSemelhanca = ((ultimo && ultimo.rejeicoes)||[]).some(r=>r.codigos.indexOf("repetida_atual")>=0 || r.codigos.indexOf("duplicada")>=0);
+  const variar = porSemelhanca ? `\n\nQuestões foram recusadas por SEMELHANÇA: mude a habilidade ou o formato da pergunta, não só números, nomes ou palavras.${dicasVariacaoIA(subjId)}${blocoMoldesIA(aprovadas.concat(ctx && ctx.atuais || []), subjId)}` : "";
   return `REPOSIÇÃO — TENTATIVA ${t} DE ${REGEN_EX_TENTATIVAS} (esta instrução substitui a quantidade pedida acima)
 Já foram aprovadas ${aprovadas.length} questões. Gere agora EXATAMENTE ${falta} ${falta===1?"questão NOVA":"questões NOVAS"}, sem reenviar as aprovadas.${niveis ? `
 Dificuldade das que faltam: ${niveis}.` : ""}
@@ -6280,7 +6283,7 @@ QUESTÕES JÁ APROVADAS (não repetir):
 ${aprov || "(nenhuma)"}${rej ? `
 
 QUESTÕES REJEITADAS NA TENTATIVA ANTERIOR (não repita os mesmos problemas):
-${rej}` : ""}
+${rej}` : ""}${variar}
 
 Retorne APENAS um array JSON com ${falta} ${falta===1?"questão":"questões"}, no mesmo formato pedido acima.`;
 }
@@ -6292,6 +6295,27 @@ function regrasVariedadeIA(n, temAtuais){
 - Trocar só nomes, números, a ordem das alternativas ou algumas palavras NÃO cria uma questão nova.
 - Cada questão deve cobrar um conceito, trecho, exemplo ou habilidade DIFERENTE das fontes; o mesmo tema pode se repetir se a informação cobrada for outra.
 - Tudo fundamentado no texto explicativo e nos documentos da lição; questões de interpretação trazem o texto de apoio.`;
+}
+// Como criar questão NOVA sem só trocar números (em Matemática a IA tende a copiar o molde:
+// "área do retângulo 8×5" → "área do retângulo 7×4", que o validador recusa).
+function dicasVariacaoIA(subjId){
+  if(subjId!=="mat") return "";
+  return `
+COMO VARIAR EM MATEMÁTICA (trocar só os números NÃO basta — mude o que a questão pede):
+- Pergunta inversa: dado o resultado, ache um dado (ex.: sabendo a área e um lado, qual é o outro lado?).
+- Problema do dia a dia com uma situação concreta (horta, quadra, receita, tempo de um jogo...).
+- Comparar ou ordenar (qual é maior, quais são equivalentes, qual figura tem mais área).
+- Achar o erro numa resolução, ou dizer qual passo vem primeiro.
+- Outra figura, outra unidade ou outro caminho do mesmo conceito ensinado no conteúdo.`;
+}
+// "Molde" de uma questão: o enunciado com os números trocados por N (mostra à IA o que não repetir).
+function moldeQuestao(e){
+  return String((e && e.enunciado)||"").replace(/\d+(?:[.,/]\d+)*/g,"N").replace(/\s+/g," ").trim().slice(0,160);
+}
+function blocoMoldesIA(questoes, subjId){
+  if(subjId!=="mat") return "";
+  const moldes = Array.from(new Set((questoes||[]).map(moldeQuestao).filter(m=>/\bN\b/.test(m))));
+  return moldes.length ? `\nMOLDES JÁ USADOS (uma questão com o mesmo molde, só com outros números, será RECUSADA):\n${moldes.map(m=>`- ${m}`).join("\n")}` : "";
 }
 // JSON de exemplo comum aos prompts de exercícios (inclui a questão de interpretação).
 function exemploJsonExercicios(subjId){
@@ -6329,7 +6353,7 @@ MANTENHA:
 ${pub.frase}
 Adapte a linguagem para uma criança de aproximadamente ${pub.idade} anos.
 
-${regrasVariedadeIA(n, true)}
+${regrasVariedadeIA(n, true)}${dicasVariacaoIA(subjId)}${blocoMoldesIA(atuais, subjId)}
 
 REGRAS DE CADA QUESTÃO:
 - "multipla_escolha": exatamente 4 opções diferentes e completas, com UMA só correta; "resposta_correta" = o TEXTO EXATO da opção correta (nunca a letra A/B/C/D).
@@ -6402,7 +6426,7 @@ async function regenerarExerciciosIA(){
     mostrarEtapaIA("Gerando os exercícios a partir do conteúdo de estudo…");
     const prompt=montarPromptRegenerarExercicios(L, atuais, n, conteudo, disc);
     const cont0=contarPorDificuldade(atuais), semNivel0=n-cont0.facil-cont0.intermediario-cont0.dificil;
-    const ctxR=Object.assign(ctxValidacaoLicao(L, disc), { conteudo, alvoNiveis:{ facil:cont0.facil, intermediario:cont0.intermediario+semNivel0, dificil:cont0.dificil }, onProgresso: mostrarProgressoIA });
+    const ctxR=Object.assign(ctxValidacaoLicao(L, disc), { conteudo, atuais, alvoNiveis:{ facil:cont0.facil, intermediario:cont0.intermediario+semNivel0, dificil:cont0.dificil }, onProgresso: mostrarProgressoIA });
     const r=await gerarExerciciosValidados(prompt, n, antigos, ctxR, timeoutComMaterial(45000, L.materialTexto));
     await gravarExerciciosRegenerados(licaoId, disc, r.exercicios, r.explicacoes, conteudoNovo ? Object.assign({}, conteudoNovo, { materialNotas:L.materialNotas }) : null);
     logIA("regenerar.gravado", { licaoId, exercicios:r.exercicios.length, tentativas:r.tentativas });
