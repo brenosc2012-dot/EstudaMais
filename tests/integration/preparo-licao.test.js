@@ -334,3 +334,50 @@ test("toast de sucesso só depois de todas as validações; conteúdo reaproveit
     assert.equal(h.preparo.de("plano").length, planos, "mesmas fontes: não prepara o conteúdo de novo");
   } finally { h.fechar(); }
 });
+
+// ================================================================== LaTeX do OCR (bug 25)
+// Foto de prova de Matemática: o OCR devolve fórmulas em LaTeX e a IA as copia para o JSON
+// da análise com barras simples ("\( \frac{0}{0} \)") → escape inválido → "resposta inválida".
+const OCR_LATEX = String.raw`Questão 1. Expressão: \( \frac{0}{0} \) é indeterminada. Imprecisão: \( 7 \cdot 5 = 35 \). Água: \( H_2O \).`;
+const analiseLatex = ch => String.raw`{"topicos":[{"topico":"Forma indeterminada","conceitos":["Expressão: \( \frac{0}{0} \)","\( 7 \cdot 5 = 35 \)"],"fatos":["\( H_2O \) é água"]}]}`;
+
+test("análise de documento com LaTeX (OCR de foto de prova) é aceita; o prompt pede fórmulas sem LaTeX", async () => {
+  const h = await abrirHis({ preparoExtra: { analise: analiseLatex } });
+  try {
+    await importar(h, [arquivo(h, "WhatsApp Image 2026-09-27 at 10.18.07.txt", OCR_LATEX)]);
+    h.ia.fila(F.json(QUINZE()));
+    await h.clicar(/Gerar 15 Exercícios com IA/);
+    assert.equal(erroIA(h), "");
+    assert.equal(h.preparo.de("analise").length, 1, "aceita de primeira (sem nova tentativa)");
+    assert.match(h.preparo.de("analise")[0].prompt, /SEM LaTeX/);
+    assert.ok(h.preparo.de("plano")[0].prompt.includes(String.raw`\( \frac{0}{0} \)`), "fórmula preservada nas notas");
+    assert.match(ultimoToast(h), /15 exercícios/);
+  } finally { h.fechar(); }
+});
+
+test("análise fora do formato: pede a MESMA parte mais uma vez (log só com contagens); persistindo → erro e nada gravado", async () => {
+  let h = await abrirHis({ preparoExtra: { analise: ["Claro! Aqui estão os tópicos: frações e água.", analiseLatex] } });
+  try {
+    await importar(h, [arquivo(h, "prova.txt", OCR_LATEX)]);
+    h.ia.fila(F.json(QUINZE()));
+    await h.clicar(/Gerar 15 Exercícios com IA/);
+    assert.equal(erroIA(h), "");
+    const an = h.preparo.de("analise");
+    assert.equal(an.length, 2);
+    assert.match(an[1].prompt, /PARTE 1 DE 1[\s\S]*a resposta anterior não era um JSON válido/);
+    const logs = h.logs.join("\n");
+    assert.match(logs, /preparo\.documento\.formato \{"licaoId":"L1","documento":1,"parte":1,"tentativa":1,"caracteres":\d+\}/);
+    assert.ok(!logs.includes("frações e água") && !logs.includes("frac"), "log sem conteúdo");
+  } finally { h.fechar(); }
+
+  h = await abrirHis({ preparoExtra: { analise: "sem json" } });
+  try {
+    await importar(h, [arquivo(h, "prova.txt", OCR_LATEX)]);
+    const antes = j(h.store.doc("licoes", "L1"));
+    await h.clicar(/Gerar 15 Exercícios com IA/);
+    assert.equal(h.preparo.de("analise").length, 2, "2 tentativas no total");
+    assert.match(erroIA(h), /Não foi possível analisar o documento "prova\.txt" \(resposta inválida da IA na parte 1\)\. Nada foi alterado/);
+    assert.equal(h.preparo.de("plano").length, 0);
+    assert.deepEqual(j(h.store.doc("licoes", "L1")), antes);
+  } finally { h.fechar(); }
+});

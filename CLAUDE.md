@@ -284,7 +284,7 @@ bloqueada nas regras publicadas (`mensagemErroIA` explica isso ao usuário).
   play/pausar/continuar/parar; botão "Já li" liberado após 30s **ou** fim do scroll) →
   questões clássicas com botão "📖 Ver o texto" (`abrirTextoInterp`, modal com destaque
   best-effort das palavras da questão) → conclusão com "💡 Você sabia?" (`fatoCuriosoGenero`).
-- **Parser tolerante** (`jsonParseTolerante`/`sanitizarControlesJson`): escapa `\n`/`\r`/`\t`
+- **Parser tolerante** (`jsonParseTolerante`/`sanitizarControlesJson`): torna literais as barras de LaTeX (`\(`, `\frac`, `\cdot` — `LATEX_ESCAPE_AMBIGUO`) e escapa `\n`/`\r`/`\t`
   CRUS dentro de strings JSON (a IA devolve texto multiparágrafo que quebrava o `JSON.parse`).
   Usado por `parseExerciciosIA`, `parseJsonObjIA` e `parseHistoriaIA`.
 

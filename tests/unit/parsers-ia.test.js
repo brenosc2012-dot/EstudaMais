@@ -29,6 +29,19 @@ test("jsonParseTolerante: aceita JSON normal e com quebras cruas; lixo → undef
   assert.equal(c.jsonParseTolerante(""), undefined);
 });
 
+test("jsonParseTolerante: LaTeX copiado pela IA (\\( \\frac \\cdot \\times) vira barra literal; escapes JSON legítimos continuam", () => {
+  const c = novo();
+  // resposta real do tipo que quebrava a análise de fotos de prova (OCR com LaTeX)
+  const resp = String.raw`{"topicos":[{"topico":"Forma indeterminada","conceitos":["Expressão: \( \frac{0}{0} \)","\( 7 \cdot 5 = 35 \)","2 \times 3","\( H_2O \)","\beta e \nabla, \neq, \text{m}, \rightarrow"]}]}`;
+  assert.throws(() => JSON.parse(resp), "JSON.parse puro falha (escape inválido \\()");
+  const o = j(c.jsonParseTolerante(resp));
+  assert.deepEqual(o.topicos[0].conceitos, ["Expressão: \\( \\frac{0}{0} \\)", "\\( 7 \\cdot 5 = 35 \\)", "2 \\times 3", "\\( H_2O \\)", "\\beta e \\nabla, \\neq, \\text{m}, \\rightarrow"]);
+  // escapes válidos e texto comum não mudam
+  const normal = '{"a":"linha1\\nlinha2\\tx \\"q\\" \\\\ \\/ \\u00e9 \\nova \\notas \\ttexto"}';
+  assert.deepEqual(j(c.jsonParseTolerante(normal)), JSON.parse(normal));
+  assert.equal(c.sanitizarControlesJson('{"a":"x"} \\ fora'), '{"a":"x"} \\ fora', "fora de strings nada muda");
+});
+
 // ---------------- exercícios (contrato) ----------------
 test("parseExerciciosIA: mapeia os 3 tipos, nível, cercas ```json e texto em volta", () => {
   const c = novo();
