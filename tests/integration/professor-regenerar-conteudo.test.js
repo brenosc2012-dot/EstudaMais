@@ -169,6 +169,33 @@ test("regenerar conteúdo: novo conteúdo precisa preparar os exercícios ATUAIS
   } finally { h.fechar(); }
 });
 
+test("regenerar conteúdo: exercício atual FORA das fontes (bug 26) → conteúdo fiel salvo e aviso de QUAL questão trocar", async () => {
+  // lição de Inglês cujas fontes falam de gadgets/música, mas um exercício antigo é sobre comida
+  const seed = F.banco({
+    professores: { p1: F.professor({ disciplinas: ["ing"] }) },
+    licoes: { L1: F.licao({ disciplina: "ing", titulo: "Prova - Setembro 2026", conteudo: "Gadgets, virtual world, music, he and she. The phone is a gadget. She likes music.",
+      exercicios: [F.mc(1, { enunciado: "Qual destas palavras significa 'música' em inglês?", opcoes: ["music", "song", "dance", "play"], correta: 0 }),
+        F.mc(2, { enunciado: "Qual é a palavra em inglês para 'receita' culinária?", opcoes: ["recipe", "menu", "ingredient", "dish"], correta: 0 })] }) },
+    licoes_geradas: { L1: { licaoId: "L1", resumo: "RESUMO ANTIGO" } },
+  });
+  const fontesSo = ch => conteudoPadrao(ch, "Music = música. Gadget = aparelho. He = ele, she = ela.");
+  const h = await abrirProfessor({ seed, preparo: { conteudo: fontesSo } });
+  try {
+    h.App.teacherSelectSubj("ing"); await h.estabilizar();
+    h.App.editLesson("L1"); await h.estabilizar();
+    await h.clicar(/Regenerar conteúdo com IA/);
+    const pc = h.preparo.de("conteudo");
+    assert.equal(pc.length, 3, "1 geração + 2 complementos pedindo o que faltou");
+    assert.match(pc[1].prompt, /o necessário para: "Qual é a palavra em inglês para 'receita' culinária\?" \(vocabulário\/estrutura usada: "recipe"\)/);
+    assert.equal(erroIA(h), "", "não bloqueia: tentar de novo não resolveria");
+    assert.notEqual(cache(h).resumo, "RESUMO ANTIGO", "conteúdo novo gravado");
+    assert.match(ultimoToast(h), /1 exercício\(s\) sem apoio/);
+    assert.match(h.texto(), /questão 2 \("Qual é a palavra em inglês para 'receita' culinária\?"\)[\s\S]*Regenerar exercícios/);
+    assert.doesNotMatch(h.texto(), /questão 1 \(/, "a questão ensinada não é listada");
+    assert.match(h.logs.join("\n"), /preparo\.exercicios_sem_apoio \{"licaoId":"L1","quantidade":1,"posicoes":\[2\]\}/);
+  } finally { h.fechar(); }
+});
+
 test("regenerar conteúdo: sem chave → botão desabilitado e nenhuma chamada", async () => {
   const h = await abrirProfessor({ semChave: true, editar: "L1" });
   try {

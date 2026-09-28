@@ -215,6 +215,8 @@ bloqueada nas regras publicadas (`mensagemErroIA` explica isso ao usuário).
   3. `gerarConteudoCoberto`: JSON de seções `{id,titulo,topicos,texto}` → `topicoCoberto` para cada
      tópico obrigatório (e `alinharExercicio` para os exercícios atuais, na regeneração de conteúdo)
      → complementos (até `PREPARO_TENTATIVAS_COBERTURA`) → `renderizarConteudo` → `validarResumoIA`
+     (tópico sem seção → erro; exercício ATUAL que continua sem apoio → não bloqueia: vira aviso
+     `exerciciosSemApoio` com posição/enunciado, sugerindo "Regenerar exercícios")
      (limite `limitePalavrasConteudo`: 220 palavras por tópico, teto 3.000; fora do padrão → 1 nova vez).
 - Exercícios (gerar/regenerar) recebem SÓ `blocoConteudoIA` (seções + objetivos; nada bruto dos
   documentos) e `regrasAlinhamentoIA` (indicar "secao"/"objetivo"). No validador, `alinharExercicio`

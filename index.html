@@ -4980,7 +4980,8 @@ async function regenerarConteudoIA(){
     L._preparo = prep;
     delete resumoCache[L.id];
     Teacher.regenerando=false; Teacher.iaProgresso=""; render();
-    toast("Resumo regenerado e salvo no cache! ✅");
+    const semApoio = (prep.exerciciosSemApoio||[]).length;
+    toast(semApoio ? `Resumo regenerado e salvo ✅ — ⚠️ ${semApoio} exercício(s) sem apoio no conteúdo (veja o painel)` : "Resumo regenerado e salvo no cache! ✅");
   }catch(err){
     Teacher.regenerando=false; Teacher.iaProgresso="";
     Teacher.iaErro = mensagemErroIA(err);
@@ -5480,7 +5481,8 @@ async function gerarConteudoCoberto(L, subjId, plano, ctx){
     const pend = c ? pendencias(c) : null;
     if(pend && !pend.faltam.length && !pend.exs.length) break;
     if(ctx.onProgresso) ctx.onProgresso(c ? "Completando o conteúdo de estudo com o que faltou…" : "Escrevendo o conteúdo de estudo…");
-    const falt = pend ? pend.faltam.map(x=>`${x.id} (${x.topico})`).concat(pend.exs.map(ex=>`o necessário para: "${String(ex.enunciado).slice(0,120)}"`)).join("; ") : "";
+    const vocab = ex => ehLinguaEstrangeira(subjId) && respostaCorretaTexto(ex) ? ` (vocabulário/estrutura usada: "${String(respostaCorretaTexto(ex)).slice(0,60)}")` : "";
+    const falt = pend ? pend.faltam.map(x=>`${x.id} (${x.topico})`).concat(pend.exs.map(ex=>`o necessário para: "${String(ex.enunciado).slice(0,120)}"${vocab(ex)}`)).join("; ") : "";
     const resp = await chamarIA(promptConteudoCoberto(L, subjId, plano, notasTxt, { exercicios:ctx.exercicios, faltando:falt }), timeoutComMaterial(60000, notasTxt));
     const semBase = motivoSemContexto(resp);
     if(semBase!==null) throw erroPreparo(`O texto explicativo e os documentos não têm conteúdo suficiente para o texto de estudo (${semBase}). Complete a descrição ou importe um documento.`, true);
@@ -5491,10 +5493,11 @@ async function gerarConteudoCoberto(L, subjId, plano, ctx){
   }
   if(!c) throw erroPreparo("A IA não devolveu o conteúdo de estudo no formato esperado. Nada foi alterado — tente de novo.");
   const pend = pendencias(c);
-  if(pend.faltam.length || pend.exs.length){
-    const oque = pend.faltam.length ? `tópicos sem explicação: ${pend.faltam.map(x=>x.topico).join(", ")}` : `${pend.exs.length} exercício(s) atual(is) sem conteúdo que os prepare`;
-    throw erroPreparo(`O conteúdo de estudo gerado não cobriu tudo o que a lição exige (${oque}). Nada foi alterado — tente de novo.`);
-  }
+  if(pend.faltam.length) throw erroPreparo(`O conteúdo de estudo gerado não cobriu tudo o que a lição exige (tópicos sem explicação: ${pend.faltam.map(x=>x.topico).join(", ")}). Nada foi alterado — tente de novo.`);
+  // exercício ATUAL cujo assunto não está nas fontes: o conteúdo segue fiel às fontes (não inventa
+  // para apoiar a questão) e o professor é avisado de QUAIS questões trocar — insistir não resolve
+  c.exerciciosSemApoio = pend.exs.map(ex=>({ pos:(ctx.exercicios||[]).indexOf(ex)+1, enunciado:String(ex.enunciado||"").slice(0,120) }));
+  if(c.exerciciosSemApoio.length) logIA("preparo.exercicios_sem_apoio", { licaoId:L.id||"(nova)", quantidade:c.exerciciosSemApoio.length, posicoes:c.exerciciosSemApoio.map(x=>x.pos) });
   c.secoes.forEach((s,k)=>{ s.id = "S"+(k+1); }); // renumera (complementos vêm como C1-1...)
   const resumo = renderizarConteudo(c);
   const v = validarResumoIA(resumo, pub.idade, limitePalavrasConteudo(pub.idade, plano.topicos.length));
@@ -5521,10 +5524,12 @@ async function prepararConteudoLicao(L, subjId, ctx){
   const avisos = (plano.avisos||[]).slice();
   if(sit.falhas.length) avisos.push(`Não foram usados: ${sit.falhas.map(d=>d.nome).join(", ")} (não foi possível ler).`);
   if(sit.parciais.length) avisos.push(`Texto possivelmente incompleto (lição antiga, o material salvo era cortado): ${sit.parciais.map(d=>d.nome).join(", ")} — reimporte para uma análise completa.`);
+  const semApoio = c.exerciciosSemApoio || [];
+  if(semApoio.length) avisos.push(`${semApoio.length} exercício(s) atual(is) cobra(m) assunto que não está na descrição nem nos documentos, então o novo conteúdo não o(s) ensina: ${semApoio.map(x=>`questão ${x.pos} ("${x.enunciado}")`).join("; ")}. Use "🔁 Regenerar exercícios" para trocá-los por questões do conteúdo (ou ajuste a descrição).`);
   logIA("preparo.conteudo", { licaoId:L.id||"(nova)", topicos:plano.topicos.length, objetivos:plano.objetivos.length, secoes:c.secoes.length, documentos:sit.ok, falhas:sit.falhas.length });
   return { hash:hashFontesLicao(L, subjId), plano:{ topicos:plano.topicos, objetivos:plano.objetivos, divergencias:plano.divergencias||[] },
     // "usadas" = as que o PLANO aproveitou (não basta existir): nunca anuncia uma fonte que ficou de fora
-    secoes:c.secoes, resumo:c.resumo, avisos, fontesUsadas:{
+    secoes:c.secoes, resumo:c.resumo, avisos, exerciciosSemApoio:semApoio, fontesUsadas:{
       descricao: plano.topicos.some(t=>t.fontes.indexOf("descricao")>=0),
       documentos: documentosAnalisados(L).filter(d=>plano.topicos.some(t=>t.fontes.indexOf(d.id)>=0)).length,
       total: sit.total } };

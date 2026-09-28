@@ -204,9 +204,9 @@ Legenda dos tipos:
 | Suíte | Testes | Resultado |
 |---|---|---|
 | Unitários + contrato + backend + SW (`tests/unit`, 12 arquivos) | 141 | 141 ✔ |
-| Integração/componente/segurança (`tests/integration`, 41 arquivos) | 455 | 455 ✔ |
+| Integração/componente/segurança (`tests/integration`, 41 arquivos) | 456 | 456 ✔ |
 | E2E Playwright (`tests/e2e`, 4 arquivos) | 19 | 19 ✔ |
-| **Total** | **615** | 0 falhas, 0 skip/todo |
+| **Total** | **616** | 0 falhas, 0 skip/todo |
 
 Os testes node rodaram duas vezes seguidas com resultado idêntico. O E2E passou em três
 execuções completas.
@@ -216,7 +216,7 @@ e funções ≥ 97%; branches ≥ 75%.
 
 | Arquivo | Linhas | Branches | Funções |
 |---|---|---|---|
-| `index.html` (script → `build/index.app.js`) | 98,50% | 78,30% | 98,99% |
+| `index.html` (script → `build/index.app.js`) | 98,50% | 78,28% | 98,99% |
 | `sw.js` | 100% | 100% | 100% |
 | `proxy/cloudflare-worker.js` | 100% | 100% | 100% |
 
@@ -257,6 +257,7 @@ mínimas e estão no `index.html`.
 | 22 | Duplicidade só pelo enunciado inteiro: falso positivo em questões do mesmo molde ("…inglês para 'pé'?" × "…'maçã'?" = 0,80, recusada) e falso negativo em reformulações ("Como se diz 'maçã'…" × "…palavra em inglês para 'maçã'?" = 0,29, aceita) e em "só trocou números" (0,64) | `compararQuestoes`: conteúdo sem palavras de molde + resposta correta + texto de apoio + regra de números; limiares em constantes | `parsers-ia` › "compararQuestoes: …"; `regenerar-recuperacao` › "duplicidade: …", "compara com TODAS…" |
 | 23 | Exercícios cobravam assuntos não ensinados: documentos cortados em 60.000 caracteres (só o começo de cada um ia à IA, o final era descartado e o texto completo não era guardado); texto de estudo limitado a 350–550 palavras; conteúdo e exercícios gerados separados, sem vínculo; conteúdo apagado ao salvar; geração liberada durante a importação | preparo em etapas (análise em partes → plano → conteúdo coberto → exercícios alinhados), rastreio por questão, conteúdo gravado com os exercícios, bloqueio durante a leitura | `preparo-licao`, `professor-regenerar-conteudo`, `preparo` (unit) |
 | 25 | "Não foi possível analisar o documento … (resposta inválida da IA na parte 1)" em fotos de prova de Matemática: o OCR devolvia fórmulas em LaTeX (`\( \frac{0}{0} \)`, `\cdot`) e a IA as copiava para o JSON com barra simples — `\(` é escape inválido (o `JSON.parse` falhava) e `\frac`/`\times` virariam form-feed/tab | `sanitizarControlesJson` torna literais as barras que não formam escape JSON (e as de comandos LaTeX ambíguos); a análise pede fórmulas sem LaTeX e tenta a parte mais uma vez se vier fora do formato (log `preparo.documento.formato`, só contagens); o OCR também pede texto simples | `parsers-ia` › "LaTeX copiado pela IA…", `preparo-licao` › "análise de documento com LaTeX…", "análise fora do formato…" |
+| 26 | Regenerar conteúdo de Inglês falhava com "1 exercício(s) atual(is) sem conteúdo que os prepare… tente de novo": um exercício antigo cobrava assunto que não está nas fontes (comida, numa lição de gadgets/música); o conteúdo, fiel às fontes, nunca o ensinaria — tentar de novo não resolvia e a mensagem não dizia qual questão | tópicos das fontes continuam obrigatórios (erro); exercício atual sem apoio → conteúdo salvo + aviso no painel/toast com a posição e o enunciado, indicando "Regenerar exercícios"; o complemento em língua estrangeira informa o vocabulário usado; log `preparo.exercicios_sem_apoio` (só posições) | `professor-regenerar-conteudo` › "exercício atual FORA das fontes…" |
 | 24 | (código novo, pego pelo teste) o painel dizia "fontes usadas: descrição" só porque a descrição existia, mesmo sem nenhum tópico vindo dela | "usadas" = o que o plano aproveitou | `preparo-licao` › "descrição curta + anexos…", "documento sem conteúdo útil…" |
 | 18 | Firestore falso: batch com duas operações no mesmo documento não via a anterior (o real vê) | cálculo sequencial dentro do batch | `professor-gerar-ia` › "gerar: explicações geradas junto…" |
 
