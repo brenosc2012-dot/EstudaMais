@@ -4725,7 +4725,7 @@ function materialApoioPanel(L){
     const nt = (L.materialNotas||[])[i];
     const analise = !nt || nt.status==="pendente" ? "será lido por inteiro (em partes) ao gerar"
       : nt.status==="analisando" ? "⏳ analisando…"
-      : nt.status==="ok" ? `✅ analisado por inteiro: ${(nt.topicos||[]).length} tópico(s)${nt.partes>1?` em ${nt.partes} partes`:""}${nt.parcial?" — ⚠️ texto salvo possivelmente incompleto: reimporte":""}`
+      : nt.status==="ok" ? `✅ analisado por inteiro: ${(nt.topicos||[]).length} tópico(s)${nt.partes>1?` em ${nt.partes} partes`:""}${nt.parcial?" — ⚠️ texto salvo possivelmente incompleto: reimporte":""}${nt.semIA?` — ⚠️ ${nt.semIA===1?"1 parte veio":`${nt.semIA} partes vieram`} sem a organização da IA (usado o texto do documento)`:""}`
       : nt.status==="vazio" ? "❌ sem texto para analisar"
       : `❌ análise falhou (${nt.motivo||"erro"}) — será tentada de novo ao gerar`;
     // o texto SALVO continua limitado (MATERIAL_TEXTO_MAX somados); a análise completa usa o
@@ -5227,6 +5227,79 @@ ${parte}
 >>>`;
 }
 const PREPARO_TENTATIVAS_ANALISE = 2; // por parte: a original + 1 nova tentativa se vier fora do formato
+// Conserta defeitos comuns do JSON da IA: aspas sem escape dentro do texto (uma aspa que não é
+// seguida de , : ] } é conteúdo), vírgula sobrando antes de ] }, e resposta CORTADA no meio
+// (fecha a string e os colchetes/chaves abertos, descartando a chave sem valor).
+// Chaves escritas por código: o extrator de funções dos testes conta "{"/"}" literais.
+const CHAVE_ABRE = String.fromCharCode(123), CHAVE_FECHA = String.fromCharCode(125);
+function repararJsonIA(s){
+  let out="", inStr=false; const pilha=[];
+  for(let i=0;i<s.length;i++){
+    const c=s[i];
+    if(inStr){
+      if(c==="\\"){ out+=c+(s[i+1]||""); i++; continue; }
+      if(c==='"'){
+        const prox=s.slice(i+1).match(/^\s*(\S)/);
+        if(!prox || /[,:\]\x7d]/.test(prox[1])){ inStr=false; out+=c; } else out+='\\"';
+        continue;
+      }
+      out+=c; continue;
+    }
+    if(c==='"'){ inStr=true; out+=c; continue; }
+    if(c===CHAVE_ABRE || c==="[") pilha.push(c===CHAVE_ABRE ? CHAVE_FECHA : "]");
+    else if(c===CHAVE_FECHA || c==="]"){
+      pilha.pop(); out=out.replace(/,\s*$/,"");
+      if(!pilha.length) return out+c; // fim do 1º valor JSON: o resto é texto solto da IA
+    }
+    out+=c;
+  }
+  if(inStr) out+='"';
+  if(pilha.length) out=out.replace(/,?\s*"[^"]*"\s*:\s*$/,""); // cortou logo depois de "chave":
+  while(pilha.length){ out=out.replace(/[,:]\s*$/,""); out+=pilha.pop(); }
+  return out;
+}
+// Notas da análise de uma parte → { topicos } ou null. O parse simples recusava respostas que
+// tinham o conteúdo certo: dois objetos seguidos, array solto, um tópico sem o envelope,
+// vírgula sobrando, aspas sem escape ou a resposta cortada no fim.
+function parseNotasAnaliseIA(texto){
+  const s = String(texto||"").replace(/```(?:json)?/gi,"").trim();
+  const ini = s.search(/[\x7b[]/);
+  if(ini<0) return null;
+  const topicosDe = o => {
+    if(!o || typeof o!=="object") return null;
+    if(Array.isArray(o)){
+      const t = o.filter(x=>x && typeof x==="object").reduce((a,x)=>a.concat(Array.isArray(x.topicos) ? x.topicos : (x.topico ? [x] : [])), []);
+      return (t.length || !o.length) ? t : null;
+    }
+    return Array.isArray(o.topicos) ? o.topicos : (o.topico ? [o] : null);
+  };
+  const corpo = s.slice(ini), multi = corpo.replace(/\x7d\s*,?\s*\x7b/g, CHAVE_FECHA+","+CHAVE_ABRE);
+  const candidatos = [
+    ()=>parseJsonObjIA(s),
+    ()=>jsonParseTolerante("["+multi.slice(0, multi.lastIndexOf(CHAVE_FECHA)+1)+"]"), // objetos seguidos
+    ()=>jsonParseTolerante(repararJsonIA(corpo)),
+    ()=>jsonParseTolerante(repararJsonIA("["+multi)),
+  ];
+  for(const f of candidatos){
+    let t = null; try{ t = topicosDe(f()); }catch(_){}
+    if(t) return { topicos:t };
+  }
+  return null;
+}
+// Plano B quando a IA não devolve notas válidas: a parte vira um tópico com os próprios
+// parágrafos do documento (nada é inventado nem perdido; só não fica organizado por assunto).
+function notasLocaisDaParte(parte, nome){
+  const linhas = String(parte||"").split(/\n+/).map(x=>x.replace(/\s+/g," ").trim()).filter(x=>x.length>=3);
+  if(!linhas.length) return [];
+  const titulo = (linhas.length>1 && linhas[0].length<=80) ? linhas.shift() : nome;
+  return [{ topico:titulo, fatos:linhas.slice(0, NOTAS_MAX_ITENS).map(x=>x.slice(0,800)) }];
+}
+// Formato da resposta recusada, para o log (só estrutura — nunca o conteúdo).
+function formatoRespostaIA(resp){
+  const s = String(resp||"").trim();
+  return { caracteres:s.length, inicio:s.charAt(0), fim:s.charAt(s.length-1), cerca:/```/.test(s),
+    chaves:s.split(CHAVE_ABRE).length-s.split(CHAVE_FECHA).length, aspas:(s.match(/(?<!\\)"/g)||[]).length%2 };
+}
 // Analisa UM documento inteiro (todas as partes). Reaproveita notas já feitas para o mesmo texto.
 async function analisarDocumento(L, i, ctx){
   ctx = ctx || {};
@@ -5241,27 +5314,29 @@ async function analisarDocumento(L, i, ctx){
   // lições antigas: o texto salvo era cortado no teto de 60.000 caracteres (somados)
   const parcial = !!(atual && atual.parcial) || (!!ctx.textoSalvo && String(L.materialTexto||"").length >= MATERIAL_TEXTO_MAX*MATERIAL_QUASE_CHEIO);
   L.materialNotas[i] = { hash:h, status:"analisando", partes:partes.length, caracteres:texto.length, parcial, topicos:[] };
-  let topicos = [];
+  let topicos = [], semIA = 0;
   try{
     for(let p=0; p<partes.length; p++){
       if(ctx.onProgresso) ctx.onProgresso(`Analisando "${nome}" (parte ${p+1} de ${partes.length})…`);
       let o = null;
-      // resposta fora do formato (texto solto, JSON cortado) → pede a mesma parte mais uma vez
-      for(let t=0; t<PREPARO_TENTATIVAS_ANALISE && !(o && Array.isArray(o.topicos)); t++){
+      // resposta fora do formato → pede a mesma parte mais uma vez. Modo JSON + temperatura baixa:
+      // antes a IA às vezes devolvia JSON quebrado e o documento inteiro travava o preparo.
+      for(let t=0; t<PREPARO_TENTATIVAS_ANALISE && !o; t++){
         const resp = await chamarIA(promptAnaliseParte(L, nome, p, partes.length, partes[p], ctx.subjId)
-          + (t ? "\n\nATENÇÃO: a resposta anterior não era um JSON válido. Responda SOMENTE o JSON, sem LaTeX." : ""), timeoutComMaterial(30000, partes[p]));
-        o = parseJsonObjIA(resp);
-        if(!(o && Array.isArray(o.topicos))) logIA("preparo.documento.formato", { licaoId:L.id||"(nova)", documento:i+1, parte:p+1, tentativa:t+1, caracteres:String(resp||"").length });
+          + (t ? "\n\nATENÇÃO: a resposta anterior não era um JSON válido. Responda SOMENTE o JSON, sem LaTeX." : ""), timeoutComMaterial(30000, partes[p]), { json:true, temperature:0.2 });
+        o = parseNotasAnaliseIA(resp);
+        if(!o) logIA("preparo.documento.formato", Object.assign({ licaoId:L.id||"(nova)", documento:i+1, parte:p+1, tentativa:t+1 }, formatoRespostaIA(resp)));
       }
-      if(!o || !Array.isArray(o.topicos)) throw new Error(`resposta inválida da IA na parte ${p+1}`);
+      // IA não devolveu notas válidas nem na nova tentativa: usa o texto da própria parte
+      if(!o){ o = { topicos:notasLocaisDaParte(partes[p], nome) }; semIA++; }
       topicos = mesclarTopicos(topicos, o.topicos);
     }
   }catch(e){
     L.materialNotas[i] = { hash:h, status:"falhou", partes:partes.length, caracteres:texto.length, parcial, motivo: mensagemErroIA(e), topicos:[] };
     throw e;
   }
-  L.materialNotas[i] = { hash:h, status:"ok", partes:partes.length, caracteres:texto.length, parcial, topicos };
-  logIA("preparo.documento", { licaoId:L.id||"(nova)", documento:i+1, partes:partes.length, caracteres:texto.length, topicos:topicos.length, parcial });
+  L.materialNotas[i] = Object.assign({ hash:h, status:"ok", partes:partes.length, caracteres:texto.length, parcial, topicos }, semIA ? { semIA } : {});
+  logIA("preparo.documento", { licaoId:L.id||"(nova)", documento:i+1, partes:partes.length, caracteres:texto.length, topicos:topicos.length, parcial, semIA });
   return L.materialNotas[i];
 }
 // Etapa 1: analisa todos os documentos com texto (os que falharam na importação ficam de fora e avisados).
@@ -5788,8 +5863,10 @@ async function chamarIAMensagens(messages, timeoutMs, opts){
   try{
     let resp;
     try{
-      const corpo = { model: IA_MODELO, messages: messages, temperature: 0.7 };
+      const corpo = { model: IA_MODELO, messages: messages, temperature: typeof opts.temperature==="number" ? opts.temperature : 0.7 };
       if(querStream) corpo.stream = true;
+      // modo JSON da OpenAI: a resposta é sempre um objeto JSON válido (o prompt precisa citar "JSON")
+      if(opts.json) corpo.response_format = { type:"json_object" };
       resp = await fetch(usaProxy ? IA.proxyUrl.trim() : IA_ENDPOINT, {
         method:"POST",
         headers: headers,

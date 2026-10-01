@@ -52,6 +52,8 @@ export default {
     // longas não dependem mais de a conexão aguentar uma espera única e silenciosa)
     const ehStream = body.stream === true;
     if (ehStream) payload.stream = true;
+    // modo JSON (análise de documentos): só o tipo "json_object" é repassado
+    if (body.response_format && body.response_format.type === "json_object") payload.response_format = { type: "json_object" };
 
     let r;
     try {

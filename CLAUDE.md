@@ -209,6 +209,9 @@ bloqueada nas regras publicadas (`mensagemErroIA` explica isso ao usuário).
      notas (`L.materialNotas[i]`: tópicos/conceitos/fatos/exemplos/vocabulário/textos literais; status
      pendente/analisando/ok/falhou/vazio; `parcial` se veio do texto salvo cortado em 60.000). As notas
      vão ao Firestore (`materialNotas`) e nunca são refeitas a partir do texto salvo (`materialOrigem`).
+     A análise usa o modo JSON da OpenAI (`chamarIA(…, {json:true, temperature:0.2})`) e
+     `parseNotasAnaliseIA` (tolerante); se a parte ainda vier inválida, `notasLocaisDaParte` usa o
+     próprio texto (nota `semIA`, aviso no painel) em vez de travar o preparo.
   2. `gerarPlanoCobertura` → `validarPlano`: tópicos com origem ("descricao"/"docN"), objetivos
      ligados, descrição considerada (se ≥8 palavras) e todo documento útil aproveitado (senão pede de
      novo com o motivo; persistindo, segue com aviso). `{suficiente:false}` → erro definitivo.

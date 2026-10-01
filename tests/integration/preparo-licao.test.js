@@ -350,6 +350,9 @@ test("análise de documento com LaTeX (OCR de foto de prova) é aceita; o prompt
     assert.equal(erroIA(h), "");
     assert.equal(h.preparo.de("analise").length, 1, "aceita de primeira (sem nova tentativa)");
     assert.match(h.preparo.de("analise")[0].prompt, /SEM LaTeX/);
+    assert.deepEqual(j(h.preparo.de("analise")[0].body.response_format), { type: "json_object" }, "análise no modo JSON da OpenAI");
+    assert.equal(h.preparo.de("analise")[0].body.temperature, 0.2);
+    assert.equal(h.preparo.de("plano")[0].body.response_format, undefined, "as outras etapas não mudam");
     assert.ok(h.preparo.de("plano")[0].prompt.includes(String.raw`\( \frac{0}{0} \)`), "fórmula preservada nas notas");
     assert.match(ultimoToast(h), /15 exercícios/);
   } finally { h.fechar(); }
@@ -366,19 +369,22 @@ test("análise fora do formato: pede a MESMA parte mais uma vez (log só com con
     assert.equal(an.length, 2);
     assert.match(an[1].prompt, /PARTE 1 DE 1[\s\S]*a resposta anterior não era um JSON válido/);
     const logs = h.logs.join("\n");
-    assert.match(logs, /preparo\.documento\.formato \{"licaoId":"L1","documento":1,"parte":1,"tentativa":1,"caracteres":\d+\}/);
+    assert.match(logs, /preparo\.documento\.formato \{"licaoId":"L1","documento":1,"parte":1,"tentativa":1,"caracteres":\d+,"inicio":"C","fim":"\.","cerca":false,"chaves":0,"aspas":0\}/);
     assert.ok(!logs.includes("frações e água") && !logs.includes("frac"), "log sem conteúdo");
   } finally { h.fechar(); }
 
+  // persistindo (bug 29): a parte vira notas com o próprio texto do documento — o preparo
+  // NÃO trava mais a lição inteira, e o professor é avisado no painel
   h = await abrirHis({ preparoExtra: { analise: "sem json" } });
   try {
     await importar(h, [arquivo(h, "prova.txt", OCR_LATEX)]);
-    const antes = j(h.store.doc("licoes", "L1"));
+    h.ia.fila(F.json(QUINZE()));
     await h.clicar(/Gerar 15 Exercícios com IA/);
     assert.equal(h.preparo.de("analise").length, 2, "2 tentativas no total");
-    assert.match(erroIA(h), /Não foi possível analisar o documento "prova\.txt" \(resposta inválida da IA na parte 1\)\. Nada foi alterado/);
-    assert.equal(h.preparo.de("plano").length, 0);
-    assert.deepEqual(j(h.store.doc("licoes", "L1")), antes);
+    assert.equal(erroIA(h), "");
+    assert.ok(h.preparo.de("plano")[0].prompt.includes("Questão 1. Expressão"), "texto do documento chega ao plano");
+    assert.match(h.document.body.textContent, /1 parte veio sem a organização da IA/);
+    assert.match(ultimoToast(h), /15 exercícios/);
   } finally { h.fechar(); }
 });
 

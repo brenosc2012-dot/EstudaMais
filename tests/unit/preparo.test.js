@@ -139,3 +139,28 @@ test("parseConteudoCoberto: seções marcadas pelo nome/variação do tópico ma
   const p = c.parseConteudoCoberto(JSON.stringify({ secoes: [{ titulo: "A", topicos: ["Densidade e Flutuação", "T1"], texto: "x" }, { titulo: "B", topicos: ["t2: calor", "T7"], texto: "y" }] }), plano, "");
   assert.deepEqual(j(p.secoes.map(s => s.topicos)), [["T1"], ["T2"]]);
 });
+
+// bug 29 (Geografia, "Prova - Setembro 2026 - Parte 2"): a análise de uma foto de prova
+// falhava com "resposta inválida da IA na parte 1" e travava a lição inteira.
+test("parseNotasAnaliseIA: aceita os defeitos comuns do JSON da IA; sem JSON nenhum → null", () => {
+  const c = carregar({ funcoes: ["parseNotasAnaliseIA", "notasLocaisDaParte", "formatoRespostaIA"] });
+  const nomes = r => r && r.topicos.map(t => t.topico);
+  assert.deepEqual(j(nomes(c.parseNotasAnaliseIA('{"topicos":[{"topico":"A"}]}'))), ["A"]);
+  assert.deepEqual(j(nomes(c.parseNotasAnaliseIA('```json\n{"topicos":[{"topico":"A"}]}\n```\nEspero ter ajudado {:)}'))), ["A"], "texto com chaves depois do JSON");
+  assert.deepEqual(j(nomes(c.parseNotasAnaliseIA('{"topicos":[{"topico":"A"}]}\n{"topicos":[{"topico":"B"}]}'))), ["A", "B"], "dois objetos seguidos");
+  assert.deepEqual(j(nomes(c.parseNotasAnaliseIA('[{"topico":"A"},{"topico":"B"}]'))), ["A", "B"], "array solto");
+  assert.deepEqual(j(nomes(c.parseNotasAnaliseIA('{"topico":"A","fatos":["x"]}'))), ["A"], "tópico sem o envelope");
+  assert.deepEqual(j(nomes(c.parseNotasAnaliseIA('{"topicos":[{"topico":"A","fatos":["x",],},]}'))), ["A"], "vírgula sobrando");
+  const aspas = c.parseNotasAnaliseIA('{"topicos":[{"topico":"Cidades","fatos":["As chamadas "smart cities" usam dados"]}]}');
+  assert.equal(aspas.topicos[0].fatos[0], 'As chamadas "smart cities" usam dados', "aspas sem escape no texto");
+  const cortada = c.parseNotasAnaliseIA('{"topicos":[{"topico":"Biotecnologia","fatos":["Mais de 500 indústrias"]},{"topico":"Nanotec');
+  assert.deepEqual(j(nomes(cortada)), ["Biotecnologia", "Nanotec"], "resposta cortada no fim");
+  assert.deepEqual(j(c.parseNotasAnaliseIA('{"topicos":[]}')), { topicos: [] });
+  assert.equal(c.parseNotasAnaliseIA("Claro! Aqui estão os tópicos."), null);
+  assert.equal(c.parseNotasAnaliseIA(""), null);
+  // plano B: a parte vira um tópico com os próprios parágrafos
+  assert.deepEqual(j(c.notasLocaisDaParte("O USO DAS TECNOLOGIAS\n\nBiotecnologia: química e biologia.\nNanotecnologia: partículas.", "doc.jpeg")),
+    [{ topico: "O USO DAS TECNOLOGIAS", fatos: ["Biotecnologia: química e biologia.", "Nanotecnologia: partículas."] }]);
+  assert.deepEqual(j(c.notasLocaisDaParte("  ", "doc")), []);
+  assert.deepEqual(j(c.formatoRespostaIA('```{"a":"b')), { caracteres: 10, inicio: "`", fim: "b", cerca: true, chaves: 1, aspas: 1 });
+});
