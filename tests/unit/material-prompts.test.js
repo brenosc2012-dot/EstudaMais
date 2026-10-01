@@ -89,7 +89,7 @@ test("montarPromptRegenerarExercicios: contexto completo, distribuição de difi
   const L = { titulo: "Contas", texto: "Conteúdo base da lição", materialTexto: "Apostila" };
   const p = c.montarPromptRegenerarExercicios(L, atuais, 3, "## Resumo de estudo", "mat");
   for (const re of [/3º ano do Ensino Fundamental I/, /lição "Contas" \(Matemática\)/, /exatamente 3 exercícios NOVOS/,
-    /1 fáceis, 1 intermediários e 1 difíceis/, /1 de múltipla escolha, 1 de verdadeiro\/falso e 1 de completar lacunas/,
+    /NÃO tem questões fáceis/, /1 questões "intermediario"/, /2 questões "dificil"/, /MATEMÁTICA: PROBLEMAS PARA RESOLVER/, /1 de múltipla escolha, 1 de verdadeiro\/falso e 1 de completar lacunas/,
     /Adapte para 8 anos\./, /1\. Quanto é 1\+1\?/, /3\. 3 x 3 = ___/,
     /CONTEÚDO DE ESTUDO QUE O ALUNO LEU \(ÚNICA base das questões[^\n]*\n\[S1\] Resumo de estudo/, /ALINHAMENTO COM O CONTEÚDO ESTUDADO/,
     /"explicacao"/, /nunca a letra/, /REGRAS DE FIDELIDADE ÀS FONTES/, /NÃO invente/, /QUESTÕES DE INTERPRETAÇÃO/, /"texto_apoio"/, /CONTEXTO_INSUFICIENTE/])
@@ -105,11 +105,27 @@ test("montarPromptRegenerarExercicios: sem resumo/material omite as seções; In
   const c = prompts();
   const p = c.montarPromptRegenerarExercicios({ titulo: "T", texto: "x" }, [{ tipo: "mc", enunciado: "q" }], 1, "", "mat");
   assert.doesNotMatch(p, /TEXTO DE ESTUDO QUE O ALUNO/); assert.doesNotMatch(p, /MATERIAL DE APOIO/); assert.doesNotMatch(p, /língua inglesa/);
-  assert.match(p, /0 fáceis, 1 intermediários e 0 difíceis/, "questão sem nível conta como intermediária");
+  assert.match(p, /0 questões "intermediario"/); assert.match(p, /1 questões "dificil"/);
+  assert.doesNotMatch(p, /"nivel": exatamente "facil"/);
   const pi = c.montarPromptRegenerarExercicios({ titulo: "Food", texto: "x" }, [{ tipo: "mc", enunciado: "q" }], 1, "", "ing");
   assert.match(pi, /língua inglesa/);
+  assert.doesNotMatch(pi, /MATEMÁTICA: PROBLEMAS/, "bloco de problemas só em Matemática");
   assert.match(pi, /valem os 1 exercícios/);
   // resumo enorme é truncado em 5.000 caracteres
   const pr = c.montarPromptRegenerarExercicios({ titulo: "T", texto: "x" }, [{ tipo: "mc", enunciado: "q" }], 1, "R".repeat(9000), "mat");
   assert.match(pr, /R{5000}(?!R)/);
+});
+
+test("exercícios gerados: sem fáceis (7 intermediários + 8 difíceis) e exercícios dos documentos como modelo", () => {
+  const c = carregar({ funcoes: ["distribuicaoNiveis", "semNivelFacil", "blocoExerciciosReferenciaIA"], stubs: {
+    documentosAnalisados: () => [{ id: "doc1", nome: "prova.pdf", notas: { topicos: [{ topico: "Frações", exercicios: ["Ana comeu 2/8 de uma pizza   e Beto 3/8. Que fração sobrou?"] }, { topico: "Sem exs" }] } }],
+  } });
+  assert.deepEqual(j(c.distribuicaoNiveis(15)), { facil: 0, intermediario: 7, dificil: 8 });
+  assert.deepEqual(j(c.distribuicaoNiveis(10)), { facil: 0, intermediario: 5, dificil: 5 });
+  assert.deepEqual(j(c.semNivelFacil([{ nivel: "facil" }, { nivel: "" }, { nivel: "dificil" }]).map(e => e.nivel)), ["intermediario", "intermediario", "dificil"]);
+  const b = c.blocoExerciciosReferenciaIA({});
+  assert.match(b, /EXERCÍCIOS DOS DOCUMENTOS DO PROFESSOR/);
+  assert.match(b, /- \[doc1\] Ana comeu 2\/8 de uma pizza e Beto 3\/8\. Que fração sobrou\?/);
+  const vazio = carregar({ funcoes: ["blocoExerciciosReferenciaIA"], stubs: { documentosAnalisados: () => [] } });
+  assert.equal(vazio.blocoExerciciosReferenciaIA({}), "", "sem exercícios nos documentos → bloco omitido");
 });

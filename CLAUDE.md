@@ -378,8 +378,13 @@ bloqueada nas regras publicadas (`mensagemErroIA` explica isso ao usuário).
   - ⚠️ A OpenAI **não envia CORS em respostas de erro** (401/429) → chamada direta com
     chave inválida/sem créditos aparece como "Failed to fetch" (parece falta de rede).
     `mensagemErroIA()` explica isso; o proxy elimina o problema.
-  - **Geração agora cria 15 exercícios** em 3 níveis (5 fácil / 5 intermediário /
-    5 difícil); o parser captura o campo `nivel`. XP por acerto: 10/20/30.
+  - **Geração cria 15 exercícios SEM fáceis**: `GERAR_EX_NIVEIS` = 7 intermediários + 8 difíceis
+    (`distribuicaoNiveis(n)` escala no regenerar; `regrasDificuldadeIA` proíbe memorização/definição;
+    `semNivelFacil` reclassifica "facil" vindo da IA). Matemática: `blocoMatematicaProblemasIA`
+    (≥80% problemas para resolver, contas conferidas, resolução na explicação). Exercícios dos
+    documentos importados: a análise extrai `exercicios` (enunciado sem gabarito) para as notas e
+    `blocoExerciciosReferenciaIA` os manda aos prompts de gerar/regenerar como modelo de tipo e
+    dificuldade (notas antigas não têm o campo — reimportar o documento). XP por acerto: 10/20/30.
 - **Streaming (padrão):** `chamarIAMensagens` envia `stream:true` e lê o SSE em
   `lerStreamIA()`. Com isso `timeoutMs` passou a ser o limite para a resposta **começar**
   (desarmado no 1º byte); depois quem corta é a **inatividade** (`IA_INATIVIDADE_MS`, 30s

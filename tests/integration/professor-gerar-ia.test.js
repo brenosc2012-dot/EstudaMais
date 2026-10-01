@@ -29,7 +29,7 @@ test("gerar (substituir): troca os exercícios do editor pelos da IA, mapeando t
   const c = cards(h);
   assert.equal(c.length, 15, "exatamente a quantidade pedida");
   assert.equal(c[0].querySelector("select").value, "mc");
-  assert.equal(c[0].querySelectorAll("select")[1].value, "facil");
+  assert.equal(c[0].querySelectorAll("select")[1].value, "intermediario", "a lição não tem fáceis: 'fácil' da IA vira intermediária");
   const pick = card => [...card.querySelectorAll(".opt-row .pick")].findIndex(b => /58cc02/.test(b.getAttribute("style")));
   assert.equal(pick(c[0]), 2, "resposta por texto → índice da opção 'A'");
   assert.equal(c[1].querySelector("select").value, "vf"); assert.equal(pick(c[1]), 0);

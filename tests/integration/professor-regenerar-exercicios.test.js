@@ -106,7 +106,7 @@ test("sucesso: substitui atomicamente, mantém quantidade, atualiza UI/cache e p
   const commits = h.store.log.map(l => l.op + " " + l.caminho);
   assert.deepEqual(commits, ["update licoes/L1", "set licoes_geradas/L1", "delete historias_geradas/L1"], "tudo num único batch");
   assert.match(enunciados(h)[0], /Maria tinha 10/);
-  assert.equal(ultimoToast(h), "✅ 3 exercícios novos salvos (1F/1I/1D)!");
+  assert.equal(ultimoToast(h), "✅ 3 exercícios novos salvos (0F/2I/1D)!");
   assert.equal(erroIA(h), "");
   assert.ok(h.tem(/Regenerar exercícios com IA \(3\)/), "painel volta ao normal");
   assert.deepEqual(h.errosJs(), []);
@@ -124,7 +124,7 @@ test("contexto enviado à IA: tema, disciplina, série, idade, dificuldade, tipo
   await h.clicar(/Regenerar exercícios com IA/);
   const p = h.ia.ultimoPrompt();
   for (const re of [/lição "Somas simples" \(Matemática\)/, /Crie exatamente 3 exercícios NOVOS/, /3º ano do Ensino Fundamental I/,
-    /aproximadamente 8 anos/, /1 fáceis, 1 intermediários e 1 difíceis/, /1 de múltipla escolha, 1 de verdadeiro\/falso e 1 de completar lacunas/,
+    /aproximadamente 8 anos/, /NÃO tem questões fáceis/, /1 questões "intermediario"/, /2 questões "dificil"/, /1 de múltipla escolha, 1 de verdadeiro\/falso e 1 de completar lacunas/,
     /EXERCÍCIOS ATUAIS \(NÃO repetir\):\n1\. Quanto é 1 \+ 1\?/, /Afirmação número 2/, /Complete a lacuna 3/,
     /CONTEÚDO DE ESTUDO QUE O ALUNO LEU \(ÚNICA base das questões[^\n]*\n\[S1\] Resumo salvo/, /ALINHAMENTO COM O CONTEÚDO ESTUDADO/, /"secao"/, /"explicacao"/]) assert.match(p, re);
   assert.doesNotMatch(p, /Material X/, "com conteúdo de estudo, o documento bruto não vai para os exercícios");
